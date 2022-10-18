@@ -1,0 +1,16 @@
+See https://github.com/bitcoin/bitcoin/issues/25211
+and https://github.com/bitcoin/bitcoin/pull/25763
+
+diff --git a/packages/bdb.mk b/packages/bdb.mk
+index dc536fd39..b69276cb1 100644
+--- a/packages/bdb.mk
++++ b/packages/bdb.mk
+@@ -14,7 +14,7 @@ $(package)_config_opts_freebsd=--with-pic
+ $(package)_config_opts_netbsd=--with-pic
+ $(package)_config_opts_openbsd=--with-pic
+ $(package)_config_opts_android=--with-pic
+-$(package)_cflags+=-Wno-error=implicit-function-declaration
++$(package)_cflags+=-Wno-error=implicit-function-declaration -Wno-error=format-security
+ $(package)_cxxflags+=-std=c++17
+ $(package)_cppflags_mingw32=-DUNICODE -D_UNICODE
+ endef
