@@ -180,10 +180,7 @@ gcc10Stdenv.mkDerivation rec {
 
   sourceRoot = dependsDir;
 
-  patches = [
-    # See https://github.com/bitcoin/bitcoin/issues/25211 and https://github.com/bitcoin/bitcoin/pull/25763
-    ./bdb-noWerror-format-security.patch
-  ];
+  patches = [];
 
   nativeBuildInputs = [ ];
   buildInputs = [
