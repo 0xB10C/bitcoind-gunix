@@ -45,8 +45,8 @@ let
     };
     expat = {
       urlPrefix = "https://github.com/libexpat/libexpat/releases/download/R_2_4_1";
-      file = "expat-2.4.1.tar.xz";
-      sha256 = "cf032d0dba9b928636548e32b327a2d66b1aab63c4f4a13dd132c2d1d2f2fb6a";
+      file = "expat-2.4.8.tar.xz";
+      sha256 = "f79b8f904b749e3e0d20afeadecf8249c55b2e32d4ebb089ae378df479dcaf25";
     };
     fontconfig = {
       urlPrefix = "https://www.freedesktop.org/software/fontconfig/release";
