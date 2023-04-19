@@ -128,8 +128,8 @@ let
     };
     sqlite = {
       urlPrefix = "https://sqlite.org/2020";
-      file = "sqlite-autoconf-3320100.tar.gz";
-      sha256 = "486748abfb16abd8af664e3a5f03b228e5f124682b0c942e157644bf6fff7d10";
+      file = "sqlite-autoconf-3380500.tar.gz";
+      sha256 = "5af07de982ba658fd91a03170c945f99c971f6955bc79df3266544373e39869c";
     };
     zeromq = {
       urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.4";
