@@ -25,6 +25,9 @@ let
       inherit sha256;
     };
 
+  qt_version = "5.15.5";
+  qt_url_prefix = "https://download.qt.io/official_releases/qt/5.15/${qt_version}/submodules";
+
   # Nix builds are pure. We can't access the Internet during builds - so we
   # make the depends sources avaliable beforehand.
   dependsSources = {
@@ -109,19 +112,19 @@ let
       sha256 = "60ddcff932b7fd352752d51a5c4f04f3d0403230a584df9a2e0d5ed87c486c8b";
     };
     qt = {
-      urlPrefix = "https://download.qt.io/official_releases/qt/5.15/5.15.2/submodules";
-      file = "qtbase-everywhere-src-5.15.2.tar.xz";
-      sha256 = "909fad2591ee367993a75d7e2ea50ad4db332f05e1c38dd7a5a274e156a4e0f8";
+      urlPrefix = qt_url_prefix;
+      file = "qtbase-everywhere-opensource-src-${qt_version}.tar.xz";
+      sha256 = "0c42c799aa7c89e479a07c451bf5a301e291266ba789e81afc18f95049524edc";
     };
     qt-translations = {
-      urlPrefix = "https://download.qt.io/official_releases/qt/5.15/5.15.2/submodules";
-      file = "qttranslations-everywhere-src-5.15.2.tar.xz";
-      sha256 = "d5788e86257b21d5323f1efd94376a213e091d1e5e03b45a95dd052b5f570db8";
+      urlPrefix = qt_url_prefix;
+      file = "qttranslations-everywhere-opensource-src-${qt_version}.tar.xz";
+      sha256 = "c92af4171397a0ed272330b4fa0669790fcac8d050b07c8b8cc565ebeba6735e";
     };
     qt-tools = {
-      urlPrefix = "https://download.qt.io/official_releases/qt/5.15/5.15.2/submodules";
-      file = "qttools-everywhere-src-5.15.2.tar.xz";
-      sha256 = "c189d0ce1ff7c739db9a3ace52ac3e24cb8fd6dbf234e49f075249b38f43c1cc";
+      urlPrefix = qt_url_prefix;
+      file = "qttools-everywhere-opensource-src-${qt_version}.tar.xz";
+      sha256 = "6d0778b71b2742cb527561791d1d3d255366163d54a10f78c683a398f09ffc6c";
     };
     sqlite = {
       urlPrefix = "https://sqlite.org/2020";
