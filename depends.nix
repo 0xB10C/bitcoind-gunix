@@ -59,7 +59,7 @@ let
       sha256 = "f04add9a972ac334ea11d9d7eb4fc7f8883835da3e4859c9afa971efdf57fcc3";
     };
     systemtap = {
-      urlPrefix = "https://sourceware.org/systemtap/ftp/releases";
+      urlPrefix = "https://sourceware.org/ftp/systemtap/releases";
       file = "systemtap-4.5.tar.gz";
       sha256 = "75078ed37e0dd2a769c9d1f9394170b2d9f4d7daa425f43ca80c13bad6cfc925";
     };
