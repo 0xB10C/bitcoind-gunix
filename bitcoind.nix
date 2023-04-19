@@ -5,6 +5,7 @@
 , pkgconfig
 , autoreconfHook
 , hexdump
+, which
 #
 , url
 , sha256
@@ -17,7 +18,7 @@ gcc10Stdenv.mkDerivation rec {
   src = fetchurl { inherit url sha256; };
 
   nativeBuildInputs = [ ];
-  buildInputs = [  pkgconfig autoreconfHook hexdump ];
+  buildInputs = [  pkgconfig autoreconfHook hexdump which ];
 
   preConfigure = ''
     export CONFIG_SITE=${depends}/share/config.site
