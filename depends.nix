@@ -32,9 +32,9 @@ let
   # make the depends sources avaliable beforehand.
   dependsSources = {
     boost = {
-      urlPrefix = "https://boostorg.jfrog.io/artifactory/main/release/1.77.0/source";
-      file = "boost_1_77_0.tar.bz2";
-      sha256 = "fc9f85fc030e233142908241af7a846e60630aa7388de9a5fafb1f3a26840854";
+      urlPrefix = "https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source";
+      file = "boost_1_81_0.tar.bz2";
+      sha256 = "71feeed900fbccca04a3b4f2f84a7c217186f28a940ed8b7ed4725986baf99fa";
     };
     libevent = {
       urlPrefix = "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable";
@@ -63,8 +63,8 @@ let
     };
     systemtap = {
       urlPrefix = "https://sourceware.org/ftp/systemtap/releases/";
-      file = "systemtap-4.7.tar.gz";
-      sha256 = "43a0a3db91aa4d41e28015b39a65e62059551f3cc7377ebf3a3a5ca7339e7b1f";
+      file = "systemtap-4.8.tar.gz";
+      sha256 = "cbd50a4eba5b261394dc454c12448ddec73e55e6742fda7f508f9fbc1331c223";
     };
     xproto = {
       urlPrefix = "https://xorg.freedesktop.org/releases/individual/proto";
@@ -148,13 +148,13 @@ let
     };
     libnatpmp = {
       urlPrefix = "https://github.com/miniupnp/libnatpmp/archive";
-      file = "4536032ae32268a45c073a4d5e91bbab4534773a.tar.gz";
-      sha256 = "543b460aab26acf91e11d15e17d8798f845304199eea2d76c2f444ec749c5383";
+      file = "07004b97cf691774efebe70404cf22201e4d330d.tar.gz";
+      sha256 = "9321953ceb39d07c25463e266e50d0ae7b64676bb3a986d932b18881ed94f1fb";
     };
     qrencode = {
       urlPrefix = "https://fukuchi.org/works/qrencode/";
-      file = "qrencode-3.4.4.tar.bz2";
-      sha256 = "efe5188b1ddbcbf98763b819b146be6a90481aac30cfc8d858ab78a19cde1fa5";
+      file = "qrencode-4.1.1.tar.bz2";
+      sha256 = "e455d9732f8041cf5b9c388e345a641fd15707860f928e94507b1961256a6923";
     };
 
   };
