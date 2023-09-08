@@ -1,9 +1,9 @@
 { pkgs ? import <nixpkgs> {} }:
 
 let
-  version = "24.0";
+  version = "24.1";
   url = "https://bitcoincore.org/bin/bitcoin-core-${version}/bitcoin-${version}.tar.gz";
-  sha256 = "9cfa4a9f4acb5093e85b8b528392f0f05067f3f8fafacd4dcfe8a396158fd9f4";
+  sha256 = "8a0a3db3b2d9cc024e897113f70a3a65d8de831c129eb6d1e26ffa65e7bfaf4e";
 
   depends = pkgs.callPackage ./depends.nix { inherit version url sha256; };
   bitcoind = pkgs.callPackage ./bitcoind.nix { inherit url sha256 depends; };
