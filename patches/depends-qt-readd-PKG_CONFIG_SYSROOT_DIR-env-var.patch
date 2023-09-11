@@ -1,0 +1,22 @@
+Readds PKG_CONFIG_SYSROOT_DIR=/ removed in https://github.com/bitcoin/bitcoin/commit/affbf58a1e52a8e60c830be6a9e0347e0ff4c28e
+
+--- a/funcs.mk
++++ b/depends/funcs.mk
+@@ -137,7 +137,6 @@ $(1)_config_env+=$($(1)_config_env_$(host_arch)_$(host_os)) $($(1)_config_env_$(
+ 
+ $(1)_config_env+=PKG_CONFIG_LIBDIR=$($($(1)_type)_prefix)/lib/pkgconfig
+ $(1)_config_env+=PKG_CONFIG_PATH=$($($(1)_type)_prefix)/share/pkgconfig
+-$(1)_config_env+=PKG_CONFIG_SYSROOT_DIR=/
+ $(1)_config_env+=CMAKE_MODULE_PATH=$($($(1)_type)_prefix)/lib/cmake
+ $(1)_config_env+=PATH=$(build_prefix)/bin:$(PATH)
+ $(1)_build_env+=PATH=$(build_prefix)/bin:$(PATH)
+--- a/packages/qt.mk
++++ b/packages/qt.mk
+@@ -268,6 +268,7 @@ define $(package)_preprocess_cmds
+ endef
+ 
+ define $(package)_config_cmds
++  export PKG_CONFIG_SYSROOT_DIR=/ && \
+   cd qtbase && \
+   ./configure -top-level $($(package)_config_opts)
+ endef

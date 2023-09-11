@@ -183,7 +183,9 @@ gcc10Stdenv.mkDerivation rec {
 
   sourceRoot = dependsDir;
 
-  patches = [];
+  patches = [
+    ./patches/depends-qt-readd-PKG_CONFIG_SYSROOT_DIR-env-var.patch
+  ];
 
   nativeBuildInputs = [ ];
   buildInputs = [
