@@ -8,6 +8,7 @@
 , libtool
 , autoconf
 , automake
+, gnumake
 , which # Qt
 , perl # Qt
 #
@@ -25,7 +26,7 @@ let
       inherit sha256;
     };
 
-  qt_version = "5.15.5";
+  qt_version = "5.15.11";
   qt_url_prefix = "https://download.qt.io/official_releases/qt/5.15/${qt_version}/submodules";
 
   # Nix builds are pure. We can't access the Internet during builds - so we
@@ -58,8 +59,8 @@ let
     };
     xcb-proto = {
       urlPrefix = "https://xorg.freedesktop.org/archive/individual/proto";
-      file = "xcb-proto-1.14.1.tar.xz";
-      sha256 = "f04add9a972ac334ea11d9d7eb4fc7f8883835da3e4859c9afa971efdf57fcc3";
+      file = "xcb-proto-1.15.2.tar.xz";
+      sha256 = "7072beb1f680a2fe3f9e535b797c146d22528990c72f63ddb49d2f350a3653ed";
     };
     systemtap = {
       urlPrefix = "https://sourceware.org/ftp/systemtap/releases/";
@@ -114,17 +115,17 @@ let
     qt = {
       urlPrefix = qt_url_prefix;
       file = "qtbase-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "0c42c799aa7c89e479a07c451bf5a301e291266ba789e81afc18f95049524edc";
+      sha256 = "425ad301acd91ca66c10c0dabee0704e2d0cd2801a6b670115800cbb95f84846";
     };
     qt-translations = {
       urlPrefix = qt_url_prefix;
       file = "qttranslations-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "c92af4171397a0ed272330b4fa0669790fcac8d050b07c8b8cc565ebeba6735e";
+      sha256 = "a31785948c640b7c66d9fe2db4993728ca07f64e41c560b3625ad191b276ff20";
     };
     qt-tools = {
       urlPrefix = qt_url_prefix;
       file = "qttools-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "6d0778b71b2742cb527561791d1d3d255366163d54a10f78c683a398f09ffc6c";
+      sha256 = "7cd847ae6ff09416df617136eadcaf0eb98e3bc9b89979219a3ea8111fb8d339";
     };
     sqlite = {
       urlPrefix = "https://sqlite.org/2020";
@@ -132,10 +133,9 @@ let
       sha256 = "5af07de982ba658fd91a03170c945f99c971f6955bc79df3266544373e39869c";
     };
     zeromq = {
-      #urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.4";
-      urlPrefix = "https://bitcoincore.org/depends-sources/";
-      file = "zeromq-4.3.4.tar.gz";
-      sha256 = "c593001a89f5a85dd2ddf564805deb860e02471171b3f204944857336295c3e5";
+      urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.5/";
+      file = "zeromq-4.3.5.tar.gz";
+      sha256 = "6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43";
     };
     db48 = {
       urlPrefix = "https://download.oracle.com/berkeley-db";
@@ -188,9 +188,9 @@ gcc10Stdenv.mkDerivation rec {
     ./patches/depends-qt-readd-PKG_CONFIG_SYSROOT_DIR-env-var.patch
   ];
 
-  nativeBuildInputs = [ ];
+  nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    pkg-config python3 bison libtool autoconf automake
+    python3 bison libtool gnumake automake autoconf
     which perl # Qt
   ];
 
