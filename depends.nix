@@ -25,7 +25,7 @@ let
       inherit sha256;
     };
 
-  qt_version = "5.15.5";
+  qt_version = "5.15.10";
   qt_url_prefix = "https://download.qt.io/official_releases/qt/5.15/${qt_version}/submodules";
 
   # Nix builds are pure. We can't access the Internet during builds - so we
@@ -58,8 +58,8 @@ let
     };
     xcb-proto = {
       urlPrefix = "https://xorg.freedesktop.org/archive/individual/proto";
-      file = "xcb-proto-1.14.1.tar.xz";
-      sha256 = "f04add9a972ac334ea11d9d7eb4fc7f8883835da3e4859c9afa971efdf57fcc3";
+      file = "xcb-proto-1.15.2.tar.xz";
+      sha256 = "7072beb1f680a2fe3f9e535b797c146d22528990c72f63ddb49d2f350a3653ed";
     };
     systemtap = {
       urlPrefix = "https://sourceware.org/ftp/systemtap/releases/";
@@ -114,17 +114,17 @@ let
     qt = {
       urlPrefix = qt_url_prefix;
       file = "qtbase-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "0c42c799aa7c89e479a07c451bf5a301e291266ba789e81afc18f95049524edc";
+      sha256 = "c0d06cb18d20f10bf7ad53552099e097ec39362d30a5d6f104724f55fa1c8fb9";
     };
     qt-translations = {
       urlPrefix = qt_url_prefix;
       file = "qttranslations-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "c92af4171397a0ed272330b4fa0669790fcac8d050b07c8b8cc565ebeba6735e";
+      sha256 = "38b942bc7e62794dd072945c8a92bb9dfffed24070aea300327a3bb42f855609";
     };
     qt-tools = {
       urlPrefix = qt_url_prefix;
       file = "qttools-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "6d0778b71b2742cb527561791d1d3d255366163d54a10f78c683a398f09ffc6c";
+      sha256 = "66f46c9729c831dce431778a9c561cca32daceaede1c7e58568d7a5898167dae";
     };
     sqlite = {
       urlPrefix = "https://sqlite.org/2020";
@@ -187,9 +187,9 @@ gcc10Stdenv.mkDerivation rec {
     ./patches/depends-qt-readd-PKG_CONFIG_SYSROOT_DIR-env-var.patch
   ];
 
-  nativeBuildInputs = [ ];
+  nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    pkg-config python3 bison libtool autoconf automake
+    python3 bison libtool autoconf automake
     which perl # Qt
   ];
 

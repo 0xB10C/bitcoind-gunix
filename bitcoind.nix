@@ -2,7 +2,7 @@
   gcc10Stdenv # The GUIX builds are using GCC 10.3.0
 , fetchurl
 # build-inputs
-, pkgconfig
+, pkg-config
 , autoreconfHook
 , hexdump
 , which
@@ -18,7 +18,7 @@ gcc10Stdenv.mkDerivation rec {
   src = fetchurl { inherit url sha256; };
 
   nativeBuildInputs = [ ];
-  buildInputs = [ pkgconfig autoreconfHook hexdump which ];
+  buildInputs = [ pkg-config autoreconfHook hexdump which ];
 
   preConfigure = ''
     export CONFIG_SITE=${depends}/share/config.site
