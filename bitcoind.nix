@@ -18,17 +18,11 @@ gcc10Stdenv.mkDerivation rec {
   name = "bitcoind";
   src = fetchurl { inherit url sha256; };
 
-  nativeBuildInputs = [ pkg-config ];
-  buildInputs = [ cmake hexdump which python3 ];
-
-  preConfigure = ''
-    ln -s ${depends} depends/x86_64-pc-linux-gnu
-    export CMAKE_TOOLCHAIN_FILE=depends/x86_64-pc-linux-gnu/share/toolchain.cmake
-  '';
+  nativeBuildInputs = [ cmake pkg-config ];
+  buildInputs = [ hexdump which python3 ];
 
   cmakeFlags = [
-    # NixOS sets CMAKE_PREFIX_PATH, which breaks the cmake find_path functions for some of the depends.
-    "-DCMAKE_PREFIX_PATH=/"
+    "-DCMAKE_TOOLCHAIN_FILE=${depends}/share/toolchain.cmake"
   ];
 
   preFixup = ''

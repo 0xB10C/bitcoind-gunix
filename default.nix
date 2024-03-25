@@ -1,9 +1,9 @@
 { pkgs ? import <nixpkgs> {} }:
 
 let
-  version = "5e65a38896525cdb84f25e0968cc230e147cfc9b";
+  version = "a2ba8f3366663a9f449c5bd9ce765ecfdd7a20bf";
   url = "https://github.com/hebasto/bitcoin/archive/${version}.tar.gz";
-  sha256 = "sha256-rKfPjUTmyVIJ2Sy8aETA12eXkzcGDy/Rbrj10rNeNj8=";
+  sha256 = "sha256-+Fci8ksyIt/gfGsuNwdCPbhI1VivVAa1cbU1o1/WR4Y=";
 
   depends = pkgs.callPackage ./depends.nix { inherit version url sha256; };
   bitcoind = pkgs.callPackage ./bitcoind.nix { inherit url sha256 depends; };
