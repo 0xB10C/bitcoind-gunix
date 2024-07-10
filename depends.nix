@@ -132,9 +132,9 @@ let
       sha256 = "5af07de982ba658fd91a03170c945f99c971f6955bc79df3266544373e39869c";
     };
     zeromq = {
-      urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.4";
-      file = "zeromq-4.3.4.tar.gz";
-      sha256 = "c593001a89f5a85dd2ddf564805deb860e02471171b3f204944857336295c3e5";
+      urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.5";
+      file = "zeromq-4.3.5.tar.gz";
+      sha256 = "6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43";
     };
     db48 = {
       urlPrefix = "https://download.oracle.com/berkeley-db";
