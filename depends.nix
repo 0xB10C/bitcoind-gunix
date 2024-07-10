@@ -25,7 +25,7 @@ let
       inherit sha256;
     };
 
-  qt_version = "5.15.10";
+  qt_version = "5.15.11";
   qt_url_prefix = "https://download.qt.io/official_releases/qt/5.15/${qt_version}/submodules";
 
   # Nix builds are pure. We can't access the Internet during builds - so we
@@ -114,17 +114,17 @@ let
     qt = {
       urlPrefix = qt_url_prefix;
       file = "qtbase-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "c0d06cb18d20f10bf7ad53552099e097ec39362d30a5d6f104724f55fa1c8fb9";
+      sha256 = "425ad301acd91ca66c10c0dabee0704e2d0cd2801a6b670115800cbb95f84846";
     };
     qt-translations = {
       urlPrefix = qt_url_prefix;
       file = "qttranslations-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "38b942bc7e62794dd072945c8a92bb9dfffed24070aea300327a3bb42f855609";
+      sha256 = "a31785948c640b7c66d9fe2db4993728ca07f64e41c560b3625ad191b276ff20";
     };
     qt-tools = {
       urlPrefix = qt_url_prefix;
       file = "qttools-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "66f46c9729c831dce431778a9c561cca32daceaede1c7e58568d7a5898167dae";
+      sha256 = "7cd847ae6ff09416df617136eadcaf0eb98e3bc9b89979219a3ea8111fb8d339";
     };
     sqlite = {
       urlPrefix = "https://sqlite.org/2020";
