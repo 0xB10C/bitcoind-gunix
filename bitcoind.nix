@@ -1,9 +1,9 @@
 {
-  gcc10Stdenv # The GUIX builds are using GCC 10.3.0
+  gcc12Stdenv
 , fetchurl
 # build-inputs
 , pkg-config
-, autoreconfHook
+, cmake
 , hexdump
 , which
 #
@@ -12,13 +12,13 @@
 , depends
 }:
 
-gcc10Stdenv.mkDerivation rec {
+gcc12Stdenv.mkDerivation rec {
   pname = "bitcoind";
   name = "bitcoind";
   src = fetchurl { inherit url sha256; };
 
-  nativeBuildInputs = [ ];
-  buildInputs = [ pkg-config autoreconfHook hexdump which ];
+  nativeBuildInputs = [ pkg-config cmake hexdump which ];
+  buildInputs = [ ];
 
   preConfigure = ''
     export CONFIG_SITE=${depends}/share/config.site

@@ -1,5 +1,5 @@
 { lib
-, gcc10Stdenv # The GUIX builds are using GCC 10.3.0
+, gcc12Stdenv
 , fetchurl
 # build-inputs
 , pkg-config
@@ -10,6 +10,7 @@
 , automake
 , which # Qt
 , perl # Qt
+, cmake
 #
 , version
 , url
@@ -25,16 +26,16 @@ let
       inherit sha256;
     };
 
-  qt_version = "5.15.11";
+  qt_version = "5.15.14";
   qt_url_prefix = "https://download.qt.io/official_releases/qt/5.15/${qt_version}/submodules";
 
   # Nix builds are pure. We can't access the Internet during builds - so we
   # make the depends sources avaliable beforehand.
   dependsSources = {
     boost = {
-      urlPrefix = "https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source";
-      file = "boost_1_81_0.tar.bz2";
-      sha256 = "71feeed900fbccca04a3b4f2f84a7c217186f28a940ed8b7ed4725986baf99fa";
+      urlPrefix = "https://archives.boost.io/release/1.81.0/source";
+      file = "boost_1_81_0.tar.gz";
+      sha256 = "205666dea9f6a7cfed87c7a6dfbeb52a2c1b9de55712c9c1a87735d7181452b6";
     };
     libevent = {
       urlPrefix = "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable";
@@ -53,8 +54,8 @@ let
     };
     fontconfig = {
       urlPrefix = "https://www.freedesktop.org/software/fontconfig/release";
-      file = "fontconfig-2.12.6.tar.bz2";
-      sha256 = "cf0c30807d08f6a28ab46c61b8dbd55c97d2f292cf88f3a07d3384687f31f017";
+      file = "fontconfig-2.12.6.tar.gz";
+      sha256 = "064b9ebf060c9e77011733ac9dc0e2ce92870b574cca2405e11f5353a683c334";
     };
     xcb-proto = {
       urlPrefix = "https://xorg.freedesktop.org/archive/individual/proto";
@@ -68,13 +69,13 @@ let
     };
     xproto = {
       urlPrefix = "https://xorg.freedesktop.org/releases/individual/proto";
-      file = "xproto-7.0.31.tar.bz2";
-      sha256 = "c6f9747da0bd3a95f86b17fb8dd5e717c8f3ab7f0ece3ba1b247899ec1ef7747";
+      file = "xproto-7.0.31.tar.gz";
+      sha256 = "6d755eaae27b45c5cc75529a12855fed5de5969b367ed05003944cf901ed43c7";
     };
     libxau = {
       urlPrefix = "https://xorg.freedesktop.org/releases/individual/lib/";
-      file = "libXau-1.0.9.tar.bz2";
-      sha256 = "ccf8cbf0dbf676faa2ea0a6d64bcc3b6746064722b606c8c52917ed00dcb73ec";
+      file = "libXau-1.0.9.tar.gz";
+      sha256 = "1f123d8304b082ad63a9e89376400a3b1d4c29e67e3ea07b3f659cccca690eea";
     };
     libxcb = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
@@ -83,28 +84,28 @@ let
     };
     libxcb-util = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
-      file = "xcb-util-0.4.0.tar.bz2";
-      sha256 = "46e49469cb3b594af1d33176cd7565def2be3fa8be4371d62271fabb5eae50e9";
+      file = "xcb-util-0.4.0.tar.gz";
+      sha256 = "0ed0934e2ef4ddff53fcc70fc64fb16fe766cd41ee00330312e20a985fd927a7";
     };
     libxcb-util-render = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
-      file = "xcb-util-renderutil-0.3.9.tar.bz2";
-      sha256 = "c6e97e48fb1286d6394dddb1c1732f00227c70bd1bedb7d1acabefdd340bea5b";
+      file = "xcb-util-renderutil-0.3.9.tar.gz";
+      sha256 = "55eee797e3214fe39d0f3f4d9448cc53cffe06706d108824ea37bb79fcedcad5";
     };
     libxcb-util-image = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
-      file = "xcb-util-image-0.4.0.tar.bz2";
-      sha256 = "2db96a37d78831d643538dd1b595d7d712e04bdccf8896a5e18ce0f398ea2ffc";
+      file = "xcb-util-image-0.4.0.tar.gz";
+      sha256 = "cb2c86190cf6216260b7357a57d9100811bb6f78c24576a3a5bfef6ad3740a42";
     };
     libxcb-util-keysyms = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
-      file = "xcb-util-keysyms-0.4.0.tar.bz2";
-      sha256 = "0ef8490ff1dede52b7de533158547f8b454b241aa3e4dcca369507f66f216dd9";
+      file = "xcb-util-keysyms-0.4.0.tar.gz";
+      sha256 = "0807cf078fbe38489a41d755095c58239e1b67299f14460dec2ec811e96caa96";
     };
     libxcb-util-wm = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
-      file = "xcb-util-wm-0.4.1.tar.bz2";
-      sha256 = "28bf8179640eaa89276d2b0f1ce4285103d136be6c98262b6151aaee1d3c2a3f";
+      file = "xcb-util-wm-0.4.1.tar.gz";
+      sha256 = "038b39c4bdc04a792d62d163ba7908f4bb3373057208c07110be73c1b04b8334";
     };
     libxkbcommon = {
       urlPrefix = "https://xkbcommon.org/download/";
@@ -114,17 +115,17 @@ let
     qt = {
       urlPrefix = qt_url_prefix;
       file = "qtbase-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "425ad301acd91ca66c10c0dabee0704e2d0cd2801a6b670115800cbb95f84846";
+      sha256 = "500d3b390048e9538c28b5f523dfea6936f9c2e10d24ab46580ff57d430b98be";
     };
     qt-translations = {
       urlPrefix = qt_url_prefix;
       file = "qttranslations-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "a31785948c640b7c66d9fe2db4993728ca07f64e41c560b3625ad191b276ff20";
+      sha256 = "5b94d1a11b566908622fcca2f8b799744d2f8a68da20be4caa5953ed63b10489";
     };
     qt-tools = {
       urlPrefix = qt_url_prefix;
       file = "qttools-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "7cd847ae6ff09416df617136eadcaf0eb98e3bc9b89979219a3ea8111fb8d339";
+      sha256 = "12061a85baf5f4de8fbc795e1d3872b706f340211b9e70962caeffc6f5e89563";
     };
     sqlite = {
       urlPrefix = "https://sqlite.org/2020";
@@ -142,19 +143,19 @@ let
       sha256 = "12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef";
     };
     miniupnpc = {
-      urlPrefix = "https://miniupnp.tuxfamily.org/files/";
-      file = "miniupnpc-2.2.2.tar.gz";
-      sha256 = "888fb0976ba61518276fe1eda988589c700a3f2a69d71089260d75562afd3687";
+      urlPrefix = "http://miniupnp.free.fr/files/";
+      file = "miniupnpc-2.2.7.tar.gz";
+      sha256 = "b0c3a27056840fd0ec9328a5a9bac3dc5e0ec6d2e8733349cf577b0aa1e70ac1";
     };
     libnatpmp = {
       urlPrefix = "https://github.com/miniupnp/libnatpmp/archive";
-      file = "07004b97cf691774efebe70404cf22201e4d330d.tar.gz";
-      sha256 = "9321953ceb39d07c25463e266e50d0ae7b64676bb3a986d932b18881ed94f1fb";
+      file = "f2433bec24ca3d3f22a8a7840728a3ac177f94ba.tar.gz";
+      sha256 = "ef84979950dfb3556705b63c9cd6c95501b75e887fba466234b187f3c9029669";
     };
     qrencode = {
       urlPrefix = "https://fukuchi.org/works/qrencode/";
-      file = "qrencode-4.1.1.tar.bz2";
-      sha256 = "e455d9732f8041cf5b9c388e345a641fd15707860f928e94507b1961256a6923";
+      file = "qrencode-4.1.1.tar.gz";
+      sha256 = "da448ed4f52aba6bcb0cd48cac0dd51b8692bccc4cd127431402fca6f8171e8e";
     };
 
   };
@@ -165,7 +166,7 @@ let
     ) dependsSources;
 
 in
-gcc10Stdenv.mkDerivation rec {
+gcc12Stdenv.mkDerivation rec {
   name = "bitcoin-${version}-depends";
   pname = "bitcoin-depends";
 
@@ -187,7 +188,9 @@ gcc10Stdenv.mkDerivation rec {
     ./patches/depends-qt-readd-PKG_CONFIG_SYSROOT_DIR-env-var.patch
   ];
 
-  nativeBuildInputs = [ pkg-config ];
+  dontUseCmakeConfigure = true;
+
+  nativeBuildInputs = [ pkg-config cmake ];
   buildInputs = [
     python3 bison libtool autoconf automake
     which perl # Qt
