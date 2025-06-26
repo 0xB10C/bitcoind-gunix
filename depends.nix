@@ -1,5 +1,5 @@
 { lib
-, gcc12Stdenv
+, stdenv
 , fetchurl
 # build-inputs
 , pkg-config
@@ -11,6 +11,7 @@
 , which # Qt
 , perl # Qt
 , cmake
+, curlMinimal
 #
 , version
 , url
@@ -20,22 +21,22 @@
 let
   dependsDir = "bitcoin-${version}/depends";
 
-  mkFetchSource = {urlPrefix, file, sha256}:
+  mkFetchSource = {urlPrefix, file, sha256, ...}:
     fetchurl {
       url = "${urlPrefix}/${file}" ;
       inherit sha256;
     };
 
-  qt_version = "5.15.14";
-  qt_url_prefix = "https://download.qt.io/official_releases/qt/5.15/${qt_version}/submodules";
+  qt_version = "6.7.3";
+  qt_url_prefix = "https://download.qt.io/archive/qt/${lib.versions.majorMinor qt_version}/${qt_version}/submodules";
 
   # Nix builds are pure. We can't access the Internet during builds - so we
   # make the depends sources avaliable beforehand.
   dependsSources = {
     boost = {
-      urlPrefix = "https://archives.boost.io/release/1.81.0/source";
-      file = "boost_1_81_0.tar.gz";
-      sha256 = "205666dea9f6a7cfed87c7a6dfbeb52a2c1b9de55712c9c1a87735d7181452b6";
+      urlPrefix = "https://github.com/boostorg/boost/releases/download/boost-1.88.0";
+      file = "boost-1.88.0-cmake.tar.gz";
+      sha256 = "dcea50f40ba1ecfc448fdf886c0165cf3e525fef2c9e3e080b9804e8117b9694";
     };
     libevent = {
       urlPrefix = "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable";
@@ -87,6 +88,11 @@ let
       file = "xcb-util-0.4.0.tar.gz";
       sha256 = "0ed0934e2ef4ddff53fcc70fc64fb16fe766cd41ee00330312e20a985fd927a7";
     };
+    libxcb-util-cursor = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-cursor-0.1.5.tar.gz";
+      sha256 = "0e9c5446dc6f3beb8af6ebfcc9e27bcc6da6fe2860f7fc07b99144dfa568e93b";
+    };
     libxcb-util-render = {
       urlPrefix = "https://xcb.freedesktop.org/dist";
       file = "xcb-util-renderutil-0.3.9.tar.gz";
@@ -114,43 +120,46 @@ let
     };
     qt = {
       urlPrefix = qt_url_prefix;
-      file = "qtbase-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "500d3b390048e9538c28b5f523dfea6936f9c2e10d24ab46580ff57d430b98be";
+      file = "qtbase-everywhere-src-${qt_version}.tar.xz";
+      sha256 = "8ccbb9ab055205ac76632c9eeddd1ed6fc66936fc56afc2ed0fd5d9e23da3097";
     };
     qt-translations = {
       urlPrefix = qt_url_prefix;
-      file = "qttranslations-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "5b94d1a11b566908622fcca2f8b799744d2f8a68da20be4caa5953ed63b10489";
+      file = "qttranslations-everywhere-src-${qt_version}.tar.xz";
+      sha256 = "dcc762acac043b9bb5e4d369b6d6f53e0ecfcf76a408fe0db5f7ef071c9d6dc8";
     };
     qt-tools = {
       urlPrefix = qt_url_prefix;
-      file = "qttools-everywhere-opensource-src-${qt_version}.tar.xz";
-      sha256 = "12061a85baf5f4de8fbc795e1d3872b706f340211b9e70962caeffc6f5e89563";
+      file = "qttools-everywhere-src-${qt_version}.tar.xz";
+      sha256 = "f03bb7df619cd9ac9dba110e30b7bcab5dd88eb8bdc9cc752563b4367233203f";
+    };
+    qt-cmakelists = {
+      urlPrefix = "https://code.qt.io/cgit/qt/qt5.git/plain";
+      file = "CMakeLists.txt?h=${qt_version}";
+      name = "CMakeLists.txt-${qt_version}";
+      sha256 = "9fb720a633c0c0a21c31fe62a34bf617726fed72480d4064f29ca5d6973d513f";
+    };
+    qt-cmake = {
+      urlPrefix = "https://code.qt.io/cgit/qt/qt5.git/plain/cmake";
+      file = "ECMOptionalAddSubdirectory.cmake?h=${qt_version}";
+      name = "ECMOptionalAddSubdirectory.cmake-${qt_version}";
+      sha256 = "97ee8bbfcb0a4bdcc6c1af77e467a1da0c5b386c42be2aa97d840247af5f6f70";
+    };
+    qt-cmake-helpers = {
+      urlPrefix = "https://code.qt.io/cgit/qt/qt5.git/plain/cmake";
+      file = "QtTopLevelHelpers.cmake?h=${qt_version}";
+      name = "QtTopLevelHelpers.cmake-${qt_version}";
+      sha256 = "5ac2a7159ee27b5b86d26ecff44922e7b8f319aa847b7b5766dc17932fd4a294";
     };
     sqlite = {
-      urlPrefix = "https://sqlite.org/2020";
-      file = "sqlite-autoconf-3380500.tar.gz";
-      sha256 = "5af07de982ba658fd91a03170c945f99c971f6955bc79df3266544373e39869c";
+      urlPrefix = "https://sqlite.org/2024";
+      file = "sqlite-autoconf-3460100.tar.gz";
+      sha256 = "67d3fe6d268e6eaddcae3727fce58fcc8e9c53869bdd07a0c61e38ddf2965071";
     };
     zeromq = {
       urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.5";
       file = "zeromq-4.3.5.tar.gz";
       sha256 = "6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43";
-    };
-    db48 = {
-      urlPrefix = "https://download.oracle.com/berkeley-db";
-      file = "db-4.8.30.NC.tar.gz";
-      sha256 = "12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef";
-    };
-    miniupnpc = {
-      urlPrefix = "http://miniupnp.free.fr/files/";
-      file = "miniupnpc-2.2.7.tar.gz";
-      sha256 = "b0c3a27056840fd0ec9328a5a9bac3dc5e0ec6d2e8733349cf577b0aa1e70ac1";
-    };
-    libnatpmp = {
-      urlPrefix = "https://github.com/miniupnp/libnatpmp/archive";
-      file = "f2433bec24ca3d3f22a8a7840728a3ac177f94ba.tar.gz";
-      sha256 = "ef84979950dfb3556705b63c9cd6c95501b75e887fba466234b187f3c9029669";
     };
     qrencode = {
       urlPrefix = "https://fukuchi.org/works/qrencode/";
@@ -162,11 +171,14 @@ let
 
   # copies the 'dependsSources.file' into the depends/sources dir for each depends
   cpDependsSources = lib.attrsets.mapAttrsToList (name: value:
-    "cp ${mkFetchSource value} ${dependsDir}/sources/${value.file}\n"
-    ) dependsSources;
-
+  let
+    fetched = mkFetchSource value;
+    targetName = lib.escapeShellArg (value.name or value.file);
+  in
+    "cp ${fetched} ${dependsDir}/sources/${targetName}"
+  ) dependsSources;
 in
-gcc12Stdenv.mkDerivation rec {
+stdenv.mkDerivation rec {
   name = "bitcoin-${version}-depends";
   pname = "bitcoin-depends";
 
@@ -189,15 +201,15 @@ gcc12Stdenv.mkDerivation rec {
   ];
 
   dontUseCmakeConfigure = true;
-
   nativeBuildInputs = [ pkg-config cmake ];
   buildInputs = [
     python3 bison libtool autoconf automake
-    which perl # Qt
+    which perl curlMinimal # Qt
   ];
 
   # we don't want to download/build/cache the Qt depends
   # makeFlags = [ "NO_QT=1" ];
+  cmakeFlags = [ "-DCMAKE_PREFIX_PATH" "/" ];
 
   doCheck = false;
   enableParallelBuilding = true;
