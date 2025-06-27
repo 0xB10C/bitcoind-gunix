@@ -208,7 +208,7 @@ stdenv.mkDerivation rec {
   ];
 
   # we don't want to download/build/cache the Qt depends
-  # makeFlags = [ "NO_QT=1" ];
+  makeFlags = [ "NO_QT=1" ];
   cmakeFlags = [ "-DCMAKE_PREFIX_PATH" "/" ];
 
   doCheck = false;
