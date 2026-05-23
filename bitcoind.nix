@@ -53,9 +53,11 @@ gcc14Stdenv.mkDerivation rec {
   env.CXXFLAGS = "-O2 -g";
 
   # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
-  # (debug) variants alongside the original binary.
+  # (debug) variants alongside the original binary. The script is rendered
+  # from contrib/devtools/split-debug.sh.in into the cmake build dir by
+  # setup_split_debug_script() in cmake/module/Maintenance.cmake.
   postInstall = ''
-    ./contrib/devtools/split-debug.sh \
+    build/split-debug.sh \
       $out/bin/bitcoind \
       $out/bin/bitcoind-s \
       $out/bin/bitcoind-d
