@@ -26,9 +26,9 @@ let
   # make the depends sources avaliable beforehand.
   dependsSources = {
     boost = {
-      urlPrefix = "https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source";
-      file = "boost_1_81_0.tar.bz2";
-      sha256 = "71feeed900fbccca04a3b4f2f84a7c217186f28a940ed8b7ed4725986baf99fa";
+      urlPrefix = "https://github.com/boostorg/boost/releases/download/boost-1.90.0";
+      file = "boost-1.90.0-cmake.tar.gz";
+      sha256 = "913ca43d49e93d1b158c9862009add1518a4c665e7853b349a6492d158b036d4";
     };
     libevent = {
       urlPrefix = "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable";
@@ -37,13 +37,13 @@ let
     };
     systemtap = {
       urlPrefix = "https://sourceware.org/ftp/systemtap/releases/";
-      file = "systemtap-4.8.tar.gz";
-      sha256 = "cbd50a4eba5b261394dc454c12448ddec73e55e6742fda7f508f9fbc1331c223";
+      file = "systemtap-5.3.tar.gz";
+      sha256 = "966a360fb73a4b65a8d0b51b389577b3c4f92a327e84aae58682103e8c65a69a";
     };
     sqlite = {
-      urlPrefix = "https://sqlite.org/2020";
-      file = "sqlite-autoconf-3380500.tar.gz";
-      sha256 = "5af07de982ba658fd91a03170c945f99c971f6955bc79df3266544373e39869c";
+      urlPrefix = "https://sqlite.org/2025";
+      file = "sqlite-autoconf-3500400.tar.gz";
+      sha256 = "a3db587a1b92ee5ddac2f66b3edb41b26f9c867275782d46c3a088977d6a5b18";
     };
     zeromq = {
       urlPrefix = "https://github.com/zeromq/libzmq/releases/download/v4.3.5";
