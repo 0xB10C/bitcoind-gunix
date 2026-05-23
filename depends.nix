@@ -16,9 +16,12 @@
 let
   dependsDir = "bitcoin-${version}/depends";
 
-  mkFetchSource = {urlPrefix, file, sha256}:
+  # `downloadFile` is the name on the remote server (defaults to `file`). It
+  # only differs from `file` when the upstream depends Makefile renames the
+  # tarball locally (e.g. capnp's `capnproto-c++` -> `capnproto-cxx`).
+  mkFetchSource = {urlPrefix, file, sha256, downloadFile ? file}:
     fetchurl {
-      url = "${urlPrefix}/${file}" ;
+      url = "${urlPrefix}/${downloadFile}";
       inherit sha256;
     };
 
@@ -50,6 +53,15 @@ let
       file = "zeromq-4.3.5.tar.gz";
       sha256 = "6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43";
     };
+    # Cap'n Proto: used by Bitcoin Core's multiprocess IPC support (new in v29+).
+    # Upstream depends downloads the tarball as `capnproto-c++-X.Y.Z.tar.gz`
+    # and renames it locally to `capnproto-cxx-X.Y.Z.tar.gz`.
+    capnp = {
+      urlPrefix = "https://capnproto.org";
+      downloadFile = "capnproto-c++-1.3.0.tar.gz";
+      file = "capnproto-cxx-1.3.0.tar.gz";
+      sha256 = "098f824a495a1a837d56ae17e07b3f721ac86f8dbaf58896a389923458522108";
+    };
 
   };
 
@@ -77,12 +89,20 @@ gcc14Stdenv.mkDerivation rec {
 
   sourceRoot = dependsDir;
 
+  patches = [
+    # Re-add the `test -f source/...` short-circuit removed in upstream
+    # 46135d90ea9. Without it, the depends Makefile always tries to curl,
+    # which fails in Nix's sandboxed (no-network) build environment.
+    ./patches/depends-funcs-test-source-exists.patch
+  ];
+
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
     python3 libtool autoconf automake
   ];
 
   # Skip Bitcoin's GUI for now: don't download/build/cache the Qt depends.
+  # Multiprocess IPC (capnp + libmultiprocess) is built unconditionally.
   makeFlags = [ "NO_QT=1" ];
 
   doCheck = false;

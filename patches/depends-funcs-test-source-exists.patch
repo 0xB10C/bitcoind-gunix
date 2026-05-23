@@ -1,0 +1,23 @@
+Re-add the `test -f` short-circuit in depends' fetch_file so pre-populated
+source tarballs (placed in $(SOURCES_PATH) before the build, since Nix builds
+are sandboxed with no network) are picked up without invoking curl.
+
+Upstream removed this check in 46135d90ea9 ("depends: Drop redundant check
+for downloaded file") because for an unmodified upstream build the download
+stamp's existence already implies the source is present. In our pure-Nix
+build we pre-stage sources but cannot pre-create the stamp files (they are
+computed at build time), so we still need this guard.
+
+--- a/funcs.mk
++++ b/funcs.mk
+@@ -36,8 +36,9 @@ define fetch_file_inner
+ endef
+
+ define fetch_file
++    ( test -f $$($(1)_source_dir)/$(4) || \
+     ( $(call fetch_file_inner,$(1),$(2),$(3),$(4),$(5)) || \
+-      $(call fetch_file_inner,$(1),$(FALLBACK_DOWNLOAD_PATH),$(4),$(4),$(5)))
++      $(call fetch_file_inner,$(1),$(FALLBACK_DOWNLOAD_PATH),$(4),$(4),$(5))))
+ endef
+
+ # Shell script to create a source tarball in $(1)_source from local directory
