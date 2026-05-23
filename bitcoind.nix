@@ -45,16 +45,26 @@ gcc14Stdenv.mkDerivation rec {
   #
   # 2. Append -DCMAKE_EXE_LINKER_FLAGS via cmakeFlagsArray (rather than
   #    cmakeFlags) so the space-separated linker-flag value survives the
-  #    nixpkgs cmake hook's word splitting. Mirror GUIX's static linking
-  #    of libstdc++ and libgcc so the binary doesn't NEED libstdc++.so.6
-  #    or libgcc_s.so.1 at runtime — see contrib/guix/libexec/build.sh:
+  #    nixpkgs cmake hook's word splitting. Mirror GUIX's full
+  #    HOST_LDFLAGS + static-libstdc++/libgcc — see
+  #    contrib/guix/libexec/build.sh:
+  #
+  #      HOST_LDFLAGS="-Wl,--as-needed
+  #                    -Wl,--dynamic-linker=$glibc_dynamic_linker
+  #                    -Wl,-O2"
   #      CMAKE_EXE_LINKER_FLAGS="${HOST_LDFLAGS} -static-libstdc++ -static-libgcc"
+  #
+  #    The dynamic-linker path (`/lib64/ld-linux-x86-64.so.2`) makes the
+  #    resulting binary use the standard FHS interpreter rather than
+  #    Nix's glibc store path, matching upstream. The binary then won't
+  #    run on NixOS without nix-ld/buildFHSEnv, which is fine — the goal
+  #    is byte-for-byte parity with the GUIX release.
   preConfigure = ''
     mkdir -p depends
     ln -s ${depends} depends/x86_64-pc-linux-gnu
 
     cmakeFlagsArray+=(
-      "-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
+      "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--as-needed -Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2 -Wl,-O2 -static-libstdc++ -static-libgcc"
     )
   '';
 
