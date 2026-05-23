@@ -57,7 +57,7 @@ gcc14Stdenv.mkDerivation rec {
   # from contrib/devtools/split-debug.sh.in into the cmake build dir by
   # setup_split_debug_script() in cmake/module/Maintenance.cmake.
   postInstall = ''
-    build/split-debug.sh \
+    ./split-debug.sh \
       $out/bin/bitcoind \
       $out/bin/bitcoind-s \
       $out/bin/bitcoind-d
