@@ -7,6 +7,8 @@
 , libtool
 , autoconf
 , automake
+, cmake # needed by boost, libevent, zeromq, capnp
+, which # invoked by upstream depends build scripts
 #
 , version
 , url
@@ -98,8 +100,12 @@ gcc14Stdenv.mkDerivation rec {
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    python3 libtool autoconf automake
+    python3 libtool autoconf automake cmake which
   ];
+
+  # The depends build invokes its own cmake configure commands; don't let
+  # nixpkgs' cmake setup-hook run a top-level configure.
+  dontUseCmakeConfigure = true;
 
   # Skip Bitcoin's GUI for now: don't download/build/cache the Qt depends.
   # Multiprocess IPC (capnp + libmultiprocess) is built unconditionally.
