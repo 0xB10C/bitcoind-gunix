@@ -74,6 +74,17 @@ gcc14Stdenv.mkDerivation rec {
   env.CFLAGS = "-O2 -g";
   env.CXXFLAGS = "-O2 -g";
 
+  # Tell nixpkgs' gcc-wrapper not to inject -rpath flags into the link line.
+  # Upstream GUIX-built bitcoind has no RUNPATH; the binary uses the
+  # standard /lib64/ld-linux-x86-64.so.2 interpreter to find libc / libm in
+  # the system's standard library search paths. Without this, the wrapper
+  # adds RUNPATH entries pointing at /nix/store/<glibc>/lib (where it
+  # actually links against), which fixupPhase then can't remove because the
+  # binary genuinely references those libraries — they're just findable via
+  # the dynamic linker without RUNPATH.
+  env.NIX_DONT_SET_RPATH = "1";
+  env.NIX_NO_SELF_RPATH = "1";
+
   # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
   # (debug) variants alongside the original binary. The script is rendered
   # from contrib/devtools/split-debug.sh.in into the cmake build dir by
