@@ -17,6 +17,20 @@ gcc14Stdenv.mkDerivation rec {
 
   nativeBuildInputs = [ pkg-config cmake ];
 
+  # Bitcoin Core's libmultiprocess bakes the depends-build-time absolute
+  # path into the `mpgen` binary via the `capnp_PREFIX` string-literal
+  # macro (see src/ipc/libmultiprocess/include/mp/config.h.in). At depends
+  # build time that path is /build/bitcoin-<ver>/depends/x86_64-pc-linux-gnu,
+  # and mpgen then execs `<capnp_PREFIX>/bin/capnp` at codegen time during
+  # the bitcoind build. Since our nix build sandbox places the source at
+  # /build/bitcoin-<ver>, the same `depends/x86_64-pc-linux-gnu` path
+  # exists relative to PWD; symlink it to the depends output so the
+  # baked-in path resolves.
+  preConfigure = ''
+    mkdir -p depends
+    ln -s ${depends} depends/x86_64-pc-linux-gnu
+  '';
+
   # Match the GUIX cmake invocation: build out-of-tree under ./build/ with
   # the depends-provided toolchain. Skip the GUI, tests, bench, and fuzz
   # binary; mirror the upstream-release flags (REDUCE_EXPORTS, SKIP_RPATH).
