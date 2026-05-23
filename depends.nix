@@ -116,5 +116,13 @@ gcc14Stdenv.mkDerivation rec {
 
   postFixup = ''
     mv x86_64-pc-linux-gnu/* $out/
+
+    # The depends build hardcodes its absolute build-time staging path
+    # (e.g. /build/.../depends/x86_64-pc-linux-gnu) into CMake config
+    # files like libevent's LibeventTargets-static.cmake. Rewrite those
+    # to point at $out so consumers (the bitcoind build) can find the
+    # installed libraries and headers.
+    find $out -type f \( -name '*.cmake' -o -name '*.pc' \) \
+      -exec sed -i "s|/build/bitcoin-${version}/depends/x86_64-pc-linux-gnu|$out|g" {} +
   '';
 }
