@@ -1,5 +1,5 @@
 { lib
-, gcc10Stdenv # The GUIX builds are using GCC 10.3.0
+, gcc14Stdenv # The GUIX builds for Bitcoin Core v31.0 use GCC 14.2.0
 , fetchurl
 # build-inputs
 , pkg-config
@@ -165,7 +165,7 @@ let
     ) dependsSources;
 
 in
-gcc10Stdenv.mkDerivation rec {
+gcc14Stdenv.mkDerivation rec {
   name = "bitcoin-${version}-depends";
   pname = "bitcoin-depends";
 
