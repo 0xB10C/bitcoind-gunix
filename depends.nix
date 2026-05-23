@@ -50,21 +50,6 @@ let
       file = "zeromq-4.3.5.tar.gz";
       sha256 = "6653ef5910f17954861fe72332e68b03ca6e4d9c7160eb3a8de5a5a913bfab43";
     };
-    db48 = {
-      urlPrefix = "https://download.oracle.com/berkeley-db";
-      file = "db-4.8.30.NC.tar.gz";
-      sha256 = "12edc0df75bf9abd7f82f821795bcee50f42cb2e5f76a6a281b85732798364ef";
-    };
-    miniupnpc = {
-      urlPrefix = "https://miniupnp.tuxfamily.org/files/";
-      file = "miniupnpc-2.2.2.tar.gz";
-      sha256 = "888fb0976ba61518276fe1eda988589c700a3f2a69d71089260d75562afd3687";
-    };
-    libnatpmp = {
-      urlPrefix = "https://github.com/miniupnp/libnatpmp/archive";
-      file = "07004b97cf691774efebe70404cf22201e4d330d.tar.gz";
-      sha256 = "9321953ceb39d07c25463e266e50d0ae7b64676bb3a986d932b18881ed94f1fb";
-    };
 
   };
 
