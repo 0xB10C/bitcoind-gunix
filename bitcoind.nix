@@ -17,20 +17,6 @@ gcc14Stdenv.mkDerivation rec {
 
   nativeBuildInputs = [ pkg-config cmake ];
 
-  # Bitcoin Core's libmultiprocess bakes the depends-build-time absolute
-  # path into the `mpgen` binary via the `capnp_PREFIX` string-literal
-  # macro (see src/ipc/libmultiprocess/include/mp/config.h.in). At depends
-  # build time that path is /build/bitcoin-<ver>/depends/x86_64-pc-linux-gnu,
-  # and mpgen then execs `<capnp_PREFIX>/bin/capnp` at codegen time during
-  # the bitcoind build. Since our nix build sandbox places the source at
-  # /build/bitcoin-<ver>, the same `depends/x86_64-pc-linux-gnu` path
-  # exists relative to PWD; symlink it to the depends output so the
-  # baked-in path resolves.
-  preConfigure = ''
-    mkdir -p depends
-    ln -s ${depends} depends/x86_64-pc-linux-gnu
-  '';
-
   # Match the GUIX cmake invocation: build out-of-tree under ./build/ with
   # the depends-provided toolchain. Skip the GUI, tests, bench, and fuzz
   # binary; mirror the upstream-release flags (REDUCE_EXPORTS, SKIP_RPATH).
@@ -45,6 +31,32 @@ gcc14Stdenv.mkDerivation rec {
     "-DREDUCE_EXPORTS=ON"
     "-DCMAKE_SKIP_RPATH=TRUE"
   ];
+
+  # preConfigure does two things:
+  #
+  # 1. Symlink the depends output into ./depends/x86_64-pc-linux-gnu so the
+  #    absolute path baked into mpgen via the `capnp_PREFIX` macro resolves.
+  #    libmultiprocess's mpgen execs `<capnp_PREFIX>/bin/capnp` at codegen
+  #    time, where capnp_PREFIX is the depends-build-time absolute path
+  #    (/build/bitcoin-<ver>/depends/x86_64-pc-linux-gnu, baked in via
+  #    src/ipc/libmultiprocess/include/mp/config.h.in). The Nix sandbox
+  #    places our source at /build/bitcoin-<ver>, so this symlink makes
+  #    that path resolve through to ${depends}.
+  #
+  # 2. Append -DCMAKE_EXE_LINKER_FLAGS via cmakeFlagsArray (rather than
+  #    cmakeFlags) so the space-separated linker-flag value survives the
+  #    nixpkgs cmake hook's word splitting. Mirror GUIX's static linking
+  #    of libstdc++ and libgcc so the binary doesn't NEED libstdc++.so.6
+  #    or libgcc_s.so.1 at runtime — see contrib/guix/libexec/build.sh:
+  #      CMAKE_EXE_LINKER_FLAGS="${HOST_LDFLAGS} -static-libstdc++ -static-libgcc"
+  preConfigure = ''
+    mkdir -p depends
+    ln -s ${depends} depends/x86_64-pc-linux-gnu
+
+    cmakeFlagsArray+=(
+      "-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
+    )
+  '';
 
   # Match GUIX's -O2 -g (cmake otherwise uses RelWithDebInfo defaults from
   # the depends toolchain, which is fine — but enforce the same compile
