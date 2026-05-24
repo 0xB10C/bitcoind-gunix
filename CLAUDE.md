@@ -201,29 +201,52 @@ Subsequent commits applied GUIX's full toolchain configuration:
 
 | Metric | Upstream | Ours | Δ |
 |---|---|---|---|
-| Stripped size | 17,826,248 B | 17,908,080 B | **+0.46% (+81,832 B)** |
+| Stripped size | 17,826,248 B | 17,838,464 B | **+0.07% (+12,216 B)** |
 | Interpreter | `/lib64/ld-linux-x86-64.so.2` | same | ✅ |
 | NEEDED | libpthread, libm, libc, ld | same | ✅ |
 | RUNPATH | (none) | (none) | ✅ |
 | Dynamic symbol count | 344 | 344 | ✅ |
+| Dynamic relocations (RELATIVE) | 17,337 | 17,414 | +77 |
 | Path strings (`/bitcoin/...`) | 9 | 9 | ✅ |
 | `./*.cpp` relative paths | 160 | 160 | ✅ |
-| `.note.gnu.property` (CET) | present (32 B) | absent | ❌ |
+| Function count (endbr64) | 50,032 | 50,032 | ✅ |
+| First N function addresses identical | — | 3,691 of 50,032 | first 7% byte-match |
+| `.note.gnu.property` (CET) | present (32 B) | absent | ❌ binutils 2.44 strictness |
 | `.comment` | `GCC 14.3.0` | `GCC 8.3.0`+`GCC 14.3.0` | ❌ extra stamp |
-| `.note.ABI-tag` kernel | 3.2.0 | 2.6.32 | ❌ (got worse after glibc override?) |
+| `.note.ABI-tag` kernel | 3.2.0 | 2.6.32 | ❌ |
 
 bloaty section deltas (positive = ours bigger):
 ```
-+258 KiB  .text                         ← largest remaining
--176 KiB  -.eh_frame  (ours smaller)
- +1.8 KB  .rela.dyn
- +1.1 KB  .gcc_except_table
- +672 B   .data.rel.ro
- +352 B   .rodata
-  -48 B   -.note.gnu.property  (missing in ours)
-  +16 B   .comment
-TOTAL: +80 KB
++11.4 KiB  .text
++1.80 KiB  .rela.dyn          ← 77 extra R_X86_64_RELATIVE @ 24B each = +1848B
++1.73 KiB  .eh_frame
+  +672 B   .data.rel.ro
+  +346 B   .gcc_except_table
+  +344 B   .eh_frame_hdr
+  +256 B   .rodata
+   +32 B   .hash
+   +16 B   .comment           ← extra "GCC: (GNU) 8.3.0" string
+   -48 B   .note.gnu.property (missing in ours)
+TOTAL: +12,216 B  (+0.07% vs upstream)
 ```
+
+### Iteration history of the delta
+
+| Step | Change | Delta |
+|---|---|---|
+| 0 | Original v27.0 build (gcc10/glibc2.40, no GUIX patches) | ~291 MB |
+| 1 | v31.0 build with gcc14 default | +1.27 MB |
+| 2 | static-link libstdc++/libgcc | +24 KB |
+| 3 | match GUIX HOST_LDFLAGS (--dynamic-linker, --as-needed) | +28 KB |
+| 4 | strip Nix RUNPATH | +28 KB |
+| 5 | rebuild gcc 14 against glibc 2.31 | +25 KB |
+| 6 | apply gcc-ssa-generation + binutils-unaligned patches | +25 KB |
+| 7 | apply GUIX linux-base-gcc configure flags | +82 KB |
+| 8 | add -ffile-prefix-map to match upstream's path scheme | +82 KB |
+| 9 | rebuild glibc 2.31 with --enable-cet + GUIX flags | +82 KB |
+| 10 | -fomit-frame-pointer override (nixpkgs forced FP) | +172 KB |
+| 11 | hardeningDisable zerocallusedregs | **+37 KB** |
+| 12 | hardeningDisable strictoverflow | **+12 KB** |
 
 ### What's still likely contributing to .text +258 KiB
 
