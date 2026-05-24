@@ -119,6 +119,12 @@ gcc14Stdenv.mkDerivation rec {
   # 50k functions in the final binary.
   env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer";
 
+  # nixpkgs' default hardening adds `-fzero-call-used-regs=used-gpr`,
+  # which emits extra register-zeroing instructions before function
+  # returns. GUIX doesn't use this hardening, so we disable it to
+  # match upstream codegen byte-for-byte.
+  hardeningDisable = [ "zerocallusedregs" ];
+
 
   doCheck = false;
   enableParallelBuilding = true;
