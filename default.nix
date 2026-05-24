@@ -1,12 +1,57 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import <nixpkgs> {}
+# glibc 2.31 pulled from a separate nixpkgs pin (nixos-20.09 via flake.nix).
+# Defaults to the active pkgs' glibc so `nix-build` (non-flake) still works,
+# even though that flow will then use the current glibc, not 2.31.
+, glibc231 ? pkgs.glibc
+}:
 
 let
   version = "31.0";
   url = "https://bitcoincore.org/bin/bitcoin-core-${version}/bitcoin-${version}.tar.gz";
   sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
 
-  depends = pkgs.callPackage ./depends.nix { inherit version url sha256; };
-  bitcoind = pkgs.callPackage ./bitcoind.nix { inherit url sha256 depends; };
+  # Build a gcc 14 / glibc 2.31 stdenv so the entire build (depends and the
+  # final bitcoind link) uses glibc 2.31 — matching GUIX. The chain:
+  #
+  #   1. Wrap the existing gcc 14 with bintools/cc-wrapper scripts that
+  #      point at glibc 2.31's lib dir, CRT files, and dynamic linker.
+  #      That gives us `stdenvForGccRebuild` — a stdenv that compiles and
+  #      links against glibc 2.31, but still ships the old libstdc++ built
+  #      against the current glibc.
+  #
+  #   2. Rebuild gcc 14 itself inside `stdenvForGccRebuild`. The new
+  #      gcc's libstdc++ is then compiled against glibc 2.31 and won't
+  #      reference newer-glibc-only symbols (like __libc_single_threaded
+  #      added in 2.32, or the __isoc23_* family added in 2.39).
+  #
+  #   3. Wrap the rebuilt gcc and use it as the final stdenv's CC.
+  bintoolsWithGlibc231 = pkgs.wrapBintoolsWith {
+    inherit (pkgs.gcc14Stdenv.cc.bintools) bintools;
+    libc = glibc231;
+  };
+  stdenvForGccRebuild = pkgs.overrideCC pkgs.gcc14Stdenv (pkgs.wrapCCWith {
+    cc = pkgs.gcc14Stdenv.cc.cc;
+    libc = glibc231;
+    bintools = bintoolsWithGlibc231;
+  });
+  gcc14RebuiltWithGlibc231 = pkgs.gcc14.cc.override {
+    stdenv = stdenvForGccRebuild;
+  };
+  ccWithGlibc231 = pkgs.wrapCCWith {
+    cc = gcc14RebuiltWithGlibc231;
+    libc = glibc231;
+    bintools = bintoolsWithGlibc231;
+  };
+  gcc14Glibc231Stdenv = pkgs.overrideCC pkgs.gcc14Stdenv ccWithGlibc231;
+
+  depends = pkgs.callPackage ./depends.nix {
+    inherit version url sha256;
+    gcc14Stdenv = gcc14Glibc231Stdenv;
+  };
+  bitcoind = pkgs.callPackage ./bitcoind.nix {
+    inherit url sha256 depends;
+    gcc14Stdenv = gcc14Glibc231Stdenv;
+  };
 in {
   depends = depends;
   bitcoind = bitcoind;

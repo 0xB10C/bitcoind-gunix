@@ -1,5 +1,5 @@
 {
-  gcc14Stdenv # The GUIX builds for Bitcoin Core v31.0 use GCC 14.2.0
+  gcc14Stdenv # GCC 14, ideally with glibc 2.31 wired in via default.nix
 , fetchurl
 # build-inputs
 , pkg-config
