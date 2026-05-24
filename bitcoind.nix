@@ -101,8 +101,8 @@ gcc14Stdenv.mkDerivation rec {
   #
   #   - any other build-dir path: /build/bitcoin-31.0/...
   #     -> /bitcoin/... (general fallback)
-  env.CFLAGS = "-O2 -g -fcf-protection=full -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
-  env.CXXFLAGS = "-O2 -g -fcf-protection=full -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+  env.CFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+  env.CXXFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
 
   # Tell nixpkgs' gcc-wrapper not to inject -rpath flags into the link line.
   # Upstream GUIX-built bitcoind has no RUNPATH; the binary uses the

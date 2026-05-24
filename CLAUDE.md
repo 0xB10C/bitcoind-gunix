@@ -247,17 +247,61 @@ subtler:
   function alignment (`-falign-functions=16`), 7 extra functions add
   ~112 bytes of padding. Tiny.
 
-### What I'd want from a GUIX build log (offer pending)
+### Findings from GUIX build log (`v31-guix-build.log`, untracked)
 
-If the user provides a GUIX build log we can:
+User provided a real `./bitcoin-31.0` GUIX build log (20,449 lines).
+Key takeaways:
 
-1. Compare exact compile commands per source file (CXXFLAGS as actually
-   invoked by ninja/make).
-2. See the gcc/binutils/glibc versions GUIX used and any patches we
-   missed.
-3. See the linker invocation (ld args, --hash-style, --build-id, etc.).
-4. Diff the depends configure commands to make sure ours uses the
-   same boost/libevent/sqlite options.
+1. **GUIX cross-compiles even for native x86_64**. Their depends and
+   bitcoin compiles invoke `x86_64-linux-gnu-gcc` (not bare `gcc`),
+   driven by a cross-toolchain assembled via `make-bitcoin-cross-toolchain`
+   in `contrib/guix/manifest.scm`. The build process: build cross-
+   binutils → cross-gcc-sans-libc → kernel headers → cross-libc → final
+   cross-gcc against the new libc. We do a *native* gcc 14 rebuild
+   against glibc 2.31 which may produce subtly different code paths.
+
+2. **Two gcc versions in the build**. Line 18549 shows a "Build C
+   compiler" of `gcc-toolchain-14.2.0/bin/gcc` (used for build-host
+   tools) while the target compile uses `x86_64-linux-gnu-gcc` from
+   gcc 14.3.0. Native nixpkgs gcc 14 in our build is 14.3.0 too.
+
+3. **GUIX depends compile flags include `-O2 -pipe`** (sqlite config at
+   line 18550). We use `-O2` without `-pipe`. `-pipe` just affects
+   pipeline-vs-tempfile communication and shouldn't change output, but
+   could affect timing.
+
+4. **`-ffile-prefix-map` is used during depends builds**. The Qt configure
+   line uses
+   `-ffile-prefix-map=/bitcoin/depends/work/build/x86_64-linux-gnu/qt/6.8.3-d0332da80a9=/usr`
+   to map depends-internal build paths to `/usr`. Each depends package
+   gets its own per-package prefix-map.
+
+5. **Bitcoin core's CMake feature detection** (line ~19400) confirms
+   `CXX_SUPPORTS__FCF_PROTECTION_FULL` and `LINKER_SUPPORTS__FCF_PROTECTION_FULL`
+   succeeded — so bitcoin's cmake adds `-fcf-protection=full` to
+   `core_interface`. But `core_interface` is "a usage requirement for
+   all targets except secp256k1" (per top-level CMakeLists comment),
+   so secp256k1 doesn't get CET unless we force it globally.
+
+### CET / .note.gnu.property investigation
+
+Findings while chasing why our binary lacks `.note.gnu.property`:
+
+- The linker drops `.note.gnu.property` from the final binary entirely
+  if ANY input lacks the section. Verified with a minimal link test.
+- Our libstdc++.a, libgcc.a, and rebuilt glibc CRTs ALL have CET
+  (IBT, SHSTK). Bitcoin's own .o files do too (because
+  `core_interface` adds `-fcf-protection=full`).
+- But our depends archives (libevent_core.a, sqlite3.o, etc.) lacked
+  CET. Why? `--enable-cet=yes` in gcc configure doesn't change the
+  user-code default of `-fcf-protection=none`; it only enables CET
+  for gcc's own libstdc++/libgcc build.
+- Fix landed: `NIX_CFLAGS_COMPILE=-fcf-protection=full` in depends.nix
+  (gcc-wrapper appends to every depends compile) AND
+  `-fcf-protection=full` added to bitcoind's CFLAGS/CXXFLAGS for
+  secp256k1 and other off-core_interface targets.
+- After fix: depends .o files now have CET (verified — endbr64=63 in
+  buffer.c.o, IBT/SHSTK property present).
 
 ### Outstanding atomic-commit threads
 

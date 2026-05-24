@@ -111,14 +111,6 @@ gcc14Stdenv.mkDerivation rec {
   # Multiprocess IPC (capnp + libmultiprocess) is built unconditionally.
   makeFlags = [ "NO_QT=1" ];
 
-  # Force CET (Control-flow Enforcement) instrumentation in every depends
-  # compile. gcc's default for -fcf-protection is 'none' even with
-  # --enable-cet=yes baked in; depends' own Makefile doesn't pass the flag.
-  # If even one input to the final bitcoind link lacks the IBT/SHSTK
-  # property note the linker drops `.note.gnu.property` from the binary
-  # entirely. Setting NIX_CFLAGS_COMPILE on the gcc-wrapper appends this
-  # to every depends compile.
-  env.NIX_CFLAGS_COMPILE = "-fcf-protection=full";
 
   doCheck = false;
   enableParallelBuilding = true;
