@@ -16,9 +16,33 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       pkgsGlibc231 = import nixpkgs-glibc231 { inherit system; };
+      # Rebuild glibc 2.31 with the same configure flags GUIX uses (see
+      # contrib/guix/manifest.scm `define-public glibc-2.31`):
+      #
+      #   --enable-stack-protector=all
+      #   --enable-cet
+      #   --enable-bind-now
+      #   --disable-werror
+      #   --disable-timezone-tools
+      #   --disable-profile
+      #
+      # Adding --enable-cet is what populates the resulting CRT objects
+      # (Scrt1.o, crt[in].o) with the CET property notes, which the
+      # linker then propagates into the final bitcoind as the
+      # .note.gnu.property section — currently absent in our binary.
+      glibc231 = pkgsGlibc231.glibc.overrideAttrs (old: {
+        configureFlags = (old.configureFlags or []) ++ [
+          "--enable-stack-protector=all"
+          "--enable-cet"
+          "--enable-bind-now"
+          "--disable-werror"
+          "--disable-timezone-tools"
+          "--disable-profile"
+        ];
+      });
       drvs = import ./default.nix {
         inherit pkgs;
-        glibc231 = pkgsGlibc231.glibc;
+        inherit glibc231;
       };
     in {
       packages.${system} = {
