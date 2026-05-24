@@ -122,11 +122,14 @@ gcc14Stdenv.mkDerivation rec {
   env.NIX_DONT_SET_RPATH = "1";
   env.NIX_NO_SELF_RPATH = "1";
 
-  # nixpkgs' default hardening adds `-fzero-call-used-regs=used-gpr` (etc.)
-  # which emits register-zeroing instructions before every function return.
-  # That's ~4-8 bytes per function across 50k functions in bitcoind — and
-  # GUIX does NOT enable it. Disable to match upstream codegen.
-  hardeningDisable = [ "zerocallusedregs" ];
+  # Disable nixpkgs hardenings that GUIX's toolchain doesn't enable:
+  #
+  # - zerocallusedregs: emits register-zeroing on every function return
+  #   (~4-8 bytes per function across 50k functions). GUIX doesn't use.
+  # - strictoverflow: adds -fno-strict-overflow which disables some loop
+  #   and arithmetic optimizations (gcc can no longer assume signed
+  #   overflow is UB). Affects code generation in many places.
+  hardeningDisable = [ "zerocallusedregs" "strictoverflow" ];
 
   # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
   # (debug) variants alongside the original binary. The script is rendered
