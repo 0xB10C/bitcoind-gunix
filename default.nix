@@ -10,6 +10,28 @@ let
   url = "https://bitcoincore.org/bin/bitcoin-core-${version}/bitcoin-${version}.tar.gz";
   sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
 
+  # Patches GUIX applies to its toolchain. We apply the same so our
+  # gcc/binutils generate identical code/encodings.
+  #
+  # - gcc-ssa-generation.patch: deterministic SSA version numbering
+  #   (gcc PR123351). Without it, SSA names are assigned non-
+  #   deterministically depending on function-argument evaluation
+  #   order, which yields different generated code per gcc build.
+  #
+  # - binutils-unaligned-default.patch: defaults the gas assembler's
+  #   `use_unaligned_vector_move` to 1, encoding aligned vector moves
+  #   as unaligned. Without this we get different VEX/EVEX encodings
+  #   in .text vs upstream.
+  #
+  # We don't apply gcc-remap-guix-store.patch — it strips /gnu/store
+  # paths from libgcc DWARF, which only matters for unstripped
+  # binaries. Our reproducibility target is the stripped binary.
+  binutilsWithGuixPatches = pkgs.binutils-unwrapped.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [
+      ./patches/binutils-unaligned-default.patch
+    ];
+  });
+
   # Build a gcc 14 / glibc 2.31 stdenv so the entire build (depends and the
   # final bitcoind link) uses glibc 2.31 — matching GUIX. The chain:
   #
@@ -19,14 +41,15 @@ let
   #      links against glibc 2.31, but still ships the old libstdc++ built
   #      against the current glibc.
   #
-  #   2. Rebuild gcc 14 itself inside `stdenvForGccRebuild`. The new
-  #      gcc's libstdc++ is then compiled against glibc 2.31 and won't
-  #      reference newer-glibc-only symbols (like __libc_single_threaded
-  #      added in 2.32, or the __isoc23_* family added in 2.39).
+  #   2. Rebuild gcc 14 itself inside `stdenvForGccRebuild`, applying
+  #      GUIX's gcc-ssa-generation patch. The new gcc's libstdc++ is
+  #      then compiled against glibc 2.31 and won't reference newer-
+  #      glibc-only symbols (__libc_single_threaded from 2.32, the
+  #      __isoc23_* family from 2.39).
   #
   #   3. Wrap the rebuilt gcc and use it as the final stdenv's CC.
   bintoolsWithGlibc231 = pkgs.wrapBintoolsWith {
-    inherit (pkgs.gcc14Stdenv.cc.bintools) bintools;
+    bintools = binutilsWithGuixPatches;
     libc = glibc231;
   };
   stdenvForGccRebuild = pkgs.overrideCC pkgs.gcc14Stdenv (pkgs.wrapCCWith {
@@ -34,9 +57,13 @@ let
     libc = glibc231;
     bintools = bintoolsWithGlibc231;
   });
-  gcc14RebuiltWithGlibc231 = pkgs.gcc14.cc.override {
+  gcc14RebuiltWithGlibc231 = (pkgs.gcc14.cc.override {
     stdenv = stdenvForGccRebuild;
-  };
+  }).overrideAttrs (old: {
+    patches = (old.patches or []) ++ [
+      ./patches/gcc-ssa-generation.patch
+    ];
+  });
   ccWithGlibc231 = pkgs.wrapCCWith {
     cc = gcc14RebuiltWithGlibc231;
     libc = glibc231;
