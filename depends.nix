@@ -121,11 +121,13 @@ gcc14Stdenv.mkDerivation rec {
 
   # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply:
   #
-  # - zerocallusedregs: -fzero-call-used-regs=used-gpr (register zeroing
-  #   on function return; ~4 bytes per function).
-  # - strictoverflow: -fno-strict-overflow (disables loop/arith optim
-  #   that assumes signed overflow is UB).
-  hardeningDisable = [ "zerocallusedregs" "strictoverflow" ];
+  # - zerocallusedregs: -fzero-call-used-regs=used-gpr (register zeroing).
+  # - strictoverflow: -fno-strict-overflow.
+  # - stackprotector: -fstack-protector-strong with --param
+  #   ssp-buffer-size=4 (more aggressive than gcc's default of 8).
+  #   Our gcc still defaults to -fstack-protector-strong via
+  #   --enable-default-ssp=yes.
+  hardeningDisable = [ "zerocallusedregs" "strictoverflow" "stackprotector" ];
 
 
   doCheck = false;

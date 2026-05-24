@@ -127,9 +127,12 @@ gcc14Stdenv.mkDerivation rec {
   # - zerocallusedregs: emits register-zeroing on every function return
   #   (~4-8 bytes per function across 50k functions). GUIX doesn't use.
   # - strictoverflow: adds -fno-strict-overflow which disables some loop
-  #   and arithmetic optimizations (gcc can no longer assume signed
-  #   overflow is UB). Affects code generation in many places.
-  hardeningDisable = [ "zerocallusedregs" "strictoverflow" ];
+  #   and arithmetic optimizations.
+  # - stackprotector: nixpkgs' version adds `--param ssp-buffer-size=4`,
+  #   making SSP-strong protect buffers >= 4 bytes (vs gcc's default
+  #   of 8). Our gcc has --enable-default-ssp=yes, so -fstack-protector-
+  #   strong is still the default without the buffer-size override.
+  hardeningDisable = [ "zerocallusedregs" "strictoverflow" "stackprotector" ];
 
   # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
   # (debug) variants alongside the original binary. The script is rendered
