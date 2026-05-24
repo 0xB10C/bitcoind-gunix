@@ -63,6 +63,36 @@ let
     patches = (old.patches or []) ++ [
       ./patches/gcc-ssa-generation.patch
     ];
+    # Match GUIX's `linux-base-gcc` configure flags exactly, from
+    # contrib/guix/manifest.scm:
+    #
+    #   (list "--enable-initfini-array=yes"
+    #         "--enable-default-ssp=yes"
+    #         "--enable-default-pie=yes"
+    #         "--enable-host-bind-now=yes"
+    #         "--enable-standard-branch-protection=yes"
+    #         "--enable-cet=yes"
+    #         "--enable-gprofng=no"
+    #         "--disable-gcov"
+    #         "--disable-libgomp"
+    #         "--disable-libquadmath"
+    #         "--disable-libsanitizer")
+    #
+    # nixpkgs already passes --enable-default-pie and (sometimes)
+    # --enable-initfini-array; we add the rest verbatim.
+    configureFlags = (old.configureFlags or []) ++ [
+      "--enable-initfini-array=yes"
+      "--enable-default-ssp=yes"
+      "--enable-default-pie=yes"
+      "--enable-host-bind-now=yes"
+      "--enable-standard-branch-protection=yes"
+      "--enable-cet=yes"
+      "--enable-gprofng=no"
+      "--disable-gcov"
+      "--disable-libgomp"
+      "--disable-libquadmath"
+      "--disable-libsanitizer"
+    ];
   });
   ccWithGlibc231 = pkgs.wrapCCWith {
     cc = gcc14RebuiltWithGlibc231;
