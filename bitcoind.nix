@@ -101,8 +101,15 @@ gcc14Stdenv.mkDerivation rec {
   #
   #   - any other build-dir path: /build/bitcoin-31.0/...
   #     -> /bitcoin/... (general fallback)
-  env.CFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
-  env.CXXFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+  # -fomit-frame-pointer / -momit-leaf-frame-pointer override the nixpkgs
+  # gcc-wrapper's hardcoded `-fno-omit-frame-pointer
+  # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before). At -O2 gcc
+  # would otherwise default to omitting frame pointers, which matches
+  # upstream. Without overriding we add ~12 bytes per function
+  # (push %rbp; mov %rsp,%rbp; leave), worth ~258 KiB of .text bloat
+  # across the binary.
+  env.CFLAGS = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+  env.CXXFLAGS = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
 
   # Tell nixpkgs' gcc-wrapper not to inject -rpath flags into the link line.
   # Upstream GUIX-built bitcoind has no RUNPATH; the binary uses the

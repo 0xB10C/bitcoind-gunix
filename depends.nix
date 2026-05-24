@@ -111,6 +111,14 @@ gcc14Stdenv.mkDerivation rec {
   # Multiprocess IPC (capnp + libmultiprocess) is built unconditionally.
   makeFlags = [ "NO_QT=1" ];
 
+  # Override the nixpkgs gcc-wrapper's `-fno-omit-frame-pointer
+  # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before) so depends
+  # compile WITHOUT frame pointers — matching upstream's behavior with
+  # the default -O2. Frame pointers add ~12 bytes per function (push
+  # %rbp; mov %rsp,%rbp; leave) which accumulates significantly across
+  # 50k functions in the final binary.
+  env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer";
+
 
   doCheck = false;
   enableParallelBuilding = true;
