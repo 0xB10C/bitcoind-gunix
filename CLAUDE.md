@@ -248,6 +248,53 @@ TOTAL: +12,216 B  (+0.07% vs upstream)
 | 11 | hardeningDisable zerocallusedregs | **+37 KB** |
 | 12 | hardeningDisable strictoverflow | **+12 KB** |
 
+### Where to next (if/when resuming)
+
+Three known issues remain. They likely need work in this order:
+
+1. **`.comment` extra `GCC 8.3.0`** (+16 B): the glibc 2.31 CRT
+   objects (Scrt1.o etc.) were compiled with nixos-20.09's gcc 8.3.0,
+   leaving a stamp. Fix requires a multi-stage build:
+
+   ```
+   stage 1: nixos-20.09 stdenv (gcc 8.3.0) → glibc 2.31 (basic)
+   stage 2: gcc 14 + glibc 2.31 stage 1 → stdenv for glibc rebuild
+   stage 3: stage 2 stdenv → glibc 2.31 (now gcc-14 built, clean comment)
+   stage 4: gcc 14 + glibc 2.31 stage 3 → final toolchain
+   stage 5: final toolchain → depends → bitcoind
+   ```
+
+   `pkgsGlibc231.glibc.override { stdenv = ourStage2Stdenv; }` is the
+   API. The circular dependency is the design challenge.
+
+2. **`.note.ABI-tag` kernel 2.6.32 vs 3.2.0** (4 B): even though we
+   passed `--enable-kernel=3.2.0` to glibc configure, the resulting
+   binary shows 2.6.32. Either the flag isn't taking effect (verify
+   via `strings .../glibc-2.31-74/lib/libc.so.6 | grep "GNU C Library"`)
+   or there's a hardcoded value in nixos-20.09's glibc derivation.
+
+3. **`.note.gnu.property` missing** (-48 B): binutils 2.44 drops the
+   property note section when AND-properties (CET) can't be merged
+   cleanly across inputs. Upstream's older binutils (likely 2.42-43)
+   is more permissive. Either downgrade binutils or backport the
+   relevant binutils change.
+
+4. **Residual `.text` +11 KiB** and **`.rela.dyn` +1.8 KiB**
+   (77 extra `R_X86_64_RELATIVE` relocs). The first 3691 (out of
+   50032) functions are at byte-identical addresses; divergence
+   starts at offset 0x14360d. Investigate which function changes
+   produce extra relocations — likely vtable, template instantiation,
+   or similar subtle codegen difference.
+
+### Final note: how to verify a successful match
+
+Once the delta is zero, the test is:
+
+```sh
+sha256sum result/bin/bitcoind-s /tmp/upstream-v31/bitcoin-31.0/bin/bitcoind
+# Both lines should show the same hash.
+```
+
 ### What's still likely contributing to .text +258 KiB
 
 Same compiler version (GCC 14.3.0) on both. Same source. Same `-O2 -g`.
