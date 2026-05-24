@@ -319,9 +319,220 @@ Long debug session showing the merging is more subtle than just
    even though glibc 2.31 was configured with `--enable-kernel=3.2.0`.
    Likely the CRT note.ABI-tag is hardcoded from nixos-20.09's
    glibc package; need to verify and possibly override.
-3. **`.text` +258 KiB / `.eh_frame` -176 KiB** — still the
-   structural delta. Investigate compile-command differences via
-   the GUIX log, or compare disassembly per function.
+3. **`.text` +11 KiB / `.eh_frame` +1.7 KiB residual** — chase
+   remaining hardenings nixpkgs adds that GUIX doesn't.
+
+## Methodology: debugging non-determinism between two binaries
+
+If you arrive at this project (or a similar one) and need to chase a
+non-byte-equal pair of binaries, here is the playbook that has worked.
+
+### 1. Establish ground truth: get the reference binary
+
+Download upstream's signed/published build, not something you rebuilt.
+For Bitcoin Core: `bitcoincore.org/bin/.../bitcoin-X.Y-x86_64-linux-gnu.tar.gz`.
+Extract and keep it untouched at a known path (we used
+`/tmp/upstream-v31/bitcoin-31.0/bin/bitcoind`).
+
+### 2. Get the build log from upstream's pipeline
+
+A real build log from the upstream system is invaluable. For GUIX
+builds: `./contrib/guix/guix-build` produces output you can capture.
+Have the user dump theirs and store it (we kept
+`./v31-guix-build.log`).
+Things to extract from it:
+- Exact compiler version (`-- The C compiler identification is GNU 14.3.0`)
+- Configure flags for the toolchain (gcc/glibc/binutils)
+- Compile flags per package (HOST_CFLAGS, depends configure lines)
+- Linker invocation (`-DCMAKE_EXE_LINKER_FLAGS=`)
+- Per-feature support detection (CMake's "Performing Test
+  XXX - Success/Failed" lines tell you exactly which compile
+  flags are active)
+
+### 3. Coarse-grained comparison tools (run early)
+
+In order of cheapness:
+
+```sh
+# Sizes first — sometimes the answer is "trivially different"
+stat -c %s upstream/bitcoind ours/bitcoind-s
+
+# Dynamic section: NEEDED libs, RUNPATH, version-deps
+readelf -d <binary>
+
+# Compiler stamp(s) embedded in .comment
+readelf -p .comment <binary>
+
+# All notes: .note.ABI-tag, .note.gnu.property, .note.stapsdt
+readelf --notes <binary>
+
+# Section sizes side-by-side
+bloaty ours -- upstream            # diff against the second arg
+bloaty -d sections ours
+bloaty -d compileunits ours        # only with DWARF info
+bloaty -d symbols ours             # only with symbol table
+```
+
+`bloaty` is the single most useful tool. It will show you exactly
+which ELF sections are bigger/smaller and by how much.
+
+### 4. Fine-grained byte comparison
+
+```sh
+# Pull the .text section out as a raw binary
+objcopy -O binary --only-section=.text ours/bitcoind-s text-ours.bin
+objcopy -O binary --only-section=.text upstream text-upstream.bin
+
+# First differing byte
+cmp text-ours.bin text-upstream.bin
+
+# What's around the first divergence?
+xxd -s <offset-near-diff> -l 64 text-ours.bin
+xxd -s <offset-near-diff> -l 64 text-upstream.bin
+```
+
+If the first divergence is very early but the bytes around it look
+"the same kind of thing", you're probably looking at code that's
+structurally identical but at different addresses (so RIP-relative
+operands differ). Confirm by finding a unique byte signature
+(constant in `.rodata`, a `mov $imm32` pattern, etc.) in both
+binaries with `xxd | grep` and see if the surrounding instructions
+are the same.
+
+### 5. Function-by-function comparison
+
+The unstripped binary has a symbol table; the stripped one (and
+upstream's signed binary) doesn't. So:
+
+```sh
+# Find a known symbol in your unstripped binary
+nm --defined-only ours/bitcoind | grep AES128_init   # any short, known fn
+
+# Disassemble that function in your build
+objdump -d --disassemble=AES128_init ours/bitcoind
+
+# Find the SAME function in upstream by byte signature (use a
+# unique short instruction sequence near the call/jmp at the end)
+xxd upstream | grep "b90a 0000 00ba 0400 0000 e9"   # the constants
+# Then xxd -s <offset-before> -l 64 upstream to see surrounding code
+```
+
+Compare them instruction by instruction. The structural delta you
+find in one function usually applies to many.
+
+### 6. Tracking down "why does our function differ?"
+
+Once you find a single-function delta, look for the cause. Common
+candidates:
+
+- **Frame pointers**: Our build had `push %rbp; mov %rsp,%rbp; leave`
+  added vs upstream's plain `sub $N,%rsp; ...; add $N,%rsp`. The
+  flag is `-fomit-frame-pointer` (default at -O2). Nixpkgs sets
+  `-fno-omit-frame-pointer` in `cc-cflags-before` of the gcc-wrapper.
+- **Register zeroing on return**: `-fzero-call-used-regs=used-gpr`,
+  added by nixpkgs' `zerocallusedregs` hardening. Adds 4-8 bytes
+  per function.
+- **`-fno-strict-overflow`** (`-fwrapv`): added by nixpkgs'
+  `strictoverflow` hardening. Disables several gcc loop/arith
+  optimizations.
+- **Stack protector level**: `-fstack-protector` (basic, only
+  protects big buffers) vs `-strong` (any function with arrays/
+  pointers to local data) vs `-all` (every function). Bitcoin's
+  CMake forces `-fstack-protector-all` for the `core_interface`
+  target; depends and secp256k1 may not.
+- **`-fcf-protection=full`** (CET endbr64/shstk). Bitcoin's CMake
+  adds this for `core_interface` only. If you want every input
+  to have CET, you also need it on depends + secp256k1.
+
+### 7. Where do "default" flags come from?
+
+In nixpkgs, the gcc-wrapper at
+`/nix/store/<hash>-gcc-wrapper-X.Y.Z/nix-support/` contains:
+
+- `cc-cflags-before`: flags prepended to every compile (e.g.
+  `-fno-omit-frame-pointer`)
+- `cc-cflags`: flags appended (e.g. `-B<lib-path>`)
+- `libc-cflags`: header search paths
+- `add-hardening.sh`: maps `NIX_HARDENING_ENABLE` flag names to
+  actual gcc options
+
+```sh
+# The full default hardening list
+grep "NIX_HARDENING_ENABLE=" <gcc-wrapper>/nix-support/setup-hook
+# What each one maps to
+grep -B1 -A3 "hardeningCFlagsBefore+=" <gcc-wrapper>/nix-support/add-hardening.sh
+```
+
+To disable a specific hardening in a Nix derivation:
+
+```nix
+hardeningDisable = [ "zerocallusedregs" "strictoverflow" ];
+```
+
+Or to override a `cc-cflags-before` flag, pass it explicitly later
+in CFLAGS (gcc takes the last flag for conflicting options):
+
+```nix
+env.CFLAGS = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer ...";
+```
+
+### 8. Verifying a fix actually applied
+
+After every toolchain/flag change, **verify the change took
+effect**. Don't just check the size delta. Verify:
+
+```sh
+# Was the gcc you expected actually used? Check its patches.
+nix eval --raw .#bitcoind.stdenv.cc.cc.outPath
+nix eval --json .#bitcoind.stdenv.cc.cc.drvAttrs.patches
+
+# Was the configure flag set?
+nix eval --json --apply 'drv: drv.drvAttrs.configureFlags' .#bitcoind.stdenv.cc.cc
+
+# Did the property propagate to outputs?
+readelf --notes ours/bitcoind-s | grep -A3 gnu.property
+```
+
+For binutils-level changes, test the gas behavior:
+
+```sh
+# Test if -muse-unaligned-vector-move default is on (binutils patch
+# verification): assembling vmovaps should produce vmovups encoding
+echo '.text\nvmovaps (%rsi), %xmm0\nret' | \
+  $(nix eval --raw .#bitcoind.stdenv.cc.bintools.bintools)/bin/as -o /tmp/t.o -
+$(nix eval --raw .#bitcoind.stdenv.cc.bintools.bintools)/bin/objdump -d /tmp/t.o
+```
+
+### 9. Build cost discipline
+
+Rebuilds are expensive because Nix correctly invalidates the entire
+chain. Useful rules:
+
+- Touching `bitcoind.nix` only: ~5 min rebuild (just bitcoind).
+- Touching `depends.nix`: ~10-15 min (depends + bitcoind).
+- Touching gcc patches/configureFlags: ~40 min (gcc + glibc-dep +
+  depends + bitcoind).
+- Touching glibc configureFlags: ~40+ min (glibc rebuilds, then
+  everything depending on it).
+
+Group multiple toolchain changes into one rebuild. Run long builds
+in background (`run_in_background: true` in Bash) and continue with
+analysis while it runs. Warn the user before kicking off a 40-min
+rebuild.
+
+### 10. What I'd ideally have but didn't (wishlist)
+
+- **Upstream's stripped CRT objects** (Scrt1.o etc.) so I could
+  diff them against ours. Without these, glibc rebuilds are blind.
+- **Upstream's `compile_commands.json`** for a sample of source
+  files. Would tell me the exact gcc invocation per .cpp, so I
+  can match every flag.
+- **A way to set NIX_HARDENING_ENABLE via flag rather than
+  attribute** — `hardeningDisable` only works in derivations,
+  not interactive inspection.
+- **Per-section content checksums** in both binaries (a tool that
+  walks ELF, hashes each section content, and reports which match
+  byte-for-byte). I'd know immediately which sections to focus on.
 
 ### Outstanding atomic-commit threads
 
