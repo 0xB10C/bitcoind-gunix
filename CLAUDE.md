@@ -138,5 +138,62 @@ The glibc version mismatch (2.31 upstream vs 2.40 ours) shows up as the `libpthr
 - `readelf -p .comment` — compiler version
 - `file` — confirms interpreter path, stripped status
 - `bloaty <ours> -- <upstream>` — section-level size diff
-- `diffoscope` — deep recursive diff (next, once binaries are closer in structure)
+- `diffoscope` — deep recursive diff
 - `bitcoin-maintainer-tools/build-for-compare.py` — fanquake's helper, not used yet
+
+### Status after glibc 2.31 stdenv rebuild
+
+After overriding the entire stdenv to use glibc 2.31 (see commit
+`build: rebuild gcc 14 against glibc 2.31, use it for everything`):
+
+| Metric | Upstream | Ours | Δ |
+|---|---|---|---|
+| Stripped size | 17,826,248 B | 17,850,736 B | +0.14% (+24 KB) |
+| Interpreter | `/lib64/ld-linux-x86-64.so.2` | same | ✅ |
+| NEEDED | libpthread, libm, libc, ld | same | ✅ |
+| RUNPATH | (none) | (none) | ✅ |
+| Compiler `.comment` | GCC 14.3.0 | GCC 14.3.0 + GCC 8.3.0 | extra CRT-builder string |
+| Dynamic symbols | 344 | 344 | ✅ |
+
+bloaty section deltas (positive = ours bigger):
+```
++200 KiB  .text
++176 KiB  -.eh_frame  (ours smaller)
+ +1.7 KB  .rela.dyn
+ +672 B   .data.rel.ro
+ +640 B   .rodata
+ +478 B   .gcc_except_table
+ +376 B   .eh_frame_hdr
+  +48 B   -.note.gnu.property  (missing in ours)
+  +16 B   .comment
+```
+
+### Remaining deltas (deeper investigation)
+
+1. **`.text` +200 KB / `.eh_frame` -176 KB** — net code/unwind shift. Each
+   stapsdt probe encodes its arguments with different register/stack
+   choices in ours vs upstream, showing the compiler made different
+   code-gen decisions despite both binaries reporting GCC 14.3.0.
+   GUIX patches its gcc 14 with `gcc-ssa-generation.patch`
+   (`contrib/guix/patches/`), which alters SSA version numbering and
+   changes generated code. Worth trying as the next step.
+
+2. **`.note.gnu.property` (CET property) absent in ours** — this section is
+   contributed by glibc's CRT objects (Scrt1.o etc.). GUIX builds its
+   glibc with CET-enabled gcc; nixos-20.09's glibc 2.31 was not. To
+   match, we'd need to either rebuild glibc 2.31 with CET, or override
+   the CRT objects.
+
+3. **`.note.ABI-tag` minimum kernel: 2.6.32 vs upstream 3.2.0** — this
+   is set at glibc build time via `--enable-kernel=...`. nixos-20.09
+   used the default 2.6.32; GUIX's glibc uses 3.2.0. Would need a
+   custom glibc 2.31 build to fix.
+
+4. **`.comment` has extra `GCC: (GNU) 8.3.0` string** — old nixpkgs's
+   glibc 2.31 was built with gcc 8.3.0, leaving that stamp on its
+   CRT objects, which gets pulled into our final binary's `.comment`.
+   Would also be fixed by rebuilding glibc 2.31 with our gcc 14.
+
+(2), (3), and (4) all argue for rebuilding glibc 2.31 itself in our
+build (with CET, `--enable-kernel=3.2.0`, and gcc 14) rather than
+pulling the prebuilt glibc from nixos-20.09.
