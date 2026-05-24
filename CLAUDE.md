@@ -283,25 +283,45 @@ Key takeaways:
    all targets except secp256k1" (per top-level CMakeLists comment),
    so secp256k1 doesn't get CET unless we force it globally.
 
-### CET / .note.gnu.property investigation
+### CET / .note.gnu.property investigation (resolved: revert)
 
-Findings while chasing why our binary lacks `.note.gnu.property`:
+Long debug session showing the merging is more subtle than just
+"propagate CET if all inputs have it":
 
 - The linker drops `.note.gnu.property` from the final binary entirely
-  if ANY input lacks the section. Verified with a minimal link test.
+  if AND-merged properties (like `X86_FEATURE_1_AND` for IBT/SHSTK)
+  can't be unified across inputs. Verified with minimal link tests.
 - Our libstdc++.a, libgcc.a, and rebuilt glibc CRTs ALL have CET
-  (IBT, SHSTK). Bitcoin's own .o files do too (because
-  `core_interface` adds `-fcf-protection=full`).
-- But our depends archives (libevent_core.a, sqlite3.o, etc.) lacked
-  CET. Why? `--enable-cet=yes` in gcc configure doesn't change the
-  user-code default of `-fcf-protection=none`; it only enables CET
-  for gcc's own libstdc++/libgcc build.
-- Fix landed: `NIX_CFLAGS_COMPILE=-fcf-protection=full` in depends.nix
-  (gcc-wrapper appends to every depends compile) AND
-  `-fcf-protection=full` added to bitcoind's CFLAGS/CXXFLAGS for
-  secp256k1 and other off-core_interface targets.
-- After fix: depends .o files now have CET (verified — endbr64=63 in
-  buffer.c.o, IBT/SHSTK property present).
+  (IBT, SHSTK). Bitcoin's own .o files do too (`core_interface` adds
+  `-fcf-protection=full`). Depends .o files have OR-properties
+  (`x86 feature used: x86, XMM`, `x86 ISA used: x86-64-baseline`) but
+  no CET marker.
+- We tried forcing global `-fcf-protection=full` to give every input
+  CET. The output then had ONLY `x86 feature: IBT, SHSTK` and lost
+  the USED variants that upstream actually keeps.
+- Upstream's binary has the auto-detected USED variants ONLY (no CET
+  marker). This means upstream's linker merge is more permissive
+  than ours: it drops the AND property (CET) silently when not all
+  inputs have it, but keeps the OR properties (USED variants).
+- Our binutils 2.44 is stricter — when it can't merge an AND
+  property cleanly because of missing inputs, it drops the entire
+  `.note.gnu.property` section.
+- **Conclusion**: this requires a binutils downgrade or patch. Defer.
+  Reverted `-fcf-protection=full` globally; back to baseline (delta
+  +81,832 B).
+
+### Tractable next items
+
+1. **Strip `GCC: (GNU) 8.3.0` from `.comment`** — need to rebuild
+   glibc 2.31 with a recent gcc (e.g. our patched 14.3.0) so its
+   CRT objects don't carry an old `.comment` stamp.
+2. **`.note.ABI-tag` kernel** — appears as 2.6.32 in our binary
+   even though glibc 2.31 was configured with `--enable-kernel=3.2.0`.
+   Likely the CRT note.ABI-tag is hardcoded from nixos-20.09's
+   glibc package; need to verify and possibly override.
+3. **`.text` +258 KiB / `.eh_frame` -176 KiB** — still the
+   structural delta. Investigate compile-command differences via
+   the GUIX log, or compare disassembly per function.
 
 ### Outstanding atomic-commit threads
 
