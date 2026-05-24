@@ -5,6 +5,7 @@
 , pkg-config
 , cmake
 #
+, version
 , url
 , sha256
 , depends
@@ -68,11 +69,37 @@ gcc14Stdenv.mkDerivation rec {
     )
   '';
 
-  # Match GUIX's -O2 -g (cmake otherwise uses RelWithDebInfo defaults from
-  # the depends toolchain, which is fine — but enforce the same compile
-  # flags to keep us reproducibility-adjacent).
-  env.CFLAGS = "-O2 -g";
-  env.CXXFLAGS = "-O2 -g";
+  # Match GUIX's HOST_CFLAGS / HOST_CXXFLAGS from
+  # contrib/guix/libexec/build.sh. GUIX builds bitcoin inside a chroot
+  # rooted at /bitcoin and adds -ffile-prefix-map={store-path}=/usr for
+  # every /gnu/store entry, plus -fdebug-prefix-map=${DISTSRC}/src=. to
+  # strip the build directory.
+  #
+  # In our Nix sandbox bitcoin's source root is /build/bitcoin-${version}
+  # and the depends live at ${depends} under /nix/store. The depends
+  # symlink we set up in preConfigure also exposes them as
+  # depends/x86_64-pc-linux-gnu/ relative to the source root. We map
+  # both to match upstream's recorded paths:
+  #
+  #   - ${depends} -> /bitcoin/depends/x86_64-linux-gnu
+  #     (so __FILE__ references in boost/etc. headers end up as
+  #      /bitcoin/depends/x86_64-linux-gnu/boost/include/boost/...,
+  #      matching the upstream binary)
+  #   - /build/bitcoin-${version} -> /bitcoin
+  #     (so any leak of the build dir maps to /bitcoin)
+  # Path mappings to match upstream's recorded file paths:
+  #
+  #   - boost headers: /nix/store/<hash>-bitcoin-31.0-depends/boost/include/...
+  #     -> /bitcoin/depends/x86_64-linux-gnu/boost/include/... (matches upstream)
+  #
+  #   - bitcoin source files: /build/bitcoin-31.0/src/<file>.cpp
+  #     -> ./<file>.cpp (matches upstream; gcc picks the longest matching
+  #     prefix per docs).
+  #
+  # GCC applies the longest matching -ffile-prefix-map. We list the more
+  # specific src=. first, then the broader /build/...=/bitcoin fallback.
+  env.CFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}/src=. -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin";
+  env.CXXFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}/src=. -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin";
 
   # Tell nixpkgs' gcc-wrapper not to inject -rpath flags into the link line.
   # Upstream GUIX-built bitcoind has no RUNPATH; the binary uses the

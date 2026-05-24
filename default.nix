@@ -106,7 +106,7 @@ let
     gcc14Stdenv = gcc14Glibc231Stdenv;
   };
   bitcoind = pkgs.callPackage ./bitcoind.nix {
-    inherit url sha256 depends;
+    inherit version url sha256 depends;
     gcc14Stdenv = gcc14Glibc231Stdenv;
   };
 in {
