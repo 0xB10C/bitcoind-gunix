@@ -168,32 +168,109 @@ bloaty section deltas (positive = ours bigger):
   +16 B   .comment
 ```
 
-### Remaining deltas (deeper investigation)
+### Status after applying GUIX gcc patches + configure flags + path prefix-maps
 
-1. **`.text` +200 KB / `.eh_frame` -176 KB** — net code/unwind shift. Each
-   stapsdt probe encodes its arguments with different register/stack
-   choices in ours vs upstream, showing the compiler made different
-   code-gen decisions despite both binaries reporting GCC 14.3.0.
-   GUIX patches its gcc 14 with `gcc-ssa-generation.patch`
-   (`contrib/guix/patches/`), which alters SSA version numbering and
-   changes generated code. Worth trying as the next step.
+Subsequent commits applied GUIX's full toolchain configuration:
 
-2. **`.note.gnu.property` (CET property) absent in ours** — this section is
-   contributed by glibc's CRT objects (Scrt1.o etc.). GUIX builds its
-   glibc with CET-enabled gcc; nixos-20.09's glibc 2.31 was not. To
-   match, we'd need to either rebuild glibc 2.31 with CET, or override
-   the CRT objects.
+- `gcc-ssa-generation.patch` and `binutils-unaligned-default.patch`
+  applied (`patches/` dir, wired in via `default.nix` overrideAttrs).
+  Verified both apply: `vmovaps` is now encoded as `vmovups`.
+- GUIX's `linux-base-gcc` configure flags appended to gcc:
+  `--enable-initfini-array=yes --enable-default-ssp=yes --enable-default-pie=yes
+  --enable-host-bind-now=yes --enable-standard-branch-protection=yes
+  --enable-cet=yes --enable-gprofng=no --disable-gcov --disable-libgomp
+  --disable-libquadmath --disable-libsanitizer`.
+- `bitcoind.nix` adds `-ffile-prefix-map` flags to remap:
+  - `${depends}` → `/bitcoin/depends/x86_64-linux-gnu` (matches upstream
+    boost-header paths exactly: 9/9 match)
+  - `/build/bitcoin-31.0/src` → `.` (matches upstream's relative
+    `./addrdb.cpp` etc., 160/160 match)
+  - `/build/bitcoin-31.0` → `/bitcoin` (broad fallback). GCC applies the
+    LAST matching prefix-map, not the longest.
+- Attempted to rebuild glibc 2.31 (`flake.nix` overrideAttrs) with
+  GUIX's glibc configure flags (`--enable-cet`, `--enable-stack-protector=all`,
+  `--enable-bind-now`, etc.). The rebuild ran (configure flags verified in
+  the derivation) but `.note.gnu.property` is STILL absent in the final
+  binary. Likely cause: nixos-20.09's stdenv that rebuilds the glibc still
+  uses old gcc 8.3.0 and binutils ~2.32 without CET support, so even with
+  `--enable-cet` glibc didn't emit CET CRT objects. To actually get CET-
+  enabled CRTs we'd need to also override nixos-20.09's stdenv (gcc) used
+  to rebuild glibc.
 
-3. **`.note.ABI-tag` minimum kernel: 2.6.32 vs upstream 3.2.0** — this
-   is set at glibc build time via `--enable-kernel=...`. nixos-20.09
-   used the default 2.6.32; GUIX's glibc uses 3.2.0. Would need a
-   custom glibc 2.31 build to fix.
+### Current delta to upstream
 
-4. **`.comment` has extra `GCC: (GNU) 8.3.0` string** — old nixpkgs's
-   glibc 2.31 was built with gcc 8.3.0, leaving that stamp on its
-   CRT objects, which gets pulled into our final binary's `.comment`.
-   Would also be fixed by rebuilding glibc 2.31 with our gcc 14.
+| Metric | Upstream | Ours | Δ |
+|---|---|---|---|
+| Stripped size | 17,826,248 B | 17,908,080 B | **+0.46% (+81,832 B)** |
+| Interpreter | `/lib64/ld-linux-x86-64.so.2` | same | ✅ |
+| NEEDED | libpthread, libm, libc, ld | same | ✅ |
+| RUNPATH | (none) | (none) | ✅ |
+| Dynamic symbol count | 344 | 344 | ✅ |
+| Path strings (`/bitcoin/...`) | 9 | 9 | ✅ |
+| `./*.cpp` relative paths | 160 | 160 | ✅ |
+| `.note.gnu.property` (CET) | present (32 B) | absent | ❌ |
+| `.comment` | `GCC 14.3.0` | `GCC 8.3.0`+`GCC 14.3.0` | ❌ extra stamp |
+| `.note.ABI-tag` kernel | 3.2.0 | 2.6.32 | ❌ (got worse after glibc override?) |
 
-(2), (3), and (4) all argue for rebuilding glibc 2.31 itself in our
-build (with CET, `--enable-kernel=3.2.0`, and gcc 14) rather than
-pulling the prebuilt glibc from nixos-20.09.
+bloaty section deltas (positive = ours bigger):
+```
++258 KiB  .text                         ← largest remaining
+-176 KiB  -.eh_frame  (ours smaller)
+ +1.8 KB  .rela.dyn
+ +1.1 KB  .gcc_except_table
+ +672 B   .data.rel.ro
+ +352 B   .rodata
+  -48 B   -.note.gnu.property  (missing in ours)
+  +16 B   .comment
+TOTAL: +80 KB
+```
+
+### What's still likely contributing to .text +258 KiB
+
+Same compiler version (GCC 14.3.0) on both. Same source. Same `-O2 -g`.
+Same patches. So the codegen differences must come from somewhere
+subtler:
+
+- **Different binutils version**: ours is 2.44, GUIX may be different.
+  Different gas/ld can change alignment, section padding, GOT/PLT layout,
+  and CFI encoding.
+- **libstdc++ template instantiations**: even with the same gcc source,
+  building libstdc++ in a slightly different environment can produce
+  different specializations and inline-ranges. GUIX builds gcc inside
+  their full container; we build inside Nix's sandbox.
+- **CFI encoding**: ours has 22,778 FDEs vs upstream's 22,731 (47 more)
+  but `.eh_frame` is 176 KiB SMALLER. That's ~8 bytes less per FDE — a
+  systematic CFI encoding difference. Likely from binutils gas behavior
+  or compiler `-fasynchronous-unwind-tables` defaults.
+- **Function alignment / function-count**: ~50,037 endbr64 in ours vs
+  50,030 upstream (7 more functions in ours). At 16-byte default
+  function alignment (`-falign-functions=16`), 7 extra functions add
+  ~112 bytes of padding. Tiny.
+
+### What I'd want from a GUIX build log (offer pending)
+
+If the user provides a GUIX build log we can:
+
+1. Compare exact compile commands per source file (CXXFLAGS as actually
+   invoked by ninja/make).
+2. See the gcc/binutils/glibc versions GUIX used and any patches we
+   missed.
+3. See the linker invocation (ld args, --hash-style, --build-id, etc.).
+4. Diff the depends configure commands to make sure ours uses the
+   same boost/libevent/sqlite options.
+
+### Outstanding atomic-commit threads
+
+1. Get `.note.gnu.property` populated in our binary (need a CET-aware
+   stdenv to rebuild glibc 2.31 — likely overriding both gcc AND the
+   stdenv used to rebuild glibc).
+2. Verify and fix `.note.ABI-tag` kernel = 3.2.0 (need
+   `--enable-kernel=3.2.0` in glibc configure; nixos-20.09 already passes
+   this — investigate why our binary still shows 2.6.32).
+3. Strip the duplicate `GCC: (GNU) 8.3.0` from `.comment` (will be fixed
+   when glibc 2.31 is rebuilt with gcc 14).
+4. Track down the `.text` +258 KiB delta (compare disassembly of a small
+   function between ours and upstream, look for systematic codegen
+   differences).
+5. Track down the `.eh_frame` -176 KiB delta (likely binutils-gas CFI
+   encoding diff).
