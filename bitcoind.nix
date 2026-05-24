@@ -87,19 +87,22 @@ gcc14Stdenv.mkDerivation rec {
   #      matching the upstream binary)
   #   - /build/bitcoin-${version} -> /bitcoin
   #     (so any leak of the build dir maps to /bitcoin)
-  # Path mappings to match upstream's recorded file paths:
+  # Path mappings to match upstream's recorded file paths.
+  #
+  # GCC applies -ffile-prefix-map maps in command-line order and the LAST
+  # matching one wins, so the more specific src=. must come AFTER the
+  # broader /build/...=/bitcoin fallback.
   #
   #   - boost headers: /nix/store/<hash>-bitcoin-31.0-depends/boost/include/...
   #     -> /bitcoin/depends/x86_64-linux-gnu/boost/include/... (matches upstream)
   #
-  #   - bitcoin source files: /build/bitcoin-31.0/src/<file>.cpp
-  #     -> ./<file>.cpp (matches upstream; gcc picks the longest matching
-  #     prefix per docs).
+  #   - bitcoin source: /build/bitcoin-31.0/src/<file>.cpp
+  #     -> ./<file>.cpp (matches upstream's relative paths)
   #
-  # GCC applies the longest matching -ffile-prefix-map. We list the more
-  # specific src=. first, then the broader /build/...=/bitcoin fallback.
-  env.CFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}/src=. -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin";
-  env.CXXFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}/src=. -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin";
+  #   - any other build-dir path: /build/bitcoin-31.0/...
+  #     -> /bitcoin/... (general fallback)
+  env.CFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+  env.CXXFLAGS = "-O2 -g -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
 
   # Tell nixpkgs' gcc-wrapper not to inject -rpath flags into the link line.
   # Upstream GUIX-built bitcoind has no RUNPATH; the binary uses the
