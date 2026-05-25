@@ -326,6 +326,30 @@ To eliminate these would require matching GUIX's full gcc build
 environment (its bootstrap chain, all its build dependencies
 compiled with consistent flags).
 
+#### Instruction-pattern accounting
+
+Disassembly grep on the two binaries:
+
+| Pattern | Ours | Upstream | Δ |
+|---|---|---|---|
+| `endbr64` | 50,032 | 50,032 | 0 |
+| `%fs:0x28` (stack canary load) | 43,284 | 43,252 | +32 |
+| `__stack_chk_fail` calls | 23,140 | 23,121 | +19 |
+| `xor %eax, %eax` | 12,031 | 12,016 | +15 |
+| Total disasm lines | 2,848,762 | 2,846,262 | +2,500 |
+
+Our build has **~32 more functions with stack-protector code**. At
+~30 bytes per SSP-protected function, that's ~960 bytes of .text
+plus ~1,600 bytes of .eh_frame (CFI for protected functions).
+Together accounts for ~2.5 KiB of the +12 KiB residual.
+
+These 32 extra SSP-protected functions are most likely from gcc's
+`-fstack-protector-strong` policy diverging by one heuristic
+decision in our build vs upstream. The flag is the same on both
+sides (via `--enable-default-ssp=yes`), but the function-eligibility
+check may yield slightly different sets when applied to slightly
+different gcc-built libstdc++ object code.
+
 ### Where to next (if/when resuming)
 
 Three known issues remain. They likely need work in this order:
