@@ -136,9 +136,19 @@ gcc14Stdenv.mkDerivation rec {
   #   adds this for `core_interface` targets only; depends archives in
   #   GUIX don't get it (GUIX gcc doesn't enable it by default for the
   #   depends build).
+  # - fortify / fortify3: -D_FORTIFY_SOURCE={2,3}. nixpkgs defaults to
+  #   adding -D_FORTIFY_SOURCE=3 to every depends compile, but GUIX's
+  #   HOST_CFLAGS for depends is just `-O2 -g` + prefix-maps — no
+  #   FORTIFY at all. The replacement of libc calls with their __*_chk
+  #   variants adds code size at every call site, contributing to our
+  #   .text bloat. (Bitcoin's own code separately enables FORTIFY=3
+  #   via its CMakeLists.txt, so depends-only disabling preserves
+  #   that for the main link.)
+  # - format: -Wformat -Wformat-security (warning only; safe to drop).
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection"
+    "fortify" "fortify3" "format"
   ];
 
 
