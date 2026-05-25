@@ -248,6 +248,50 @@ TOTAL: +12,216 B  (+0.07% vs upstream)
 | 11 | hardeningDisable zerocallusedregs | **+37 KB** |
 | 12 | hardeningDisable strictoverflow | **+12 KB** |
 
+### Function-level analysis of the residual 12 KB
+
+A function-size diff (using `endbr64` positions as boundaries) reveals
+that **only 20 of the 50,031 functions differ in size** between our
+binary and upstream's:
+
+| Position | Ours bytes | Upstream bytes | Δ |
+|---|---|---|---|
+| 3691 | 15,638 | 14,954 | +684 (zmqrpc.cpp region) |
+| 5193 | 121 | 110 | +11 |
+| 5196 | 142 | 134 | +8 |
+| 5198 | 200 | 199 | +1 |
+| 5210–5218 | 64 | 56 | +8 each (×5 = +40) |
+| 5220 | 291 | 275 | +16 |
+| 5222–5228 | 64 | 56 | +8 each (×4 = +32) |
+| 5402 | 975 | 983 | −8 |
+| 5403 | 1,169 | 1,153 | +16 |
+| 7910 | 144 | 112 | +32 |
+| **36645** | **389,840** | **376,464** | **+13,376** ← dominant |
+| 44550 | 144,240 | 146,416 | −2,176 |
+| 44644 | 789,541 | 789,925 | −384 |
+
+Position 36645 is at 0x70def0 in our binary, right after `zmqError`
+(178 bytes). The "function size" here is misleading — it counts the
+gap between two consecutive `endbr64` markers, and this stretch is
+**all of libzmq's compiled code** (~376–390 KiB). libzmq's functions
+don't have `endbr64` markers because the depends build doesn't pass
+`-fcf-protection=full`, and `--enable-cet=yes` in gcc configure
+doesn't change the user-code default.
+
+The 13,376-byte excess in our libzmq region is the bulk of the
+residual. It's many small per-function differences (inlining, codegen
+heuristics, ordering) accumulating across libzmq's many functions.
+The other dominant function-gap deltas (positions 44550 and 44644
+showing as negative — ours smaller) likely cancel some of this. Net
+.text delta: +11.4 KiB.
+
+These are intrinsic to building libzmq with subtly different
+toolchain decisions. Without exactly matching GUIX's full
+build-environment (cross-binutils detail, glibc bootstrap chain,
+gcc bootstrap chain), eliminating this residual requires
+function-by-function comparison of libzmq disassembly, which is
+diminishing-returns territory.
+
 ### Where to next (if/when resuming)
 
 Three known issues remain. They likely need work in this order:
