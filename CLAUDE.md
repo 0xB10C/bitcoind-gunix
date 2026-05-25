@@ -357,6 +357,40 @@ sha256sum result/bin/bitcoind-s /tmp/upstream-v31/bitcoin-31.0/bin/bitcoind
 # Both lines should show the same hash.
 ```
 
+## Things tried that did NOT move the residual
+
+These didn't change the delta — left here so future-me doesn't re-try them:
+
+- **binutils 2.44 → 2.41** (matched GUIX's version). No effect on delta.
+  Suggests the residual is gcc/libstdc++ side, not linker side.
+- **`hardeningDisable = [ "stackclashprotection" ]` in depends.** No effect.
+  Bitcoin's CMake adds `-fstack-clash-protection` only to `core_interface`
+  targets; depends don't get it.
+- **`hardeningDisable = [ "stackprotector" ]` in bitcoind.** No effect.
+  Our gcc has `--enable-default-ssp=yes` so SSP-strong is already the
+  default; bitcoin's `-fstack-protector-all` overrides it for
+  core_interface anyway.
+- **Setting `env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer ..."`
+  on `pkgs.gcc14.cc.override`** to try to remove frame pointers from
+  libstdc++'s build. No effect; gcc bootstrap appears to bypass the
+  wrapper's user-side flags when building its own libstdc++.
+
+## Other potentially-useful things NOT tried
+
+If the residual needs to go to zero:
+
+1. **Match upstream's gcc-build environment**. The 8-byte differences
+   in libstdc++ throw helpers come from gcc compiling its OWN libstdc++
+   under different bootstrap conditions. Matching that requires running
+   gcc-14's bootstrap inside a build env byte-identical to GUIX's
+   `gcc-toolchain-14.2.0` bootstrap stage.
+2. **A full cross-toolchain in Nix**, mirroring GUIX's
+   `make-bitcoin-cross-toolchain`. Use `pkgsCross.gnu64` as the base
+   and graft GUIX patches/flags onto each stage.
+3. **Reproducible-builds bootstrap files.** Use a pre-computed
+   bootstrap-binaries set to get a known-deterministic starting point,
+   skipping nixpkgs's stdenv entirely.
+
 ### What's still likely contributing to .text +258 KiB
 
 Same compiler version (GCC 14.3.0) on both. Same source. Same `-O2 -g`.
