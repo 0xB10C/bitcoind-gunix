@@ -117,7 +117,12 @@ gcc14Stdenv.mkDerivation rec {
   # the default -O2. Frame pointers add ~12 bytes per function (push
   # %rbp; mov %rsp,%rbp; leave) which accumulates significantly across
   # 50k functions in the final binary.
-  env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer";
+  #
+  # `-pipe` matches GUIX's depends compile commands (see
+  # `v31-guix-build.log` line 18550 for sqlite). It just changes IPC
+  # between gcc stages from temp files to pipes — shouldn't affect
+  # codegen, but included for compile-command parity.
+  env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer -pipe";
 
   # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply to
   # depends compiles:
