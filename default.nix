@@ -26,11 +26,28 @@ let
   # We don't apply gcc-remap-guix-store.patch — it strips /gnu/store
   # paths from libgcc DWARF, which only matters for unstripped
   # binaries. Our reproducibility target is the stripped binary.
-  binutilsWithGuixPatches = pkgs.binutils-unwrapped.overrideAttrs (old: {
-    patches = (old.patches or []) ++ [
+  # Downgrade binutils from nixpkgs' 2.44 to 2.41 (the version GUIX ships in
+  # its package manifest, used by cross-binutils for the bitcoin cross
+  # toolchain — see gnu/packages/base.scm:656 in GUIX). binutils version
+  # changes affect linker layout decisions, section alignment, and (in
+  # 2.44) the strictness of GNU property note merging.
+  #
+  # Use a single output to avoid the multi-output reference cycle that
+  # nixpkgs 25.11's binutils-unwrapped derivation triggers when its
+  # output-splitting machinery runs against the older 2.41 build.
+  binutilsWithGuixPatches = (pkgs.binutils-unwrapped.overrideAttrs (old: {
+    version = "2.41";
+    src = pkgs.fetchurl {
+      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+    };
+    # Newer nixpkgs binutils patches may not apply to 2.41. Drop the
+    # version-specific patches; keep only the GUIX-shipped one.
+    patches = [
       ./patches/binutils-unaligned-default.patch
     ];
-  });
+    outputs = [ "out" "info" "man" ];
+  }));
 
   # Build a gcc 14 / glibc 2.31 stdenv so the entire build (depends and the
   # final bitcoind link) uses glibc 2.31 — matching GUIX. The chain:
