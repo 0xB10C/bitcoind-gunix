@@ -80,14 +80,6 @@ let
     patches = (old.patches or []) ++ [
       ./patches/gcc-ssa-generation.patch
     ];
-    # nixpkgs gcc has `--disable-bootstrap` for build speed. GUIX bootstraps
-    # (3-stage). With bootstrap disabled our libstdc++ is built by stage-1
-    # gcc (which itself was built by old gcc 8.3.0 from nixos-20.09); with
-    # it enabled, libstdc++ is built by stage-3 gcc 14. The latter matches
-    # GUIX and may explain the +8 bytes/function libstdc++ residual.
-    #
-    # Filter --disable-bootstrap out of the inherited configureFlags. Build
-    # time roughly triples (gcc compiles itself three times).
     # Match GUIX's `linux-base-gcc` configure flags exactly, from
     # contrib/guix/manifest.scm:
     #
@@ -105,21 +97,19 @@ let
     #
     # nixpkgs already passes --enable-default-pie and (sometimes)
     # --enable-initfini-array; we add the rest verbatim.
-    configureFlags =
-      (builtins.filter (f: f != "--disable-bootstrap") (old.configureFlags or []))
-      ++ [
-        "--enable-initfini-array=yes"
-        "--enable-default-ssp=yes"
-        "--enable-default-pie=yes"
-        "--enable-host-bind-now=yes"
-        "--enable-standard-branch-protection=yes"
-        "--enable-cet=yes"
-        "--enable-gprofng=no"
-        "--disable-gcov"
-        "--disable-libgomp"
-        "--disable-libquadmath"
-        "--disable-libsanitizer"
-      ];
+    configureFlags = (old.configureFlags or []) ++ [
+      "--enable-initfini-array=yes"
+      "--enable-default-ssp=yes"
+      "--enable-default-pie=yes"
+      "--enable-host-bind-now=yes"
+      "--enable-standard-branch-protection=yes"
+      "--enable-cet=yes"
+      "--enable-gprofng=no"
+      "--disable-gcov"
+      "--disable-libgomp"
+      "--disable-libquadmath"
+      "--disable-libsanitizer"
+    ];
   });
   ccWithGlibc231 = pkgs.wrapCCWith {
     cc = gcc14RebuiltWithGlibc231;
