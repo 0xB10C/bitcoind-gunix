@@ -359,6 +359,28 @@ sha256sum result/bin/bitcoind-s /tmp/upstream-v31/bitcoin-31.0/bin/bitcoind
 # Both lines should show the same hash.
 ```
 
+## Bootstrap attempt — blocked
+
+Tried `filter "--disable-bootstrap"` from gcc's configureFlags to
+match GUIX's 3-stage bootstrap. Stage-1 builds succeed (host gcc
+compiles new gcc against glibc 2.31), but stage-2 link fails:
+
+```
+ld: /nix/store/.../gmp-with-cxx-6.3.0/lib/libgmp.so: undefined
+    reference to `__isoc23_strtol@GLIBC_2.38'
+```
+
+gcc needs gmp/mpfr/mpc/isl during compilation. Current nixpkgs builds
+these against glibc 2.42, so they reference modern glibc symbols
+(`__isoc23_strtol` added in 2.39). When we ask stage-2 gcc to link
+against glibc 2.31, those symbols aren't available.
+
+To unblock bootstrap we'd need to rebuild gmp + mpfr + mpc + isl
+against glibc 2.31, then use those when building gcc. That's another
+4 packages × glibc-2.31 stdenv worth of work. Deferred for now.
+
+Reverted bootstrap-enable commit (`55d2968` -> `f856121`).
+
 ## Things tried that did NOT move the residual
 
 These didn't change the delta — left here so future-me doesn't re-try them:
