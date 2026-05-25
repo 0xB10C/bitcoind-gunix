@@ -201,34 +201,47 @@ Subsequent commits applied GUIX's full toolchain configuration:
 
 | Metric | Upstream | Ours | Δ |
 |---|---|---|---|
-| Stripped size | 17,826,248 B | 17,838,464 B | **+0.07% (+12,216 B)** |
+| Stripped size | 17,826,248 B | 17,834,352 B | **+0.046% (+8,104 B)** |
 | Interpreter | `/lib64/ld-linux-x86-64.so.2` | same | ✅ |
 | NEEDED | libpthread, libm, libc, ld | same | ✅ |
 | RUNPATH | (none) | (none) | ✅ |
-| Dynamic symbol count | 344 | 344 | ✅ |
+| Dynamic symbol count | 344 | 345 | +1 (`gettext@GLIBC_2.2.5` from libstdc++) |
 | Dynamic relocations (RELATIVE) | 17,337 | 17,414 | +77 |
 | Path strings (`/bitcoin/...`) | 9 | 9 | ✅ |
 | `./*.cpp` relative paths | 160 | 160 | ✅ |
 | Function count (endbr64) | 50,032 | 50,032 | ✅ |
-| First N function addresses identical | — | 3,691 of 50,032 | first 7% byte-match |
-| `.note.gnu.property` (CET) | present (32 B) | absent | ❌ binutils 2.44 strictness |
-| `.comment` | `GCC 14.3.0` | `GCC 8.3.0`+`GCC 14.3.0` | ❌ extra stamp |
+| `.note.gnu.property` (CET) | present (32 B) | absent | ❌ binutils strictness |
+| `.comment` | `GCC 14.3.0` | `GCC 14.3.0` | ✅ (rewritten in postFixup) |
 | `.note.ABI-tag` kernel | 3.2.0 | 3.2.0 | ✅ |
 
 bloaty section deltas (positive = ours bigger):
 ```
-+11.4 KiB  .text
++6.88 KiB  .text
 +1.80 KiB  .rela.dyn          ← 77 extra R_X86_64_RELATIVE @ 24B each = +1848B
-+1.73 KiB  .eh_frame
++1.68 KiB  .eh_frame
   +672 B   .data.rel.ro
-  +346 B   .gcc_except_table
-  +344 B   .eh_frame_hdr
-  +256 B   .rodata
-   +32 B   .hash
-   +16 B   .comment           ← extra "GCC: (GNU) 8.3.0" string
+  +336 B   .gcc_except_table
+  +320 B   .eh_frame_hdr
+  +224 B   .rodata
+  +112 B   .hash
+   +24 B   .dynsym            ← +1 entry (gettext@GLIBC_2.2.5)
+   +24 B   .rela.plt          ← +1 JUMP_SLOT for gettext
+   +24 B   new [LOAD #5 [RW]] segment
+   +16 B   .plt               ← +1 PLT entry for gettext
+   +8 B    .got, .plt.got     ← +1 .got slot for gettext
    -48 B   .note.gnu.property (missing in ours)
-TOTAL: +12,216 B  (+0.07% vs upstream)
+TOTAL: +8,104 B  (+0.046% vs upstream)
 ```
+
+The new gettext-related entries appeared once .text shrank — they were
+always there, just not previously visible above other deltas. Source:
+libstdc++.a's `functexcept.o` and `cxx11-ios_failure.o` call gettext
+for translating exception messages. `--disable-nls` on gcc rebuild
+did NOT remove them (libstdc++ uses gettext independent of the gcc
+NLS knob); deeper fix likely requires patching libstdc++ source or
+matching whatever GUIX does in their libstdc++ build env (suspect:
+configure detects libintl absent during their cross-build → no
+gettext hookup in the libstdc++ runtime).
 
 ### Iteration history of the delta
 
@@ -247,6 +260,8 @@ TOTAL: +12,216 B  (+0.07% vs upstream)
 | 10 | -fomit-frame-pointer override (nixpkgs forced FP) | +172 KB |
 | 11 | hardeningDisable zerocallusedregs | **+37 KB** |
 | 12 | hardeningDisable strictoverflow | **+12 KB** |
+| 13 | postFixup rewrites `.comment` to drop GCC 8.3.0 stamp | **+12,200 B** |
+| 14 | hardeningDisable fortify/fortify3/format in depends | **+8,104 B** |
 
 ### Function-level analysis of the residual 12 KB
 
