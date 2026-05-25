@@ -138,11 +138,23 @@ gcc14Stdenv.mkDerivation rec {
   # (debug) variants alongside the original binary. The script is rendered
   # from contrib/devtools/split-debug.sh.in into the cmake build dir by
   # setup_split_debug_script() in cmake/module/Maintenance.cmake.
+  #
+  # After split-debug, replace .comment in the stripped binary to drop the
+  # spurious `GCC: (GNU) 8.3.0` stamp contributed by glibc 2.31's CRT
+  # objects (crt1.o, crti.o, crtn.o). Those CRTs are built by nixos-20.09's
+  # gcc 8.3.0, and the linker concatenates each input's .comment into the
+  # final binary. Upstream's GUIX-built glibc CRTs are built with gcc 14,
+  # so their final .comment has only `GCC: (GNU) 14.3.0`. Rewriting the
+  # section to match upstream saves 16 bytes and removes a visible
+  # divergence vs. byte-for-byte parity.
   postInstall = ''
     ./split-debug.sh \
       $out/bin/bitcoind \
       $out/bin/bitcoind-s \
       $out/bin/bitcoind-d
+
+    printf 'GCC: (GNU) 14.3.0\0' > comment.bin
+    objcopy --update-section .comment=comment.bin $out/bin/bitcoind-s
   '';
 
   dontStrip = true;
