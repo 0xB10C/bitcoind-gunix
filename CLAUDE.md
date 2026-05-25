@@ -292,6 +292,24 @@ gcc bootstrap chain), eliminating this residual requires
 function-by-function comparison of libzmq disassembly, which is
 diminishing-returns territory.
 
+#### Where the small ±8 byte diffs come from
+
+The cluster of small per-function diffs (positions 5193–5228, each
++8 bytes in ours) lands on libstdc++ helper functions like:
+
+- `_ZSt19__throw_ios_failurePKc` (`std::__throw_ios_failure`)
+- `_ZSt19__throw_logic_errorPKc` (`std::__throw_logic_error`)
+- Various `std::ctype` / `std::ios_base::failure` templates
+
+These come from libstdc++.a (statically linked into bitcoind). They
+differ by 8 bytes per function because gcc's libstdc++ build is
+sensitive to its own build environment (sub-build CXXFLAGS, gcc
+version-of-the-gcc-building-gcc, etc.). They don't differ because
+of any flag we pass to bitcoin or its depends.
+
+To eliminate these would require building gcc 14 in an environment
+byte-for-byte identical to GUIX's gcc-building environment.
+
 ### Where to next (if/when resuming)
 
 Three known issues remain. They likely need work in this order:
