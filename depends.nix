@@ -119,15 +119,22 @@ gcc14Stdenv.mkDerivation rec {
   # 50k functions in the final binary.
   env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer";
 
-  # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply:
+  # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply to
+  # depends compiles:
   #
   # - zerocallusedregs: -fzero-call-used-regs=used-gpr (register zeroing).
   # - strictoverflow: -fno-strict-overflow.
   # - stackprotector: -fstack-protector-strong with --param
-  #   ssp-buffer-size=4 (more aggressive than gcc's default of 8).
-  #   Our gcc still defaults to -fstack-protector-strong via
+  #   ssp-buffer-size=4. Our gcc still defaults to strong via
   #   --enable-default-ssp=yes.
-  hardeningDisable = [ "zerocallusedregs" "strictoverflow" "stackprotector" ];
+  # - stackclashprotection: -fstack-clash-protection. Bitcoin's CMake
+  #   adds this for `core_interface` targets only; depends archives in
+  #   GUIX don't get it (GUIX gcc doesn't enable it by default for the
+  #   depends build).
+  hardeningDisable = [
+    "zerocallusedregs" "strictoverflow" "stackprotector"
+    "stackclashprotection"
+  ];
 
 
   doCheck = false;
