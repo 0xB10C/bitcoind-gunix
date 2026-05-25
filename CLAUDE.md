@@ -295,20 +295,36 @@ diminishing-returns territory.
 #### Where the small ±8 byte diffs come from
 
 The cluster of small per-function diffs (positions 5193–5228, each
-+8 bytes in ours) lands on libstdc++ helper functions like:
++8 bytes in ours) lands on bitcoin's C++ throw sites that follow
+the pattern:
 
-- `_ZSt19__throw_ios_failurePKc` (`std::__throw_ios_failure`)
-- `_ZSt19__throw_logic_errorPKc` (`std::__throw_logic_error`)
-- Various `std::ctype` / `std::ios_base::failure` templates
+```cpp
+throw std::logic_error(_("message"));
+```
 
-These come from libstdc++.a (statically linked into bitcoind). They
-differ by 8 bytes per function because gcc's libstdc++ build is
-sensitive to its own build environment (sub-build CXXFLAGS, gcc
-version-of-the-gcc-building-gcc, etc.). They don't differ because
-of any flag we pass to bitcoin or its depends.
+Each such throw site compiles to a small stub that:
+- calls `__cxa_allocate_exception`
+- calls `gettext` (`_()` macro)
+- calls `std::logic_error::logic_error(char const*)`
+- calls `__cxa_throw`
 
-To eliminate these would require building gcc 14 in an environment
-byte-for-byte identical to GUIX's gcc-building environment.
+In our build each stub is 64 bytes, in upstream 56 bytes — a +8
+byte per-stub overhead. Originally suspected to be libstdc++
+template instantiation differences. Actually disassembling these
+functions revealed they're bitcoin's own throw-site stubs, not
+libstdc++ helpers. The 8-byte diff per stub is most likely
+from one of:
+
+- A small alignment/padding difference in gcc's output
+- An extra `push` / register save in our build's calling convention
+- Different optimizer decision about register allocation for the
+  exception-object pointer
+
+About 10 such throw stubs are detected, totaling ~80 bytes.
+
+To eliminate these would require matching GUIX's full gcc build
+environment (its bootstrap chain, all its build dependencies
+compiled with consistent flags).
 
 ### Where to next (if/when resuming)
 
