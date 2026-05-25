@@ -399,27 +399,77 @@ sha256sum result/bin/bitcoind-s /tmp/upstream-v31/bitcoin-31.0/bin/bitcoind
 # Both lines should show the same hash.
 ```
 
-## Bootstrap attempt — blocked
+## Coherent toolchain attempt (reverted)
 
-Tried `filter "--disable-bootstrap"` from gcc's configureFlags to
-match GUIX's 3-stage bootstrap. Stage-1 builds succeed (host gcc
-compiles new gcc against glibc 2.31), but stage-2 link fails:
+Tried multiple approaches to build a fully coherent toolchain
+(all of gcc + glibc + gmp + mpfr + libmpc + isl + binutils linked
+against one consistent glibc 2.31). All failed — documented as
+`commit 37b05ef` + revert `2f6823b`. The investigation:
 
 ```
-ld: /nix/store/.../gmp-with-cxx-6.3.0/lib/libgmp.so: undefined
-    reference to `__isoc23_strtol@GLIBC_2.38'
+stageAStdenv = wrap gcc14 binary with cc-wrapper using glibc 2.31
+gmpGlibc231  = pkgs.gmp.override   { stdenv = stageAStdenv; }
+mpfrGlibc231 = pkgs.mpfr.override  { stdenv = stageAStdenv; gmp = gmpGlibc231 }
+libmpcGlibc231 = pkgs.libmpc.override { stdenv; gmp = gmpGlibc231; mpfr = mpfrGlibc231 }
+islGlibc231  = pkgs.isl.override   { stdenv = stageAStdenv; gmp = gmpGlibc231 }
+
+gcc14RebuiltCc = pkgs.gcc14.cc.override {
+  stdenv = stageAStdenv;
+  gmp = gmpGlibc231; mpfr = mpfrGlibc231;
+  libmpc = libmpcGlibc231; isl = islGlibc231;
+}
+# Then overrideAttrs to apply gcc-ssa-generation, GUIX configureFlags,
+# and filter --disable-bootstrap (so gcc bootstraps 3-stage).
 ```
 
-gcc needs gmp/mpfr/mpc/isl during compilation. Current nixpkgs builds
-these against glibc 2.42, so they reference modern glibc symbols
-(`__isoc23_strtol` added in 2.39). When we ask stage-2 gcc to link
-against glibc 2.31, those symbols aren't available.
+Threading rebuilt deps explicitly was needed because plain
+`overrideAttrs` doesn't propagate to inputs — libmpc would
+otherwise still see the default nixpkgs gmp built against glibc 2.42,
+causing an ABI mismatch at libmpc's configure step.
 
-To unblock bootstrap we'd need to rebuild gmp + mpfr + mpc + isl
-against glibc 2.31, then use those when building gcc. That's another
-4 packages × glibc-2.31 stdenv worth of work. Deferred for now.
+Previously tried but failed:
+- Global glibc replacement via nixpkgs overlay: too disruptive, broke
+  bootstrap (`coreutils.override` missing).
+- Rebuilding just gmp via stdenv override: libmpc configure failed
+  because it still pulled the default-pkgs gmp transitively.
 
-Reverted bootstrap-enable commit (`55d2968` -> `f856121`).
+The 3-stage bootstrap gives us a libstdc++ built by stage-3 gcc,
+matching GUIX's bootstrap chain. Expected to reduce/eliminate the
++8 byte / function diffs observed in bitcoin's throw stubs and the
+broader libstdc++ instantiation residuals.
+
+Approach failed: isl's `./configure` reports "main in -lgmp: no →
+gmp library not found" even though our overridden gmp builds fine
+in isolation and gmp.h is found correctly. This means
+nixpkgs' cc-wrapper isn't propagating gmp's `.out`/lib path
+into LD's search path when isl is built with stageAStdenv +
+explicit gmp dep.
+
+Other approaches tried (all blocked):
+
+- **Global nixpkgs overlay replacing glibc**: too disruptive, broke
+  nixpkgs bootstrap (`coreutils.override missing`).
+- **pkgsCross.gnu64**: uses gcc 14.3.0 + glibc **2.40**, same
+  version mismatch we already have.
+- **stdenvAdapters.useLibsFrom**: designed for clang+libstdc++ mix,
+  not for full toolchain rebuild.
+
+### What a full fix would look like
+
+A coherent toolchain rebuild requires either:
+
+1. A custom `nixpkgs` overlay that targets ONLY the toolchain
+   sub-graph (gcc + its build inputs) without disturbing the
+   stdenv that compiles them. Probably involves `stdenvNoCC` +
+   manual reconstruction of the gcc bootstrap chain.
+2. Use of `pkgsCross.gnu64` with a glibc-2.31 override on top.
+   Possibly involves `crossSystem.libc` config.
+3. Multi-stage `runCommand`-based build that explicitly stages
+   gmp/mpfr/libmpc/isl with the right cc-wrapper before each
+   dependency.
+
+All of these are multi-day plumbing projects. Out of scope for
+this iteration. Reverted to the working state (+12,216 B delta).
 
 ## Things tried that did NOT move the residual
 
