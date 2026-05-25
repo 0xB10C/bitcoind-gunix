@@ -39,6 +39,14 @@
           "--disable-timezone-tools"
           "--disable-profile"
         ];
+        # Drop nixpkgs' allow-kernel-2.6.32.patch — it hardcodes the
+        # .note.ABI-tag to 2.6.32 regardless of --enable-kernel. We want
+        # 3.2.0 (matching upstream's GUIX-built binary). The patch's
+        # original purpose was wider runtime-compat for nixpkgs users,
+        # which isn't a goal here.
+        patches = builtins.filter
+          (p: !(pkgs.lib.hasSuffix "allow-kernel-2.6.32.patch" (toString p)))
+          (old.patches or []);
       });
       drvs = import ./default.nix {
         inherit pkgs;
