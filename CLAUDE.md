@@ -213,7 +213,7 @@ Subsequent commits applied GUIX's full toolchain configuration:
 | First N function addresses identical | — | 3,691 of 50,032 | first 7% byte-match |
 | `.note.gnu.property` (CET) | present (32 B) | absent | ❌ binutils 2.44 strictness |
 | `.comment` | `GCC 14.3.0` | `GCC 8.3.0`+`GCC 14.3.0` | ❌ extra stamp |
-| `.note.ABI-tag` kernel | 3.2.0 | 2.6.32 | ❌ |
+| `.note.ABI-tag` kernel | 3.2.0 | 3.2.0 | ✅ |
 
 bloaty section deltas (positive = ours bigger):
 ```
@@ -329,11 +329,13 @@ Three known issues remain. They likely need work in this order:
    `pkgsGlibc231.glibc.override { stdenv = ourStage2Stdenv; }` is the
    API. The circular dependency is the design challenge.
 
-2. **`.note.ABI-tag` kernel 2.6.32 vs 3.2.0** (4 B): even though we
-   passed `--enable-kernel=3.2.0` to glibc configure, the resulting
-   binary shows 2.6.32. Either the flag isn't taking effect (verify
-   via `strings .../glibc-2.31-74/lib/libc.so.6 | grep "GNU C Library"`)
-   or there's a hardcoded value in nixos-20.09's glibc derivation.
+2. **`.note.ABI-tag` kernel 2.6.32 vs 3.2.0** (4 B): ~~not taking
+   effect~~ **FIXED** in commit `2465b69` by filtering out nixpkgs'
+   `allow-kernel-2.6.32.patch` from glibc's patch list. That patch
+   hardcoded `abinum` to "2.6.32" in
+   `sysdeps/unix/sysv/linux/configure(.ac)` regardless of
+   `--enable-kernel`. Dropping it lets glibc's default
+   `arch_minimum_kernel=3.2.0` take effect.
 
 3. **`.note.gnu.property` missing** (-48 B): binutils 2.44 drops the
    property note section when AND-properties (CET) can't be merged
