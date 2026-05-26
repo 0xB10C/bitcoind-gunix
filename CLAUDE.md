@@ -201,18 +201,19 @@ Subsequent commits applied GUIX's full toolchain configuration:
 
 | Metric | Upstream | Ours | Δ |
 |---|---|---|---|
-| Stripped size | 17,826,248 B | 17,834,352 B | **+0.046% (+8,104 B)** |
+| Stripped size | 17,826,248 B | 17,834,440 B | **+0.046% (+8,192 B)** |
 | Interpreter | `/lib64/ld-linux-x86-64.so.2` | same | ✅ |
 | NEEDED | libpthread, libm, libc, ld | same | ✅ |
 | RUNPATH | (none) | (none) | ✅ |
-| Dynamic symbol count | 344 | 345 | +1 (`gettext@GLIBC_2.2.5` from libstdc++) |
+| Dynamic symbol count | 344 | 344 | ✅ |
 | Dynamic relocations (RELATIVE) | 17,337 | 17,414 | +77 |
 | Path strings (`/bitcoin/...`) | 9 | 9 | ✅ |
 | `./*.cpp` relative paths | 160 | 160 | ✅ |
 | Function count (endbr64) | 50,032 | 50,032 | ✅ |
-| `.note.gnu.property` (CET) | present (32 B) | absent | ❌ binutils strictness |
+| `.note.gnu.property` | x86 ISA used: baseline,v2,v3 / feature used: x86,x87,XMM,YMM,XSAVE | same | ✅ (CRT patch) |
 | `.comment` | `GCC 14.3.0` | `GCC 14.3.0` | ✅ (rewritten in postFixup) |
 | `.note.ABI-tag` kernel | 3.2.0 | 3.2.0 | ✅ |
+| `.gnu_debuglink` | `bitcoind.dbg` | same | ✅ |
 
 bloaty section deltas (positive = ours bigger):
 ```
@@ -262,6 +263,9 @@ gettext hookup in the libstdc++ runtime).
 | 12 | hardeningDisable strictoverflow | **+12 KB** |
 | 13 | postFixup rewrites `.comment` to drop GCC 8.3.0 stamp | **+12,200 B** |
 | 14 | hardeningDisable fortify/fortify3/format in depends | **+8,104 B** |
+| 15 | flake: patch glibc CRTs with upstream USED property bytes | +8,184 B |
+| 16 | bitcoind: split-debug.sh args match upstream (bitcoind.dbg) | +8,192 B |
+| 17 | gcc: --disable-nls drops gettext from libstdc++ | **+8,192 B** |
 
 ### Function-level analysis of the residual 12 KB
 
