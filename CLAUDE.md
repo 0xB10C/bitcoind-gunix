@@ -392,18 +392,29 @@ Three known issues remain. They likely need work in this order:
    `--enable-kernel`. Dropping it lets glibc's default
    `arch_minimum_kernel=3.2.0` take effect.
 
-3. **`.note.gnu.property` missing** (-48 B): binutils 2.44 drops the
-   property note section when AND-properties (CET) can't be merged
-   cleanly across inputs. Upstream's older binutils (likely 2.42-43)
-   is more permissive. Either downgrade binutils or backport the
-   relevant binutils change.
+3. **`.note.gnu.property` missing** (-48 B): binutils 2.41 drops the
+   ENTIRE property note section when AND-properties (CET) can't be
+   merged across all inputs (e.g. when some .o files have CET and
+   others don't). Reproduced with a minimal test: link two .o files,
+   one compiled with `-fcf-protection=full` and one without, and the
+   output binary has no `.note.gnu.property` at all — not even the
+   OR (USED) properties that should survive. Upstream's GUIX-built
+   binutils 2.41 keeps the USED properties in this case (visible in
+   their bitcoind: `x86 ISA used: x86-64-baseline, x86-64-v2,
+   x86-64-v3` + `x86 feature used: x86, x87, XMM, YMM, XSAVE`).
+   We use the same binutils version (2.41 source) with the same
+   `binutils-unaligned-default.patch`. The behavioral divergence must
+   come from some other patch GUIX applies or build-env difference.
+   Either patch our binutils to match or accept the -48 B delta.
 
-4. **Residual `.text` +11 KiB** and **`.rela.dyn` +1.8 KiB**
+4. **Residual `.text` +6.88 KiB** and **`.rela.dyn` +1.8 KiB**
    (77 extra `R_X86_64_RELATIVE` relocs). The first 3691 (out of
    50032) functions are at byte-identical addresses; divergence
-   starts at offset 0x14360d. Investigate which function changes
-   produce extra relocations — likely vtable, template instantiation,
-   or similar subtle codegen difference.
+   starts in the libzmq region. Sub-deltas in libstdc++ throw-stub
+   helpers (+8 B each, ~10 stubs) and SSP-protected functions
+   (~32 extra protected fns). To close fully requires matching
+   GUIX's gcc bootstrap chain (multi-stage build); currently
+   blocked by isl/gmp/glibc-2.31 build dependency issues.
 
 ### Final note: how to verify a successful match
 
