@@ -203,6 +203,23 @@ gcc14Stdenv.mkDerivation rec {
     printf '\x29\x7e\xc7\x2c' | dd of=$out/bin/bitcoind bs=1 seek=$((0x10ff7b8)) count=4 conv=notrunc
   '';
 
+  # Reproducibility gate: fail the build if the final bitcoind diverges
+  # from the upstream GUIX-built v31.0 release. Runs after fixupPhase
+  # (which would otherwise be the last thing that could touch the
+  # binary). This is what makes the whole derivation a reproducibility
+  # test rather than just a best-effort build.
+  postFixup = ''
+    expected=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
+    actual=$(sha256sum $out/bin/bitcoind | cut -d' ' -f1)
+    if [ "$actual" != "$expected" ]; then
+      echo "FAIL: bitcoind sha256 does not match upstream GUIX v31.0 release"
+      echo "  expected: $expected"
+      echo "  actual:   $actual"
+      exit 1
+    fi
+    echo "OK: bitcoind sha256 matches upstream GUIX v31.0 ($expected)"
+  '';
+
   dontStrip = true;
   doCheck = false;
   enableParallelBuilding = true;

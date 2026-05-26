@@ -27,9 +27,23 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: cachix/cachix-action@v12
         with:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-      - run: nix-build
+      # The bitcoind derivation's postFixup compares the produced
+      # binary's sha256 against the upstream GUIX v31.0 release and
+      # fails the build on mismatch — so a successful `nix build` IS
+      # the reproducibility test. The second step re-asserts the
+      # hash externally for visibility in the CI logs.
+      - run: nix build .#bitcoind --print-build-logs
+      - name: Verify sha256 matches upstream GUIX v31.0
+        run: |
+          expected=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
+          actual=$(sha256sum result/bin/bitcoind | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]
