@@ -1,0 +1,10 @@
+# Local build artifacts and external resources, never committed
+/result
+/result-*
+/shell.nix
+/bitcoin/
+/guix/
+/guix-depends-staging/
+/depends-x86_64-linux-gnu.tar.gz
+/v31-guix-build.log
+/.claude/
