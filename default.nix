@@ -10,22 +10,27 @@ let
   url = "https://bitcoincore.org/bin/bitcoin-core-${version}/bitcoin-${version}.tar.gz";
   sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
 
-  # Patches GUIX applies to its toolchain. We apply the same so our
-  # gcc/binutils generate identical code/encodings.
+  # Patches GUIX applies to its Linux toolchain. We apply the same so
+  # our gcc/binutils generate identical code/encodings.
   #
   # - gcc-ssa-generation.patch: deterministic SSA version numbering
   #   (gcc PR123351). Without it, SSA names are assigned non-
   #   deterministically depending on function-argument evaluation
   #   order, which yields different generated code per gcc build.
   #
-  # - binutils-unaligned-default.patch: defaults the gas assembler's
-  #   `use_unaligned_vector_move` to 1, encoding aligned vector moves
-  #   as unaligned. Without this we get different VEX/EVEX encodings
-  #   in .text vs upstream.
-  #
   # We don't apply gcc-remap-guix-store.patch — it strips /gnu/store
   # paths from libgcc DWARF, which only matters for unstripped
   # binaries. Our reproducibility target is the stripped binary.
+  #
+  # We DON'T apply binutils-unaligned-default.patch — verified that
+  # GUIX applies it only to the MINGW (Windows) cross-toolchain via
+  # `binutils-mingw-patches`, not to the Linux build. Applying it to
+  # Linux makes gas encode `vmovaps` as `vmovups` (opcode 0x28→0x10),
+  # producing 747+ differing bytes per .o file vs upstream's Linux
+  # binary. Confirmed by extracting upstream's depends staging
+  # libsqlite3.a and finding upstream emits 0x28 (movaps), we emit
+  # 0x10 (movups).
+  #
   # Downgrade binutils from nixpkgs' 2.44 to 2.41 (the version GUIX ships in
   # its package manifest, used by cross-binutils for the bitcoin cross
   # toolchain — see gnu/packages/base.scm:656 in GUIX). binutils version
@@ -41,11 +46,8 @@ let
       url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
       sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
     };
-    # Newer nixpkgs binutils patches may not apply to 2.41. Drop the
-    # version-specific patches; keep only the GUIX-shipped one.
-    patches = [
-      ./patches/binutils-unaligned-default.patch
-    ];
+    # Newer nixpkgs binutils patches may not apply to 2.41. Drop them.
+    patches = [];
     outputs = [ "out" "info" "man" ];
   }));
 
