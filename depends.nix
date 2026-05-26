@@ -88,25 +88,21 @@ gcc14Stdenv.mkDerivation rec {
 
     ${lib.concatStringsSep "\n" cpDependsSources}
 
-    # Drop the three TIPC source files from libzmq so our archive matches
-    # GUIX's. GUIX cross-compiles, libzmq's CMakeLists wraps the runtime
-    # TIPC check in `if(NOT CMAKE_CROSSCOMPILING)`, and the conditional
-    # `if(ZMQ_HAVE_TIPC)` block adds tipc_*.cpp only when the check
-    # succeeded. Under cross-compile the check is skipped and the block
-    # stays disabled. We build natively, the check runs, and TIPC
-    # support is detected — pulling 3 extra .o files into libzmq.a.
-    # See patches/zeromq-disable-tipc.patch for the full rationale.
+    # Drop libzmq's TIPC sources so our archive matches GUIX's. GUIX's
+    # cross-compile skips the runtime TIPC check (which is gated on
+    # `if(NOT CMAKE_CROSSCOMPILING)`); a native build runs the check,
+    # finds TIPC, and pulls 3 extra .o files into libzmq.a. We patch
+    # ZMQ_HAVE_TIPC=FALSE early in libzmq's CMakeLists. See
+    # patches/zeromq-disable-tipc.patch.
     cp ${./patches/zeromq-disable-tipc.patch} \
       ${dependsDir}/patches/zeromq/zeromq-disable-tipc.patch
-    # Append a chained `patch -p1 < ...` line after the existing
-    # `no_librt.patch` line in zeromq's `preprocess_cmds`. We have to
-    # first add the trailing ` && \` line continuation to the
-    # `no_librt.patch` line (it was the last patch and has no
-    # continuation), then insert our patch line after it.
+    # Wire the new patch into zeromq's `preprocess_cmds` after the
+    # existing no_librt.patch invocation (which is the last patch in
+    # the chain and needs a `&& \` continuation added).
     sed -i 's|^  patch -p1 < \$(\$(package)_patch_dir)/no_librt\.patch$|  patch -p1 < $($(package)_patch_dir)/no_librt.patch \&\& \\\n  patch -p1 < $($(package)_patch_dir)/zeromq-disable-tipc.patch|' \
       ${dependsDir}/packages/zeromq.mk
     # Register the patch with $(package)_patches so the build captures
-    # its hash for caching/build-id computation.
+    # its hash for caching / build-id computation.
     sed -i '/^\$(package)_patches += no_librt\.patch$/a\$(package)_patches += zeromq-disable-tipc.patch' \
       ${dependsDir}/packages/zeromq.mk
   '';
@@ -182,28 +178,20 @@ gcc14Stdenv.mkDerivation rec {
     "fortify" "fortify3" "format"
   ];
 
-
   doCheck = false;
   enableParallelBuilding = true;
 
   postFixup = ''
     # HOST=x86_64-linux-gnu (set in makeFlags) makes depends install
-    # under x86_64-linux-gnu/ rather than the native default
-    # x86_64-pc-linux-gnu/. Move whichever exists to $out.
-    if [ -d x86_64-linux-gnu ]; then
-      mv x86_64-linux-gnu/* $out/
-      hostdir=x86_64-linux-gnu
-    else
-      mv x86_64-pc-linux-gnu/* $out/
-      hostdir=x86_64-pc-linux-gnu
-    fi
+    # under x86_64-linux-gnu/ — move it to $out.
+    mv x86_64-linux-gnu/* $out/
 
     # The depends build hardcodes its absolute build-time staging path
-    # (e.g. /build/.../depends/<hostdir>) into CMake config files like
-    # libevent's LibeventTargets-static.cmake. Rewrite those to point at
-    # $out so consumers (the bitcoind build) can find the installed
-    # libraries and headers.
+    # (e.g. /build/.../depends/x86_64-linux-gnu) into CMake config
+    # files like libevent's LibeventTargets-static.cmake. Rewrite
+    # those to point at $out so consumers (the bitcoind build) can
+    # find the installed libraries and headers.
     find $out -type f \( -name '*.cmake' -o -name '*.pc' \) \
-      -exec sed -i "s|/build/bitcoin-${version}/depends/$hostdir|$out|g" {} +
+      -exec sed -i "s|/build/bitcoin-${version}/depends/x86_64-linux-gnu|$out|g" {} +
   '';
 }

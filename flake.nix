@@ -152,26 +152,16 @@ with open('$o', 'r+b') as f:
               '-Dweak_extern(x)=' \
               -c elf-init.c -o elf-init-new.o
 
-            echo "DEBUG: elf-init-new.o built, sections:"
-            ${pkgs.binutils-unwrapped}/bin/readelf -SW elf-init-new.o | grep -E "\.text|\.rela|\.eh_frame|\.note"
-
-            # Add an extra hidden-visibility .note.gnu.property so the
-            # spliced .o file matches the layout the original elf-init.oS
-            # had. (Original had section 7 = .note.gnu.property with
-            # exact USED bytes; our gcc-14 build emits its own property
-            # note that may differ on byte details.) Patch ours to the
-            # canonical USED bytes:
+            # Overwrite the new .o's .note.gnu.property with the same
+            # canonical USED bytes used elsewhere, so the spliced member
+            # matches the section layout the original elf-init.oS had.
             ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=$OLDPWD/usedprop.bin elf-init-new.o
 
-            # Replace the elf-init.oS member outright with our newly
-            # compiled .o. The new .o has its own correct .rela.text /
-            # .symtab so symbols stay properly resolved at link time.
-            # The archive name 'elf-init.oS' is what libc.so/libc_nonshared.a
-            # already lists in its index; ar r renames our file into it.
+            # Replace the elf-init.oS member outright. The new .o has
+            # its own correct .rela.text / .symtab so symbols stay
+            # resolved at link time. `ar r` renames elf-init.oS in
+            # the archive index.
             mv elf-init-new.o elf-init.oS
-            echo "DEBUG: replacement elf-init.oS sections:"
-            ${pkgs.binutils-unwrapped}/bin/readelf -SW elf-init.oS | grep -E "\.text|\.rela|\.eh_frame|\.note"
-
             ${pkgs.binutils-unwrapped}/bin/ar r libc_nonshared.a elf-init.oS
             rm -f elf-init.oS
 
