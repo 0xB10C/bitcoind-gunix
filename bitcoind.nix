@@ -148,13 +148,25 @@ gcc14Stdenv.mkDerivation rec {
   # section to match upstream saves 16 bytes and removes a visible
   # divergence vs. byte-for-byte parity.
   postInstall = ''
+    # Match upstream's split-debug invocation exactly:
+    #   ./split-debug.sh <input> <input> <input>.dbg
+    # This overwrites `bitcoind` in-place with the stripped version
+    # and produces `bitcoind.dbg` alongside. Crucially the debuglink
+    # references `bitcoind.dbg` — upstream's .gnu_debuglink section
+    # contains exactly that string (matching the GUIX build).
+    #
+    # Keep `bitcoind-s` and `bitcoind-d` as symlinks for our existing
+    # tooling/scripts that reference them.
     ./split-debug.sh \
       $out/bin/bitcoind \
-      $out/bin/bitcoind-s \
-      $out/bin/bitcoind-d
+      $out/bin/bitcoind \
+      $out/bin/bitcoind.dbg
+
+    ln -s bitcoind $out/bin/bitcoind-s
+    ln -s bitcoind.dbg $out/bin/bitcoind-d
 
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
-    objcopy --update-section .comment=comment.bin $out/bin/bitcoind-s
+    objcopy --update-section .comment=comment.bin $out/bin/bitcoind
   '';
 
   dontStrip = true;
