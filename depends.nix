@@ -87,6 +87,28 @@ gcc14Stdenv.mkDerivation rec {
     mkdir ${dependsDir}/sources
 
     ${lib.concatStringsSep "\n" cpDependsSources}
+
+    # Drop the three TIPC source files from libzmq so our archive matches
+    # GUIX's. GUIX cross-compiles, libzmq's CMakeLists wraps the runtime
+    # TIPC check in `if(NOT CMAKE_CROSSCOMPILING)`, and the conditional
+    # `if(ZMQ_HAVE_TIPC)` block adds tipc_*.cpp only when the check
+    # succeeded. Under cross-compile the check is skipped and the block
+    # stays disabled. We build natively, the check runs, and TIPC
+    # support is detected — pulling 3 extra .o files into libzmq.a.
+    # See patches/zeromq-disable-tipc.patch for the full rationale.
+    cp ${./patches/zeromq-disable-tipc.patch} \
+      ${dependsDir}/patches/zeromq/zeromq-disable-tipc.patch
+    # Append a chained `patch -p1 < ...` line after the existing
+    # `no_librt.patch` line in zeromq's `preprocess_cmds`. We have to
+    # first add the trailing ` && \` line continuation to the
+    # `no_librt.patch` line (it was the last patch and has no
+    # continuation), then insert our patch line after it.
+    sed -i 's|^  patch -p1 < \$(\$(package)_patch_dir)/no_librt\.patch$|  patch -p1 < $($(package)_patch_dir)/no_librt.patch \&\& \\\n  patch -p1 < $($(package)_patch_dir)/zeromq-disable-tipc.patch|' \
+      ${dependsDir}/packages/zeromq.mk
+    # Register the patch with $(package)_patches so the build captures
+    # its hash for caching/build-id computation.
+    sed -i '/^\$(package)_patches += no_librt\.patch$/a\$(package)_patches += zeromq-disable-tipc.patch' \
+      ${dependsDir}/packages/zeromq.mk
   '';
 
   sourceRoot = dependsDir;

@@ -1,0 +1,44 @@
+Skip TIPC source compilation in libzmq to match upstream's archive.
+
+GUIX builds bitcoin via a cross-toolchain (`make-bitcoin-cross-toolchain`
+in contrib/guix/manifest.scm) so CMake sees `CMAKE_CROSSCOMPILING=ON`
+when libzmq configures. libzmq's CMakeLists.txt wraps the runtime
+TIPC check in `if(NOT CMAKE_CROSSCOMPILING)` and only adds the three
+TIPC source files when `ZMQ_HAVE_TIPC` is set:
+
+  if(NOT CMAKE_CROSSCOMPILING)
+    ...
+    zmq_check_tcp_tipc()   # sets ZMQ_HAVE_TIPC=1 if test runs OK
+  endif()
+  ...
+  if(ZMQ_HAVE_TIPC)
+    list(APPEND cxx-sources tipc_address.cpp tipc_connecter.cpp tipc_listener.cpp)
+  endif()
+
+Under GUIX's cross-compile, the check is skipped → ZMQ_HAVE_TIPC stays
+undefined → no TIPC sources → upstream's libzmq.a excludes them
+(verified by ar-extracting upstream's depends staging archive).
+
+We build natively, so the check runs, succeeds (linux/tipc.h plus a
+working PF_TIPC kernel in the Nix sandbox), and our libzmq.a ends up
+with three extra objects: tipc_address.cpp.o, tipc_connecter.cpp.o,
+tipc_listener.cpp.o — adding ~44 KiB to libzmq.a and ~4-5 KiB of
+.text in the final bitcoind.
+
+Pin `ZMQ_HAVE_TIPC` to FALSE just before the conditional so it
+matches GUIX's behavior regardless of CMAKE_CROSSCOMPILING.
+
+This patch is applied to the libzmq 4.3.5 source tree inside Bitcoin
+Core's depends/sources, before the depends Makefile runs its own
+patches.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1208,6 +1208,7 @@
+   list(APPEND cxx-sources vmci_address.cpp vmci_connecter.cpp vmci_listener.cpp vmci.cpp)
+ endif()
+
++set(ZMQ_HAVE_TIPC FALSE)
+ if(ZMQ_HAVE_TIPC)
+   list(APPEND cxx-sources tipc_address.cpp tipc_connecter.cpp tipc_listener.cpp)
+ endif()
