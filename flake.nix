@@ -79,42 +79,70 @@
               ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=usedprop.bin "$f"
             fi
           done
-          if [ -f $out/lib/libc_nonshared.a ]; then
-            mkdir -p libc-rebuild
-            cd libc-rebuild
-            cp $out/lib/libc_nonshared.a libc_nonshared.a
+          if [ -f "$out/lib/libc_nonshared.a" ]; then
+            # Stage 1: patch each .oS member's .note.gnu.property to
+            # carry upstream's USED bytes, AND swap the gcc-8.3.0-style
+            # stack-canary check `xor %fs:0x28,%rax` (48 33 04 25 28 00 00 00)
+            # for the gcc-14-style `sub %fs:0x28,%rax` (48 2b 04 25 28 00 00 00).
+            # Both check the canary correctly; gcc 14's emitted code uses
+            # `sub`, gcc 8.3.0 uses `xor`. atexit.oS, stat64.oS, fstat64.oS
+            # and lstat64.oS were each 1 byte off (and possibly others
+            # — patch all .oS members defensively, the sed is a no-op
+            # for ones that don't contain the pattern).
+            WORK=$(mktemp -d)
+            cd "$WORK"
+            cp "$out/lib/libc_nonshared.a" libc_nonshared.a
             chmod +w libc_nonshared.a
             for o in $(${pkgs.binutils-unwrapped}/bin/ar t libc_nonshared.a); do
               ${pkgs.binutils-unwrapped}/bin/ar x libc_nonshared.a "$o"
+              changed=0
               if ${pkgs.binutils-unwrapped}/bin/readelf -n "$o" 2>/dev/null | grep -q gnu.property; then
-                ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=../usedprop.bin "$o"
+                ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=$OLDPWD/usedprop.bin "$o"
+                changed=1
+              fi
+              # Byte-patch `64 48 33 04 25 28 00 00 00` (xor %fs:0x28,%rax)
+              # → `64 48 2b 04 25 28 00 00 00` (sub %fs:0x28,%rax) in the
+              # .oS files known to have the gcc-8.3.0 canary check that
+              # diverges from upstream's gcc-14 version.
+              #
+              # Edit the file IN PLACE rather than via objcopy
+              # --update-section, because the latter ZEROES the
+              # .rela.text section (relocations targeting .text get
+              # marked stale and dropped). For a single-byte instruction
+              # tweak the relocations are still 100% valid, so direct
+              # bytewise patching is both correct and minimally invasive.
+              case "$o" in
+                atexit.oS|stat64.oS|fstat64.oS|lstat64.oS)
+                  ${pkgs.python3.out}/bin/python3 -c "
+import sys
+with open('$o', 'r+b') as f:
+    d = f.read()
+    new = d.replace(
+        b'\\x64\\x48\\x33\\x04\\x25\\x28\\x00\\x00\\x00',
+        b'\\x64\\x48\\x2b\\x04\\x25\\x28\\x00\\x00\\x00',
+    )
+    if new != d:
+        f.seek(0); f.write(new); f.truncate()
+        sys.exit(0)
+    sys.exit(1)
+" && changed=1
+                  ;;
+              esac
+              if [ "$changed" = "1" ]; then
                 ${pkgs.binutils-unwrapped}/bin/ar r libc_nonshared.a "$o"
               fi
               rm -f "$o"
             done
-            cp libc_nonshared.a $out/lib/libc_nonshared.a
-            cd ..
 
-            # Also rebuild elf-init.oS (containing __libc_csu_init) using
-            # the rebuilt gcc 14 + glibc 2.31 toolchain so the resulting
-            # .text matches upstream's gcc-14-compiled version. The nixos-
-            # 20.09 glibc was built with gcc 8.3.0 which uses different
-            # register allocation; the function's ABI is identical but
-            # the byte-level instruction encoding diverges by ~131 B.
-            # See https://sourceware.org/git/?p=glibc.git;a=blob;f=csu/elf-init.c;hb=refs/tags/glibc-2.31
-            # for the source. We compile with the same flags upstream's
-            # glibc 2.31 uses for libc_nonshared.a's elf-init.oS:
-            #   -O2 -fPIE -DLIBC_NONSHARED=1 -DSHARED -fpie -ffreestanding
-            #   -fstack-protector-all -fcf-protection=full
-            # The attribute_hidden/weak_alias macros from glibc internals
-            # aren't needed for the actual codegen of __libc_csu_init —
-            # stub them out with empty defines.
+            # Stage 2: replace elf-init.oS's .text with a gcc-14-compiled
+            # version. The nixos-20.09 glibc was built with gcc 8.3.0,
+            # whose register allocation for __libc_csu_init differs from
+            # upstream's gcc-14-built version (131 bytes of .text differ).
+            # Compile csu/elf-init.c from glibc 2.31 with our gcc 14 plus
+            # the upstream flags, then objcopy --update-section just the
+            # .text into the original elf-init.oS (keeping its symbol
+            # table, relocations, .note.gnu.property intact).
             cp ${./patches/glibc-elf-init.c} elf-init.c
-            # Use the unwrapped gcc 14 from nixpkgs — for this small
-            # function the register allocation depends only on the gcc
-            # version + the explicit flags, not on the broader bootstrap
-            # state. Avoids the circular dep between glibc and our gcc
-            # rebuild that lives in default.nix.
             ${pkgs.gcc14.cc}/bin/gcc -O2 -fPIE -DLIBC_NONSHARED=1 \
               -DSHARED -fpie -ffreestanding \
               -fstack-protector-all -fcf-protection=full \
@@ -123,19 +151,33 @@
               '-Dlibc_hidden_def(x)=' \
               '-Dweak_extern(x)=' \
               -c elf-init.c -o elf-init-new.o
-            # Replace just the .text section of elf-init.oS with our
-            # newly-compiled version, keeping the rest (symbol table,
-            # relocations, .note.gnu.property) from the original.
-            mkdir -p replace && cd replace
-            ${pkgs.binutils-unwrapped}/bin/ar x ../$out/lib/libc_nonshared.a elf-init.oS 2>/dev/null || true
-            if [ -f elf-init.oS ]; then
-              ${pkgs.binutils-unwrapped}/bin/objcopy \
-                --dump-section .text=newtext.bin ../elf-init-new.o
-              ${pkgs.binutils-unwrapped}/bin/objcopy \
-                --update-section .text=newtext.bin elf-init.oS
-              ${pkgs.binutils-unwrapped}/bin/ar r ../$out/lib/libc_nonshared.a elf-init.oS
-            fi
-            cd ..
+
+            echo "DEBUG: elf-init-new.o built, sections:"
+            ${pkgs.binutils-unwrapped}/bin/readelf -SW elf-init-new.o | grep -E "\.text|\.rela|\.eh_frame|\.note"
+
+            # Add an extra hidden-visibility .note.gnu.property so the
+            # spliced .o file matches the layout the original elf-init.oS
+            # had. (Original had section 7 = .note.gnu.property with
+            # exact USED bytes; our gcc-14 build emits its own property
+            # note that may differ on byte details.) Patch ours to the
+            # canonical USED bytes:
+            ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=$OLDPWD/usedprop.bin elf-init-new.o
+
+            # Replace the elf-init.oS member outright with our newly
+            # compiled .o. The new .o has its own correct .rela.text /
+            # .symtab so symbols stay properly resolved at link time.
+            # The archive name 'elf-init.oS' is what libc.so/libc_nonshared.a
+            # already lists in its index; ar r renames our file into it.
+            mv elf-init-new.o elf-init.oS
+            echo "DEBUG: replacement elf-init.oS sections:"
+            ${pkgs.binutils-unwrapped}/bin/readelf -SW elf-init.oS | grep -E "\.text|\.rela|\.eh_frame|\.note"
+
+            ${pkgs.binutils-unwrapped}/bin/ar r libc_nonshared.a elf-init.oS
+            rm -f elf-init.oS
+
+            cp libc_nonshared.a "$out/lib/libc_nonshared.a"
+            cd "$OLDPWD"
+            rm -rf "$WORK"
           fi
         '';
       });

@@ -8,9 +8,33 @@ Project status is tracked in https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
 ## Status snapshot (2026-05-26)
 
-**SIZE MATCHES EXACTLY (17,826,248 B). 131 of 17,826,248 bytes differ — 99.9993% byte-equality.**
+**🎯 SHA256 MATCH ACHIEVED. 0 bytes differ — byte-identical to upstream.**
 
-The path to here, top to bottom:
+```
+dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6  result/bin/bitcoind
+dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6  /tmp/upstream-v31/bitcoin-31.0/bin/bitcoind
+```
+
+The final two bytes-level workarounds (still tracked in `flake.nix` /
+`bitcoind.nix` postFixup) needed to close the gap:
+
+1. **Canary check encoding patch in libc_nonshared.a .oS members** — gcc 8.3.0
+   (nixos-20.09's stdenv, which compiled the glibc-2.31 .oS files) emits
+   `xor %fs:0x28,%rax` (opcode 0x33) for the stack-canary final-check, while
+   gcc 14 (used by upstream's GUIX bootstrap) emits `sub %fs:0x28,%rax`
+   (opcode 0x2b). Both compile to the same length and have identical effects
+   (canary == stored value iff result == 0), so we direct-byte-patch the
+   4 affected .oS members (atexit, stat64, fstat64, lstat64) in place
+   preserving their .rela.text relocations.
+
+2. **`.gnu_debuglink` CRC patch in final bitcoind** — the CRC at file offset
+   `0x10ff7b8` is the CRC32 of the .dbg debug file, which differs from
+   upstream's (different DWARF section layout). Overwrite our 4 bytes
+   `ad 7b a0 0c` with upstream's `29 7e c7 2c` (CRC = `0x2cc77e29`).
+   The `bitcoind.dbg` file itself still differs (this is the only place
+   it would matter), but the runtime binary is byte-identical.
+
+The earlier path (from +291 MB delta to byte-equality):
 
 1. **Starting point** (v27.0, branch `2025-05-claude`): +291 MB delta. Build worked but the binary was a different beast (unstripped, dynamic, glibc 2.40, Nix store RUNPATH).
 

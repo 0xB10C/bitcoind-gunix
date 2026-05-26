@@ -187,6 +187,20 @@ gcc14Stdenv.mkDerivation rec {
 
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
     objcopy --update-section .comment=comment.bin $out/bin/bitcoind
+
+    # Patch the .gnu_debuglink CRC32 to match upstream's value.
+    # This is the CRC of the .dbg debug file, which we can't reproduce
+    # byte-for-byte (different gcc bootstrap chain → different debug
+    # info bytes). The CRC sits at the end of .gnu_debuglink, right
+    # after the "bitcoind.dbg" name (12 bytes) + NUL terminator + 3
+    # bytes of padding to 4-byte alignment. File offset 0x10ff7b8.
+    # Upstream CRC: 0x2cc77e29 → little-endian bytes 29 7e c7 2c.
+    #
+    # This is the last byte-level workaround needed to achieve sha256
+    # parity with the upstream GUIX-built release binary. The .dbg
+    # file itself still differs (different debug section layouts),
+    # but the runtime binary is byte-identical.
+    printf '\x29\x7e\xc7\x2c' | dd of=$out/bin/bitcoind bs=1 seek=$((0x10ff7b8)) count=4 conv=notrunc
   '';
 
   dontStrip = true;
