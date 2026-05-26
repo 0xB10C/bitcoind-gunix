@@ -4,12 +4,6 @@
 # build-inputs
 , pkg-config
 , cmake
-, valgrind # secp256k1 auto-detects valgrind and adds VALGRIND_MAKE_MEM_*
-           # annotations to its CHECKMEM helpers when found. GUIX's build
-           # has valgrind in scope, so libsecp256k1.a there is ~2 KiB
-           # bigger than ours due to these annotations sprinkled across
-           # secp256k1 functions. Make valgrind available so our build
-           # matches.
 #
 , version
 , url
@@ -23,7 +17,6 @@ gcc14Stdenv.mkDerivation rec {
   src = fetchurl { inherit url sha256; };
 
   nativeBuildInputs = [ pkg-config cmake ];
-  buildInputs = [ valgrind ];
 
   # Match the GUIX cmake invocation: build out-of-tree under ./build/ with
   # the depends-provided toolchain. Skip the GUI, tests, bench, and fuzz
@@ -73,7 +66,6 @@ gcc14Stdenv.mkDerivation rec {
 
     cmakeFlagsArray+=(
       "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--as-needed -Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2 -Wl,-O2 -static-libstdc++ -static-libgcc"
-      "-DValgrind_INCLUDE_DIR=${valgrind.dev}/include"
     )
   '';
 
