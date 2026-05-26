@@ -109,6 +109,14 @@ let
       "--disable-libgomp"
       "--disable-libquadmath"
       "--disable-libsanitizer"
+      # Disable NLS so libstdc++ doesn't compile gettext() calls into
+      # the throw-helper functions (functexcept.o, cxx11-ios_failure.o).
+      # With NLS=yes, libstdc++'s `_()` macro expands to `gettext()`;
+      # with NLS=no, it's an identity macro. Upstream's GUIX-built
+      # libstdc++ has NLS disabled (only dgettext, no gettext, in the
+      # binary's dynsym), so matching this drops our gettext@GLIBC_2.2.5
+      # entry — saves dynsym slot, .rela.plt entry, .plt entry, etc.
+      "--disable-nls"
     ];
   });
   ccWithGlibc231 = pkgs.wrapCCWith {
