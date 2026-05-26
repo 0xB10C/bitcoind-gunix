@@ -1,43 +1,60 @@
-Skip TIPC source compilation in libzmq to match upstream's archive.
+Match GUIX cross-compile behavior in libzmq.
 
-GUIX builds bitcoin via a cross-toolchain (`make-bitcoin-cross-toolchain`
-in contrib/guix/manifest.scm) so CMake sees `CMAKE_CROSSCOMPILING=ON`
-when libzmq configures. libzmq's CMakeLists.txt wraps the runtime
-TIPC check in `if(NOT CMAKE_CROSSCOMPILING)` and only adds the three
-TIPC source files when `ZMQ_HAVE_TIPC` is set:
+GUIX builds bitcoin via a cross-toolchain (make-bitcoin-cross-toolchain
+in contrib/guix/manifest.scm) even on native x86_64, so CMake sees
+CMAKE_CROSSCOMPILING=TRUE when libzmq configures. libzmq's
+CMakeLists.txt has TWO blocks gated by `if(NOT CMAKE_CROSSCOMPILING)`:
 
-  if(NOT CMAKE_CROSSCOMPILING)
-    ...
-    zmq_check_tcp_tipc()   # sets ZMQ_HAVE_TIPC=1 if test runs OK
-  endif()
-  ...
-  if(ZMQ_HAVE_TIPC)
-    list(APPEND cxx-sources tipc_address.cpp tipc_connecter.cpp tipc_listener.cpp)
-  endif()
+  Line 545: `if(ZMQ_HAVE_EVENTFD AND NOT CMAKE_CROSSCOMPILING)`
+            -> zmq_check_efd_cloexec()
+  Line 738: `if(NOT CMAKE_CROSSCOMPILING)`
+            -> zmq_check_sock_cloexec()
+            -> zmq_check_o_cloexec()
+            -> zmq_check_so_bindtodevice()
+            -> zmq_check_so_keepalive()
+            -> zmq_check_so_priority()
+            -> zmq_check_tcp_keep{cnt,idle,intvl,alive}()
+            -> zmq_check_tcp_tipc()
+            -> zmq_check_getrandom()
 
-Under GUIX's cross-compile, the check is skipped → ZMQ_HAVE_TIPC stays
-undefined → no TIPC sources → upstream's libzmq.a excludes them
-(verified by ar-extracting upstream's depends staging archive).
+Each runs a small test program. Under cross-compile, all are skipped
+and ALL ZMQ_HAVE_* macros stay undefined; under native compile they
+all succeed (Nix sandbox has a real Linux kernel) and TCP/IP/IPC/
+TIPC code paths get extra `#ifdef ZMQ_HAVE_*` branches.
 
-We build natively, so the check runs, succeeds (linux/tipc.h plus a
-working PF_TIPC kernel in the Nix sandbox), and our libzmq.a ends up
-with three extra objects: tipc_address.cpp.o, tipc_connecter.cpp.o,
-tipc_listener.cpp.o — adding ~44 KiB to libzmq.a and ~4-5 KiB of
-.text in the final bitcoind.
+Verified against GUIX's depends staging archives (extracted from
+~b10c's GUIX build): tcp/ip/ipc_listener/tipc_* are the only members
+of libzmq.a that differ between us and upstream. Force CMAKE_CROSSCOMPILING
+TRUE right after project(ZeroMQ) so both blocks get skipped and all
+ZMQ_HAVE_* macros stay undefined — matches GUIX.
 
-Pin `ZMQ_HAVE_TIPC` to FALSE just before the conditional so it
-matches GUIX's behavior regardless of CMAKE_CROSSCOMPILING.
+Defensive ZMQ_HAVE_TIPC=FALSE before the source-list conditional
+(the cross-compile branch already prevents it being set, but explicit
+is clearer).
 
-This patch is applied to the libzmq 4.3.5 source tree inside Bitcoin
-Core's depends/sources, before the depends Makefile runs its own
-patches.
+This patch is applied to libzmq 4.3.5 inside Bitcoin Core's depends/
+sources, before the depends Makefile runs its own patches.
 
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -1208,6 +1208,7 @@
+--- a/CMakeLists.txt	2026-05-26 09:10:23.925423526 +0200
++++ b/CMakeLists.txt	2026-05-26 09:10:23.929423596 +0200
+@@ -1,6 +1,13 @@
+ # CMake build script for ZeroMQ
+ project(ZeroMQ)
+ 
++# Match GUIX cross-compile behavior: GUIX builds bitcoin via a
++# cross-toolchain even on native x86_64 (make-bitcoin-cross-toolchain),
++# so CMAKE_CROSSCOMPILING is TRUE in their build. Force it here so
++# the EFD_CLOEXEC check (line 545) and the SOCK_CLOEXEC/TCP_KEEP*/
++# TIPC/etc. check block (line 738) are skipped — matches upstream.
++set(CMAKE_CROSSCOMPILING TRUE)
++
+ if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin)
+   cmake_minimum_required(VERSION 3.0.2)
+ else()
+@@ -1208,6 +1215,7 @@
    list(APPEND cxx-sources vmci_address.cpp vmci_connecter.cpp vmci_listener.cpp vmci.cpp)
  endif()
-
+ 
 +set(ZMQ_HAVE_TIPC FALSE)
  if(ZMQ_HAVE_TIPC)
    list(APPEND cxx-sources tipc_address.cpp tipc_connecter.cpp tipc_listener.cpp)
