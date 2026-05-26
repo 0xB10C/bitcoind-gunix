@@ -132,7 +132,15 @@ gcc14Stdenv.mkDerivation rec {
   #   making SSP-strong protect buffers >= 4 bytes (vs gcc's default
   #   of 8). Our gcc has --enable-default-ssp=yes, so -fstack-protector-
   #   strong is still the default without the buffer-size override.
-  hardeningDisable = [ "zerocallusedregs" "strictoverflow" "stackprotector" ];
+  # Also disable nixpkgs' stackclashprotection on bitcoind. nixpkgs
+  # applies -fstack-clash-protection to *every* compile (including
+  # secp256k1). Bitcoin's CMake applies it to `core_interface` only —
+  # "a usage requirement for all targets except for secp256k1" — so
+  # upstream's secp256k1 is built WITHOUT stack-clash protection.
+  hardeningDisable = [
+    "zerocallusedregs" "strictoverflow" "stackprotector"
+    "stackclashprotection"
+  ];
 
   # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
   # (debug) variants alongside the original binary. The script is rendered
