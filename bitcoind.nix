@@ -140,9 +140,18 @@ gcc14Stdenv.mkDerivation rec {
   # secp256k1). Bitcoin's CMake applies it to `core_interface` only —
   # "a usage requirement for all targets except for secp256k1" — so
   # upstream's secp256k1 is built WITHOUT stack-clash protection.
+  # Also disable nixpkgs' fortify/fortify3 hardening. nixpkgs applies
+  # `-D_FORTIFY_SOURCE=3` to *every* compile globally (including secp256k1
+  # and bitcoin code). Bitcoin's CMake adds it specifically to
+  # core_interface targets via try_append_cxx_flags, so bitcoin code still
+  # gets it. But secp256k1 (which isn't on core_interface) was picking it
+  # up via the nixpkgs global, while upstream's GUIX-built secp256k1
+  # doesn't have it. Suspected to be the cause of the +0x1000 stack-frame
+  # vs upstream's +0xc8 in secp256k1_ellswift_xdh — FORTIFY's __chk
+  # variants pull more register pressure across the function.
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
-    "stackclashprotection"
+    "stackclashprotection" "fortify" "fortify3"
   ];
 
   # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
