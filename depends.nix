@@ -68,7 +68,7 @@ let
   };
 
   # copies the 'dependsSources.file' into the depends/sources dir for each depends
-  cpDependsSources = lib.attrsets.mapAttrsToList (name: value:
+  cpDependsSources = lib.attrsets.mapAttrsToList (_: value:
     "cp ${mkFetchSource value} ${dependsDir}/sources/${value.file}\n"
     ) dependsSources;
 

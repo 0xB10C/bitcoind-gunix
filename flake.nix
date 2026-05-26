@@ -11,7 +11,7 @@
     nixpkgs-glibc231.flake = false;
   };
 
-  outputs = { self, nixpkgs, nixpkgs-glibc231 }:
+  outputs = { nixpkgs, nixpkgs-glibc231, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };

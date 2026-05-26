@@ -19,7 +19,7 @@ let
   # `outputs = ["out" "info" "man"]` avoids the multi-output reference
   # cycle that nixpkgs 25.11's binutils-unwrapped triggers when its
   # output-splitting machinery runs against the older 2.41 build.
-  binutilsForGuix = (pkgs.binutils-unwrapped.overrideAttrs (_: {
+  binutilsForGuix = pkgs.binutils-unwrapped.overrideAttrs (_: {
     version = "2.41";
     src = pkgs.fetchurl {
       url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
@@ -28,7 +28,7 @@ let
     # Newer nixpkgs binutils patches may not apply to 2.41. Drop them.
     patches = [];
     outputs = [ "out" "info" "man" ];
-  }));
+  });
 
   # Build a gcc 14 / glibc 2.31 stdenv so the entire build (depends and the
   # final bitcoind link) uses glibc 2.31 — matching GUIX. The chain:
@@ -116,6 +116,5 @@ let
     gcc14Stdenv = gcc14Glibc231Stdenv;
   };
 in {
-  depends = depends;
-  bitcoind = bitcoind;
+  inherit depends bitcoind;
 }
