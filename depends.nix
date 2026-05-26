@@ -131,7 +131,16 @@ gcc14Stdenv.mkDerivation rec {
 
   # Skip Bitcoin's GUI for now: don't download/build/cache the Qt depends.
   # Multiprocess IPC (capnp + libmultiprocess) is built unconditionally.
-  makeFlags = [ "NO_QT=1" ];
+  # HOST=x86_64-linux-gnu makes depends mark the build as a "cross-compile"
+  # (host != build, where BUILD defaults to our native x86_64-pc-linux-gnu).
+  # This matches GUIX, which builds bitcoin via make-bitcoin-cross-toolchain
+  # with HOST=x86_64-linux-gnu. Knock-on effects: depends_crosscompiling=TRUE
+  # is baked into the generated toolchain.cmake, which sets CMAKE_SYSTEM_NAME=
+  # Linux + CMAKE_CROSSCOMPILING=TRUE downstream. This skips runtime
+  # try_run checks (zmq_check_*, secp256k1's Valgrind detection, etc.) so
+  # all the resulting depends archives and the secp256k1 region in the
+  # final bitcoind match upstream's GUIX-built binary byte-for-byte.
+  makeFlags = [ "NO_QT=1" "HOST=x86_64-linux-gnu" ];
 
   # Override the nixpkgs gcc-wrapper's `-fno-omit-frame-pointer
   # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before) so depends
@@ -178,14 +187,23 @@ gcc14Stdenv.mkDerivation rec {
   enableParallelBuilding = true;
 
   postFixup = ''
-    mv x86_64-pc-linux-gnu/* $out/
+    # HOST=x86_64-linux-gnu (set in makeFlags) makes depends install
+    # under x86_64-linux-gnu/ rather than the native default
+    # x86_64-pc-linux-gnu/. Move whichever exists to $out.
+    if [ -d x86_64-linux-gnu ]; then
+      mv x86_64-linux-gnu/* $out/
+      hostdir=x86_64-linux-gnu
+    else
+      mv x86_64-pc-linux-gnu/* $out/
+      hostdir=x86_64-pc-linux-gnu
+    fi
 
     # The depends build hardcodes its absolute build-time staging path
-    # (e.g. /build/.../depends/x86_64-pc-linux-gnu) into CMake config
-    # files like libevent's LibeventTargets-static.cmake. Rewrite those
-    # to point at $out so consumers (the bitcoind build) can find the
-    # installed libraries and headers.
+    # (e.g. /build/.../depends/<hostdir>) into CMake config files like
+    # libevent's LibeventTargets-static.cmake. Rewrite those to point at
+    # $out so consumers (the bitcoind build) can find the installed
+    # libraries and headers.
     find $out -type f \( -name '*.cmake' -o -name '*.pc' \) \
-      -exec sed -i "s|/build/bitcoin-${version}/depends/x86_64-pc-linux-gnu|$out|g" {} +
+      -exec sed -i "s|/build/bitcoin-${version}/depends/$hostdir|$out|g" {} +
   '';
 }

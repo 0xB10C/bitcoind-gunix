@@ -62,7 +62,10 @@ gcc14Stdenv.mkDerivation rec {
   #    is byte-for-byte parity with the GUIX release.
   preConfigure = ''
     mkdir -p depends
-    ln -s ${depends} depends/x86_64-pc-linux-gnu
+    # depends now builds with HOST=x86_64-linux-gnu (matches GUIX), so
+    # capnp_PREFIX is baked as .../depends/x86_64-linux-gnu. Symlink at
+    # that name to satisfy mpgen's exec lookup.
+    ln -s ${depends} depends/x86_64-linux-gnu
 
     cmakeFlagsArray+=(
       "-DCMAKE_EXE_LINKER_FLAGS=-Wl,--as-needed -Wl,--dynamic-linker=/lib64/ld-linux-x86-64.so.2 -Wl,-O2 -static-libstdc++ -static-libgcc"
