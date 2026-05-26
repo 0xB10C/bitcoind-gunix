@@ -6,6 +6,66 @@ Reproduce the official Bitcoin Core GUIX release binary for `x86_64-pc-linux-gnu
 
 Project status is tracked in https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status snapshot (2026-05-26)
+
+**SIZE MATCHES EXACTLY (17,826,248 B). 131 of 17,826,248 bytes differ — 99.9993% byte-equality.**
+
+The path to here, top to bottom:
+
+1. **Starting point** (v27.0, branch `2025-05-claude`): +291 MB delta. Build worked but the binary was a different beast (unstripped, dynamic, glibc 2.40, Nix store RUNPATH).
+
+2. **Strip + static-link + glibc 2.31 rebuild + match GUIX HOST_*FLAGS** (steps 2–10 in the iteration history below): collapsed the delta to ~+82 KB. Got us interpreter, NEEDED, RUNPATH, dynamic-linker layout, kernel ABI-tag, path prefix-maps, function count all matching.
+
+3. **Hardening alignment** (steps 11–14): disabling each nixpkgs hardening that GUIX's toolchain doesn't apply (zerocallusedregs, strictoverflow, stackprotector, stackclashprotection, fortify-on-depends) — collapsed to +8 KiB.
+
+4. **Symmetric structural fixes** (steps 15–17): patch glibc CRTs with USED property bytes so `.note.gnu.property` survives binutils' OR_AND merge; match split-debug args so `.gnu_debuglink` says "bitcoind.dbg"; `--disable-nls` to drop `gettext` from libstdc++. Held at +8 KiB but now the dynsym/.hash/etc. align byte-for-byte with upstream.
+
+5. **GUIX depends artifact compare** (depends-staging.tar.gz, user-provided): cross-referencing per-archive sha256s vs upstream surfaced the structural mismatches. Each fix here was a single targeted change:
+   - Drop binutils-unaligned-default patch (it's mingw-only in GUIX, not Linux)
+   - Force libzmq to skip its cross-compile-gated runtime checks (TIPC, SOCK_CLOEXEC, O_CLOEXEC, SO_*, TCP_KEEP*, getrandom, EFD_CLOEXEC — all enabled in native compile, all disabled in GUIX's cross-compile)
+   - Pass HOST=x86_64-linux-gnu to bitcoin's depends Makefile so `depends_crosscompiling=TRUE` → the toolchain.cmake sets CMAKE_CROSSCOMPILING=TRUE → secp256k1 and all later compiles see cross-compile
+
+6. **All 14 depends archives byte-identical** to upstream's GUIX-built staging archives:
+   `libzmq, libevent_{core,extra,pthreads}, sqlite, capnp + 8 capnp/kj variants`. Verified via `sha256sum`.
+
+7. **Final hardening fix** (step 22): disable nixpkgs fortify hardening on bitcoind too. This was the big unlock — Bitcoin's CMake adds `-D_FORTIFY_SOURCE=3` to core_interface only, but secp256k1 isn't on core_interface. nixpkgs was adding it globally, ours diverged from upstream's secp256k1 region (+2,176 B in `secp256k1_ellswift_xdh` — different inliner/register-allocator decisions under FORTIFY's `__memcpy_chk` transformations). Disabling fortify on bitcoind → secp256k1 matches → **delta drops from -4,096 B to +0 B exactly**.
+
+8. **Remaining 131 byte diff** lives inside `__libc_csu_init` from libc_nonshared.a's `elf-init.oS`. That .o was compiled by nixos-20.09's gcc 8.3.0 (with different register allocation than gcc 14). Verified by recompiling glibc's `csu/elf-init.c` with our gcc 14 + same hardenings → byte-identical to upstream's disassembly. **Fix in progress**: flake.nix postFixup now splices the gcc-14-compiled `.text` into the libc_nonshared.a archive.
+
+### What worked (high-impact fixes)
+
+- **Disabling nixpkgs hardenings that GUIX doesn't apply** (-100s of KiB total): zerocallusedregs, strictoverflow, stackprotector, stackclashprotection, fortify in depends, fortify on bitcoind. Each one was diagnosed by comparing nixpkgs cc-wrapper's `NIX_HARDENING_ENABLE` defaults against what GUIX's gcc configure flags ultimately enable.
+- **Forcing CMAKE_CROSSCOMPILING via HOST=x86_64-linux-gnu**: matched GUIX's universal cross-compile mode. Made all `if(NOT CMAKE_CROSSCOMPILING)` runtime-check blocks (in libzmq, secp256k1's Valgrind detect, libevent's tests) get skipped → matches GUIX's behavior in one shot.
+- **Patching glibc CRTs with USED property bytes**: avoided the multi-stage glibc rebuild blocker. binutils 2.41 OR_AND-merges USED properties and drops them if first_pbfd lacks them; our gcc-8.3.0-built CRTs were the first_pbfd and lacked USED → entire .note.gnu.property got dropped. Patching the bytes directly in postFixup of glibc-2.31 sidesteps the bootstrap dependency.
+- **Comparing per-archive sha256 against GUIX depends staging** (user-provided artifact): turned the codegen black-box into a per-object diff problem. Identified the exact 3 libzmq .o files (tipc_*), the 7 .o files affected by feature checks, and ultimately the only-residual-function (`__libc_csu_init`).
+- **`--disable-nls` on gcc rebuild**: dropped `gettext@GLIBC_2.2.5` from dynsym. Saved ~80 B + recovered exact symbol-count parity.
+- **Matching split-debug args (`bitcoind` `bitcoind` `bitcoind.dbg`)**: 4-byte fix that aligns the `.gnu_debuglink` string.
+- **`postFixup` `.comment` rewrite**: substituted "GCC: (GNU) 14.3.0" verbatim to drop the spurious "GCC: (GNU) 8.3.0" stamp from glibc 2.31 CRTs.
+
+### What didn't work (or had only small effect)
+
+- **Coherent gcc bootstrap** (commit `37b05ef`, reverted in `2f6823b`): tried multi-stage rebuild of gmp/mpfr/libmpc/isl + gcc 14 bootstrap against glibc 2.31, to match GUIX's bootstrap chain. Blocked by isl's `./configure` failing "main in -lgmp: no" despite our overridden gmp building fine in isolation. nixpkgs' cc-wrapper didn't propagate the overridden gmp's lib path to isl's link search. Multi-day Nix plumbing project — out of scope for the iteration loop.
+- **`--enable-bootstrap` alone**: gcc bootstrap stage-2 needs libgmp from current nixpkgs (glibc 2.40), which references `__isoc23_strtol@GLIBC_2.38` not present in glibc 2.31. The bootstrap then can't run stage-2 gcc against stage-1 glibc.
+- **`--disable-nls` did NOT remove `gettext` itself** at first — libstdc++ uses gettext independent of the gcc-level NLS knob. Initially swapped `gettext` for `dgettext`. The actual fix was confirming gcc emits gettext refs in `functexcept.o` and `cxx11-ios_failure.o` only when `_GLIBCXX_USE_NLS` is set by libstdc++'s configure, which `--disable-nls` does flip — later iterations confirmed this works.
+- **`--disable-nls` BEFORE the gcc-bootstrap improvements** appeared to be net-zero — the dynsym/PLT/GOT savings were exactly offset by realignment overhead. Later when other fixes shrank the binary, the savings became visible.
+- **`-Wl,--wrap=gettext` (and dgettext/bindtextdomain/bind_textdomain_codeset)**: stubs added as many bytes as we saved. Net-zero.
+- **`hardeningDisable = ["all"]` on bitcoind**: regressed by +4 KiB. Removed PIC, relro, bindnow that Bitcoin's CMake doesn't auto-replace.
+- **`-finline-functions` / `-fno-inline-functions-called-once`**: didn't change codegen at -O2 (already the gcc defaults).
+- **Removing `-fomit-frame-pointer` from CFLAGS**: massively diverged (-102 KiB). Frame pointers added .text but shrank .eh_frame more.
+- **Adding `valgrind` to bitcoind's buildInputs**: secp256k1's CMake auto-detected it and ON'd VALGRIND macros (+1,344 B). But GUIX *also* fails Valgrind detection (their build env doesn't have it). Reverted.
+- **`BUILD_TESTS=ON`**: no effect on bitcoind binary; test executables are separate.
+
+### Tools used / leveraged
+
+- **bloaty** — section-level diff (`bloaty ours -- upstream`). The single most useful single command, run after every meaningful change.
+- **readelf** (`--wide --dyn-syms --notes --sections --segments`) — verify every metadata field.
+- **objdump --line-numbers --disassemble --demangle --section=.text** — compare specific functions.
+- **diffoscope** — comprehensive ELF + section + DWARF diff for the last 131-byte mystery (huge package but worth it).
+- **`ar t/x/r`** — per-object archive inspection.
+- **`nm --print-size --numeric-sort`** on the unstripped debug binary — to map vaddrs to function names.
+- **`objdump -d --start-address=... --stop-address=...`** + cross-referencing endbr64 positions to find which functions diverge.
+- **sha256sum on per-archive output from GUIX's depends/work/staging** — the data unlock that turned vague "codegen difference" into "exactly these 3 .o files differ."
+
 ## How it works (current, post-v31.0 update on branch `2025-05-claude`)
 
 The build is split into two derivations:
@@ -201,48 +261,44 @@ Subsequent commits applied GUIX's full toolchain configuration:
 
 | Metric | Upstream | Ours | Δ |
 |---|---|---|---|
-| Stripped size | 17,826,248 B | 17,834,440 B | **+0.046% (+8,192 B)** |
+| **Stripped size** | **17,826,248 B** | **17,826,248 B** | **✅ EXACT MATCH** |
 | Interpreter | `/lib64/ld-linux-x86-64.so.2` | same | ✅ |
 | NEEDED | libpthread, libm, libc, ld | same | ✅ |
 | RUNPATH | (none) | (none) | ✅ |
 | Dynamic symbol count | 344 | 344 | ✅ |
-| Dynamic relocations (RELATIVE) | 17,337 | 17,414 | +77 |
+| Dynamic relocations (RELATIVE) | 17,337 | 17,337 | ✅ |
 | Path strings (`/bitcoin/...`) | 9 | 9 | ✅ |
 | `./*.cpp` relative paths | 160 | 160 | ✅ |
 | Function count (endbr64) | 50,032 | 50,032 | ✅ |
-| `.note.gnu.property` | x86 ISA used: baseline,v2,v3 / feature used: x86,x87,XMM,YMM,XSAVE | same | ✅ (CRT patch) |
-| `.comment` | `GCC 14.3.0` | `GCC 14.3.0` | ✅ (rewritten in postFixup) |
-| `.note.ABI-tag` kernel | 3.2.0 | 3.2.0 | ✅ |
+| `.note.gnu.property` | USED: x86,x87,XMM,YMM,XSAVE / ISA: baseline,v2,v3 | same | ✅ |
+| `.comment` | `GCC 14.3.0` | same | ✅ |
+| `.note.ABI-tag` kernel | 3.2.0 | same | ✅ |
 | `.gnu_debuglink` | `bitcoind.dbg` | same | ✅ |
+| **All 14 depends archives** | (sha256 hashes) | **byte-identical** | ✅ |
+| **Section size deltas** | (bloaty) | **0 in all sections** | ✅ |
+| **Bytes differing** | n/a | **131 of 17,826,248** | **99.9993% match** |
+| Hash match | (n/a) | (1 fn diff) | ⏳ in progress |
 
 bloaty section deltas (positive = ours bigger):
 ```
-+6.88 KiB  .text
-+1.80 KiB  .rela.dyn          ← 77 extra R_X86_64_RELATIVE @ 24B each = +1848B
-+1.68 KiB  .eh_frame
-  +672 B   .data.rel.ro
-  +336 B   .gcc_except_table
-  +320 B   .eh_frame_hdr
-  +224 B   .rodata
-  +112 B   .hash
-   +24 B   .dynsym            ← +1 entry (gettext@GLIBC_2.2.5)
-   +24 B   .rela.plt          ← +1 JUMP_SLOT for gettext
-   +24 B   new [LOAD #5 [RW]] segment
-   +16 B   .plt               ← +1 PLT entry for gettext
-   +8 B    .got, .plt.got     ← +1 .got slot for gettext
-   -48 B   .note.gnu.property (missing in ours)
-TOTAL: +8,104 B  (+0.046% vs upstream)
+0 in all sections — ours and upstream match section-for-section
+TOTAL: 0 bytes section delta; 131 bytes differ in .text inside
+a single libgcc/libc function (__libc_csu_init from elf-init.oS)
 ```
 
-The new gettext-related entries appeared once .text shrank — they were
-always there, just not previously visible above other deltas. Source:
-libstdc++.a's `functexcept.o` and `cxx11-ios_failure.o` call gettext
-for translating exception messages. `--disable-nls` on gcc rebuild
-did NOT remove them (libstdc++ uses gettext independent of the gcc
-NLS knob); deeper fix likely requires patching libstdc++ source or
-matching whatever GUIX does in their libstdc++ build env (suspect:
-configure detects libintl absent during their cross-build → no
-gettext hookup in the libstdc++ runtime).
+After all fixes the binary is byte-equivalent **everywhere except
+inside `__libc_csu_init` (the libc startup function in glibc's
+libc_nonshared.a). This function was compiled by nixos-20.09's gcc
+8.3.0 → gcc-14-style register allocation in upstream's binary
+diverges from our gcc-8.3.0-style output for 131 bytes of the
+function. Verified by manually recompiling the function source
+(`csu/elf-init.c` from glibc 2.31) with our gcc 14 +
+`-fstack-protector-all -fcf-protection=full -O2 -fPIE
+-DLIBC_NONSHARED=1` → byte-identical to upstream's disassembly.
+
+The flake.nix postFixup now rebuilds elf-init.oS using gcc 14 and
+splices the new `.text` section back into libc_nonshared.a's
+elf-init.oS archive member. Expected to close to 0 bytes diff.
 
 ### Iteration history of the delta
 
@@ -265,7 +321,13 @@ gettext hookup in the libstdc++ runtime).
 | 14 | hardeningDisable fortify/fortify3/format in depends | **+8,104 B** |
 | 15 | flake: patch glibc CRTs with upstream USED property bytes | +8,184 B |
 | 16 | bitcoind: split-debug.sh args match upstream (bitcoind.dbg) | +8,192 B |
-| 17 | gcc: --disable-nls drops gettext from libstdc++ | **+8,192 B** |
+| 17 | gcc: --disable-nls drops gettext from libstdc++ | +8,192 B |
+| 18 | depends: skip TIPC source compilation in libzmq (3 .o files) | -4,096 B |
+| 19 | build: drop mingw-only binutils-unaligned-default patch | -4,096 B |
+| 20 | depends: libzmq skip all cross-compile-gated checks | -4,096 B |
+| 21 | depends: HOST=x86_64-linux-gnu (depends_crosscompiling=TRUE) | -4,096 B |
+| 22 | bitcoind: disable nixpkgs fortify hardening | **+0 B (size match)** |
+| 23 | (in progress) replace libc's __libc_csu_init with gcc-14 build | 131 B diff |
 
 ### Function-level analysis of the residual 12 KB
 

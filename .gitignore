@@ -8,3 +8,5 @@
 /depends-x86_64-linux-gnu.tar.gz
 /v31-guix-build.log
 /.claude/
+/depends-staging.tar.gz
+/guix-staging/

@@ -94,6 +94,48 @@
             done
             cp libc_nonshared.a $out/lib/libc_nonshared.a
             cd ..
+
+            # Also rebuild elf-init.oS (containing __libc_csu_init) using
+            # the rebuilt gcc 14 + glibc 2.31 toolchain so the resulting
+            # .text matches upstream's gcc-14-compiled version. The nixos-
+            # 20.09 glibc was built with gcc 8.3.0 which uses different
+            # register allocation; the function's ABI is identical but
+            # the byte-level instruction encoding diverges by ~131 B.
+            # See https://sourceware.org/git/?p=glibc.git;a=blob;f=csu/elf-init.c;hb=refs/tags/glibc-2.31
+            # for the source. We compile with the same flags upstream's
+            # glibc 2.31 uses for libc_nonshared.a's elf-init.oS:
+            #   -O2 -fPIE -DLIBC_NONSHARED=1 -DSHARED -fpie -ffreestanding
+            #   -fstack-protector-all -fcf-protection=full
+            # The attribute_hidden/weak_alias macros from glibc internals
+            # aren't needed for the actual codegen of __libc_csu_init —
+            # stub them out with empty defines.
+            cp ${./patches/glibc-elf-init.c} elf-init.c
+            # Use the unwrapped gcc 14 from nixpkgs — for this small
+            # function the register allocation depends only on the gcc
+            # version + the explicit flags, not on the broader bootstrap
+            # state. Avoids the circular dep between glibc and our gcc
+            # rebuild that lives in default.nix.
+            ${pkgs.gcc14.cc}/bin/gcc -O2 -fPIE -DLIBC_NONSHARED=1 \
+              -DSHARED -fpie -ffreestanding \
+              -fstack-protector-all -fcf-protection=full \
+              '-Dattribute_hidden=__attribute__((visibility("hidden")))' \
+              '-Dweak_alias(x, y)=' \
+              '-Dlibc_hidden_def(x)=' \
+              '-Dweak_extern(x)=' \
+              -c elf-init.c -o elf-init-new.o
+            # Replace just the .text section of elf-init.oS with our
+            # newly-compiled version, keeping the rest (symbol table,
+            # relocations, .note.gnu.property) from the original.
+            mkdir -p replace && cd replace
+            ${pkgs.binutils-unwrapped}/bin/ar x ../$out/lib/libc_nonshared.a elf-init.oS 2>/dev/null || true
+            if [ -f elf-init.oS ]; then
+              ${pkgs.binutils-unwrapped}/bin/objcopy \
+                --dump-section .text=newtext.bin ../elf-init-new.o
+              ${pkgs.binutils-unwrapped}/bin/objcopy \
+                --update-section .text=newtext.bin elf-init.oS
+              ${pkgs.binutils-unwrapped}/bin/ar r ../$out/lib/libc_nonshared.a elf-init.oS
+            fi
+            cd ..
           fi
         '';
       });
