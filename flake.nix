@@ -47,6 +47,55 @@
         patches = builtins.filter
           (p: !(pkgs.lib.hasSuffix "allow-kernel-2.6.32.patch" (toString p)))
           (old.patches or []);
+        # Patch the .note.gnu.property section in glibc's CRT objects
+        # and libc_nonshared.a object members to match upstream's USED
+        # bytes (x86 features used: x86,x87,XMM,YMM,XSAVE; ISA used:
+        # x86-64-baseline,v2,v3). Background:
+        #
+        # binutils 2.41's `_bfd_x86_elf_merge_gnu_properties` treats
+        # USED properties as OR_AND types — if the link's first input
+        # with a property section (first_pbfd) lacks USED while another
+        # input has USED, the linker REMOVES USED from the output.
+        # That's why our final bitcoind binary loses .note.gnu.property
+        # entirely: the CRT objects (built by nixos-20.09's gcc 8.3.0,
+        # which predates USED-emission) only have AND CET, and they're
+        # the first inputs in the link order. Their CET gets dropped
+        # (mixed inputs), and their lack-of-USED causes USED from later
+        # inputs to be dropped too. Net result: no property section.
+        #
+        # Upstream's GUIX-built glibc was compiled with a modern gcc
+        # that emits both CET and USED in CRTs. We can't easily rebuild
+        # glibc 2.31 with gcc 14 (multi-stage bootstrap blocked by
+        # gmp/isl ABI mismatches; see commit 37b05ef post-mortem), so
+        # we surgically patch the .o files post-install to have the
+        # exact upstream USED bytes. This makes them match what gcc 14
+        # would have emitted, and the final binary will end up with
+        # the byte-identical .note.gnu.property section.
+        postFixup = (old.postFixup or "") + ''
+          # 48 bytes: ELF note header (16) + 2 properties × 16 bytes each.
+          printf '\x04\x00\x00\x00\x20\x00\x00\x00\x05\x00\x00\x00GNU\x00\x01\x00\x01\xc0\x04\x00\x00\x00\x9b\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\xc0\x04\x00\x00\x00\x07\x00\x00\x00\x00\x00\x00\x00' > usedprop.bin
+          for f in $out/lib/Scrt1.o $out/lib/crti.o $out/lib/crtn.o $out/lib/crt1.o $out/lib/gcrt1.o $out/lib/Mcrt1.o $out/lib/rcrt1.o; do
+            if [ -f "$f" ]; then
+              ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=usedprop.bin "$f"
+            fi
+          done
+          if [ -f $out/lib/libc_nonshared.a ]; then
+            mkdir -p libc-rebuild
+            cd libc-rebuild
+            cp $out/lib/libc_nonshared.a libc_nonshared.a
+            chmod +w libc_nonshared.a
+            for o in $(${pkgs.binutils-unwrapped}/bin/ar t libc_nonshared.a); do
+              ${pkgs.binutils-unwrapped}/bin/ar x libc_nonshared.a "$o"
+              if ${pkgs.binutils-unwrapped}/bin/readelf -n "$o" 2>/dev/null | grep -q gnu.property; then
+                ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=../usedprop.bin "$o"
+                ${pkgs.binutils-unwrapped}/bin/ar r libc_nonshared.a "$o"
+              fi
+              rm -f "$o"
+            done
+            cp libc_nonshared.a $out/lib/libc_nonshared.a
+            cd ..
+          fi
+        '';
       });
       drvs = import ./default.nix {
         inherit pkgs;
