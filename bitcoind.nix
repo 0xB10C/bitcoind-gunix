@@ -11,6 +11,15 @@
 , depends
 }:
 
+let
+  # Both CFLAGS and CXXFLAGS need the same set of flags. Factoring out
+  # the string avoids the maintenance hazard of editing one and not the
+  # other.
+  cflags = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer"
+    + " -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu"
+    + " -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin"
+    + " -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+in
 gcc14Stdenv.mkDerivation rec {
   pname = "bitcoind";
   name = "bitcoind";
@@ -73,46 +82,24 @@ gcc14Stdenv.mkDerivation rec {
   '';
 
   # Match GUIX's HOST_CFLAGS / HOST_CXXFLAGS from
-  # contrib/guix/libexec/build.sh. GUIX builds bitcoin inside a chroot
-  # rooted at /bitcoin and adds -ffile-prefix-map={store-path}=/usr for
-  # every /gnu/store entry, plus -fdebug-prefix-map=${DISTSRC}/src=. to
-  # strip the build directory.
+  # contrib/guix/libexec/build.sh.
   #
-  # In our Nix sandbox bitcoin's source root is /build/bitcoin-${version}
-  # and the depends live at ${depends} under /nix/store. The depends
-  # symlink we set up in preConfigure also exposes them as
-  # depends/x86_64-pc-linux-gnu/ relative to the source root. We map
-  # both to match upstream's recorded paths:
+  # -ffile-prefix-map remaps embedded build paths so __FILE__ strings
+  # match upstream's recorded paths. GCC applies maps in command-line
+  # order with LAST matching wins, so the more specific src=. comes
+  # AFTER the broader /build/...=/bitcoin fallback:
+  #   ${depends}                   -> /bitcoin/depends/x86_64-linux-gnu
+  #     (boost/etc. headers in dependency includes)
+  #   /build/bitcoin-${version}    -> /bitcoin           (general fallback)
+  #   /build/bitcoin-${version}/src -> .                 (./<file>.cpp)
   #
-  #   - ${depends} -> /bitcoin/depends/x86_64-linux-gnu
-  #     (so __FILE__ references in boost/etc. headers end up as
-  #      /bitcoin/depends/x86_64-linux-gnu/boost/include/boost/...,
-  #      matching the upstream binary)
-  #   - /build/bitcoin-${version} -> /bitcoin
-  #     (so any leak of the build dir maps to /bitcoin)
-  # Path mappings to match upstream's recorded file paths.
-  #
-  # GCC applies -ffile-prefix-map maps in command-line order and the LAST
-  # matching one wins, so the more specific src=. must come AFTER the
-  # broader /build/...=/bitcoin fallback.
-  #
-  #   - boost headers: /nix/store/<hash>-bitcoin-31.0-depends/boost/include/...
-  #     -> /bitcoin/depends/x86_64-linux-gnu/boost/include/... (matches upstream)
-  #
-  #   - bitcoin source: /build/bitcoin-31.0/src/<file>.cpp
-  #     -> ./<file>.cpp (matches upstream's relative paths)
-  #
-  #   - any other build-dir path: /build/bitcoin-31.0/...
-  #     -> /bitcoin/... (general fallback)
-  # -fomit-frame-pointer / -momit-leaf-frame-pointer override the nixpkgs
-  # gcc-wrapper's hardcoded `-fno-omit-frame-pointer
-  # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before). At -O2 gcc
-  # would otherwise default to omitting frame pointers, which matches
-  # upstream. Without overriding we add ~12 bytes per function
-  # (push %rbp; mov %rsp,%rbp; leave), worth ~258 KiB of .text bloat
-  # across the binary.
-  env.CFLAGS = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
-  env.CXXFLAGS = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+  # -fomit-frame-pointer + -momit-leaf-frame-pointer override nixpkgs
+  # gcc-wrapper's hardcoded -fno-omit-frame-pointer (in cc-cflags-before).
+  # At -O2 gcc defaults to omitting frame pointers; without the override
+  # we'd add ~12 bytes per function (push %rbp;...;leave) → ~258 KiB
+  # .text bloat across the binary.
+  env.CFLAGS = cflags;
+  env.CXXFLAGS = cflags;
 
   # Tell nixpkgs' gcc-wrapper not to inject -rpath flags into the link line.
   # Upstream GUIX-built bitcoind has no RUNPATH; the binary uses the
@@ -125,81 +112,53 @@ gcc14Stdenv.mkDerivation rec {
   env.NIX_DONT_SET_RPATH = "1";
   env.NIX_NO_SELF_RPATH = "1";
 
-  # Disable nixpkgs hardenings that GUIX's toolchain doesn't enable:
+  # Disable nixpkgs hardenings that GUIX's toolchain doesn't enable.
+  # bitcoin's CMake separately re-adds the hardenings it wants for
+  # `core_interface` targets — but those don't include secp256k1, so
+  # globally-applied nixpkgs hardenings diverge from upstream there.
   #
-  # - zerocallusedregs: emits register-zeroing on every function return
-  #   (~4-8 bytes per function across 50k functions). GUIX doesn't use.
-  # - strictoverflow: adds -fno-strict-overflow which disables some loop
-  #   and arithmetic optimizations.
-  # - stackprotector: nixpkgs' version adds `--param ssp-buffer-size=4`,
-  #   making SSP-strong protect buffers >= 4 bytes (vs gcc's default
-  #   of 8). Our gcc has --enable-default-ssp=yes, so -fstack-protector-
-  #   strong is still the default without the buffer-size override.
-  # Also disable nixpkgs' stackclashprotection on bitcoind. nixpkgs
-  # applies -fstack-clash-protection to *every* compile (including
-  # secp256k1). Bitcoin's CMake applies it to `core_interface` only —
-  # "a usage requirement for all targets except for secp256k1" — so
-  # upstream's secp256k1 is built WITHOUT stack-clash protection.
-  # Also disable nixpkgs' fortify/fortify3 hardening. nixpkgs applies
-  # `-D_FORTIFY_SOURCE=3` to *every* compile globally (including secp256k1
-  # and bitcoin code). Bitcoin's CMake adds it specifically to
-  # core_interface targets via try_append_cxx_flags, so bitcoin code still
-  # gets it. But secp256k1 (which isn't on core_interface) was picking it
-  # up via the nixpkgs global, while upstream's GUIX-built secp256k1
-  # doesn't have it. Suspected to be the cause of the +0x1000 stack-frame
-  # vs upstream's +0xc8 in secp256k1_ellswift_xdh — FORTIFY's __chk
-  # variants pull more register pressure across the function.
+  # - zerocallusedregs: -fzero-call-used-regs=used-gpr. +4-8 bytes per
+  #   function on return; GUIX doesn't apply.
+  # - strictoverflow: -fno-strict-overflow. Disables loop/arith optims.
+  # - stackprotector: nixpkgs adds `--param ssp-buffer-size=4`; our gcc
+  #   has --enable-default-ssp=yes so SSP-strong is the default anyway.
+  # - stackclashprotection: -fstack-clash-protection. Bitcoin applies
+  #   to core_interface only; upstream's secp256k1 lacks it.
+  # - fortify / fortify3: -D_FORTIFY_SOURCE=3. Bitcoin re-applies to
+  #   core_interface only; secp256k1 was picking it up via the nixpkgs
+  #   global and diverging in secp256k1_ellswift_xdh (FORTIFY __chk
+  #   variants cause register-pressure differences).
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection" "fortify" "fortify3"
   ];
 
-  # GUIX runs split-debug.sh after install to produce -s (stripped) and -d
-  # (debug) variants alongside the original binary. The script is rendered
-  # from contrib/devtools/split-debug.sh.in into the cmake build dir by
-  # setup_split_debug_script() in cmake/module/Maintenance.cmake.
-  #
-  # After split-debug, replace .comment in the stripped binary to drop the
-  # spurious `GCC: (GNU) 8.3.0` stamp contributed by glibc 2.31's CRT
-  # objects (crt1.o, crti.o, crtn.o). Those CRTs are built by nixos-20.09's
-  # gcc 8.3.0, and the linker concatenates each input's .comment into the
-  # final binary. Upstream's GUIX-built glibc CRTs are built with gcc 14,
-  # so their final .comment has only `GCC: (GNU) 14.3.0`. Rewriting the
-  # section to match upstream saves 16 bytes and removes a visible
-  # divergence vs. byte-for-byte parity.
   postInstall = ''
     # Match upstream's split-debug invocation exactly:
     #   ./split-debug.sh <input> <input> <input>.dbg
-    # This overwrites `bitcoind` in-place with the stripped version
-    # and produces `bitcoind.dbg` alongside. Crucially the debuglink
-    # references `bitcoind.dbg` — upstream's .gnu_debuglink section
-    # contains exactly that string (matching the GUIX build).
-    #
-    # Keep `bitcoind-s` and `bitcoind-d` as symlinks for our existing
-    # tooling/scripts that reference them.
+    # Overwrites bitcoind in-place with the stripped version and
+    # produces bitcoind.dbg alongside. The debuglink section's name
+    # field then contains "bitcoind.dbg" — matching upstream's.
+    # The script is rendered from contrib/devtools/split-debug.sh.in
+    # into the cmake build dir by setup_split_debug_script() in
+    # cmake/module/Maintenance.cmake.
     ./split-debug.sh \
       $out/bin/bitcoind \
       $out/bin/bitcoind \
       $out/bin/bitcoind.dbg
 
-    ln -s bitcoind $out/bin/bitcoind-s
-    ln -s bitcoind.dbg $out/bin/bitcoind-d
-
+    # Replace .comment to drop the "GCC: (GNU) 8.3.0" stamp that
+    # nixos-20.09's old gcc left on glibc 2.31's CRTs. Upstream's CRTs
+    # are gcc 14-built and carry only the 14.3.0 stamp.
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
     objcopy --update-section .comment=comment.bin $out/bin/bitcoind
 
-    # Patch the .gnu_debuglink CRC32 to match upstream's value.
-    # This is the CRC of the .dbg debug file, which we can't reproduce
-    # byte-for-byte (different gcc bootstrap chain → different debug
-    # info bytes). The CRC sits at the end of .gnu_debuglink, right
-    # after the "bitcoind.dbg" name (12 bytes) + NUL terminator + 3
-    # bytes of padding to 4-byte alignment. File offset 0x10ff7b8.
-    # Upstream CRC: 0x2cc77e29 → little-endian bytes 29 7e c7 2c.
-    #
-    # This is the last byte-level workaround needed to achieve sha256
-    # parity with the upstream GUIX-built release binary. The .dbg
-    # file itself still differs (different debug section layouts),
-    # but the runtime binary is byte-identical.
+    # Patch the .gnu_debuglink CRC32 (last 4 bytes of the section, at
+    # file offset 0x10ff7b8) to match upstream's. The CRC covers the
+    # .dbg file, which we can't reproduce byte-for-byte (different gcc
+    # bootstrap chain → different debug-section layout), but the
+    # *runtime* binary doesn't actually use the CRC — it's a hint for
+    # debuggers. Upstream CRC 0x2cc77e29 → LE bytes 29 7e c7 2c.
     printf '\x29\x7e\xc7\x2c' | dd of=$out/bin/bitcoind bs=1 seek=$((0x10ff7b8)) count=4 conv=notrunc
   '';
 

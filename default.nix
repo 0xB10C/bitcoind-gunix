@@ -10,37 +10,16 @@ let
   url = "https://bitcoincore.org/bin/bitcoin-core-${version}/bitcoin-${version}.tar.gz";
   sha256 = "sha256-C6DvXuo679lswXdL4nTD1ZSBLPrAmIgJ1wZzi7Bns+M=";
 
-  # Patches GUIX applies to its Linux toolchain. We apply the same so
-  # our gcc/binutils generate identical code/encodings.
-  #
-  # - gcc-ssa-generation.patch: deterministic SSA version numbering
-  #   (gcc PR123351). Without it, SSA names are assigned non-
-  #   deterministically depending on function-argument evaluation
-  #   order, which yields different generated code per gcc build.
-  #
-  # We don't apply gcc-remap-guix-store.patch — it strips /gnu/store
-  # paths from libgcc DWARF, which only matters for unstripped
-  # binaries. Our reproducibility target is the stripped binary.
-  #
-  # We DON'T apply binutils-unaligned-default.patch — verified that
-  # GUIX applies it only to the MINGW (Windows) cross-toolchain via
-  # `binutils-mingw-patches`, not to the Linux build. Applying it to
-  # Linux makes gas encode `vmovaps` as `vmovups` (opcode 0x28→0x10),
-  # producing 747+ differing bytes per .o file vs upstream's Linux
-  # binary. Confirmed by extracting upstream's depends staging
-  # libsqlite3.a and finding upstream emits 0x28 (movaps), we emit
-  # 0x10 (movups).
-  #
-  # Downgrade binutils from nixpkgs' 2.44 to 2.41 (the version GUIX ships in
-  # its package manifest, used by cross-binutils for the bitcoin cross
+  # Downgrade binutils from nixpkgs' 2.44 to 2.41 (the version GUIX ships
+  # in its package manifest, used by cross-binutils for the bitcoin cross
   # toolchain — see gnu/packages/base.scm:656 in GUIX). binutils version
   # changes affect linker layout decisions, section alignment, and (in
   # 2.44) the strictness of GNU property note merging.
   #
-  # Use a single output to avoid the multi-output reference cycle that
-  # nixpkgs 25.11's binutils-unwrapped derivation triggers when its
+  # `outputs = ["out" "info" "man"]` avoids the multi-output reference
+  # cycle that nixpkgs 25.11's binutils-unwrapped triggers when its
   # output-splitting machinery runs against the older 2.41 build.
-  binutilsWithGuixPatches = (pkgs.binutils-unwrapped.overrideAttrs (old: {
+  binutilsForGuix = (pkgs.binutils-unwrapped.overrideAttrs (_: {
     version = "2.41";
     src = pkgs.fetchurl {
       url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
@@ -68,7 +47,7 @@ let
   #
   #   3. Wrap the rebuilt gcc and use it as the final stdenv's CC.
   bintoolsWithGlibc231 = pkgs.wrapBintoolsWith {
-    bintools = binutilsWithGuixPatches;
+    bintools = binutilsForGuix;
     libc = glibc231;
   };
   stdenvForGccRebuild = pkgs.overrideCC pkgs.gcc14Stdenv (pkgs.wrapCCWith {
