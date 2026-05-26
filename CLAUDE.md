@@ -396,29 +396,45 @@ Three known issues remain. They likely need work in this order:
    `--enable-kernel`. Dropping it lets glibc's default
    `arch_minimum_kernel=3.2.0` take effect.
 
-3. **`.note.gnu.property` missing** (-48 B): binutils 2.41 drops the
-   ENTIRE property note section when AND-properties (CET) can't be
-   merged across all inputs (e.g. when some .o files have CET and
-   others don't). Reproduced with a minimal test: link two .o files,
-   one compiled with `-fcf-protection=full` and one without, and the
-   output binary has no `.note.gnu.property` at all — not even the
-   OR (USED) properties that should survive. Upstream's GUIX-built
-   binutils 2.41 keeps the USED properties in this case (visible in
-   their bitcoind: `x86 ISA used: x86-64-baseline, x86-64-v2,
-   x86-64-v3` + `x86 feature used: x86, x87, XMM, YMM, XSAVE`).
-   We use the same binutils version (2.41 source) with the same
-   `binutils-unaligned-default.patch`. The behavioral divergence must
-   come from some other patch GUIX applies or build-env difference.
-   Either patch our binutils to match or accept the -48 B delta.
+3. **`.note.gnu.property`** ✅ FIXED in commit `5ce13cf` by patching
+   the glibc CRTs (Scrt1.o, crti.o, crtn.o, etc.) and libc_nonshared.a
+   object members with byte-identical USED property bytes from
+   upstream's binary. Root cause: binutils 2.41's OR_AND merge logic
+   removes a property when one input lacks it (`first_pbfd`); our
+   glibc CRTs were built by gcc 8.3.0 (nixos-20.09) which predates
+   USED-property emission, so they have only CET. Patching post-build
+   sidesteps the multi-stage glibc rebuild.
 
-4. **Residual `.text` +6.88 KiB** and **`.rela.dyn` +1.8 KiB**
-   (77 extra `R_X86_64_RELATIVE` relocs). The first 3691 (out of
-   50032) functions are at byte-identical addresses; divergence
-   starts in the libzmq region. Sub-deltas in libstdc++ throw-stub
-   helpers (+8 B each, ~10 stubs) and SSP-protected functions
-   (~32 extra protected fns). To close fully requires matching
-   GUIX's gcc bootstrap chain (multi-stage build); currently
-   blocked by isl/gmp/glibc-2.31 build dependency issues.
+4. **`.gnu_debuglink`** ✅ FIXED in commit `640b5fa` by matching
+   GUIX's split-debug.sh invocation: `<bin> <bin> <bin>.dbg`
+   (overwrite in-place, debug as `bitcoind.dbg`).
+
+5. **gettext/dgettext dynsym** ✅ FIXED in commit `e998985` by adding
+   `--disable-nls` to gcc configureFlags. libstdc++'s `_()` macro
+   now expands to identity (not `gettext(...)`), dropping the
+   `gettext@GLIBC_2.2.5` dynamic symbol. dynsym count: 345 → 344
+   (matches upstream).
+
+6. **Residual `.text` +6.75 KiB** and **`.rela.dyn` +1.8 KiB**
+   (77 extra `R_X86_64_RELATIVE` relocs in `.data.rel.ro`).
+   Function count matches exactly (50,032 endbr64); first 3,691
+   functions are at byte-identical addresses. Divergence starts in
+   the libzmq region (function-level analysis: +8,384 B in the
+   libzmq cold/main blob, partly cancelled by -2,176 B elsewhere).
+   The 77 extra RELATIVE relocs are in libstdc++'s vtable layout.
+   Both come from compiling libzmq/libstdc++ under a slightly
+   different gcc state than GUIX's bootstrapped gcc.
+
+   **To close this final ~8 KiB** requires the coherent gcc bootstrap
+   chain: stage-1 nixos-20.09 gcc 8.3.0 → glibc 2.31; stage-2 gcc 14
+   built against stage-1 glibc; stage-3 glibc rebuilt with stage-2
+   gcc 14 → CRTs with USED properties (no need for the
+   property-patching hack); stage-4 gcc 14 against stage-3 glibc;
+   final stdenv from stage-4 toolchain. Blocked by gmp/mpfr/isl
+   propagation through `pkgs.gmp.override { stdenv = ... }` —
+   the isl configure can't find -lgmp despite the override
+   (commit `37b05ef` post-mortem). The fix needs either a custom
+   nixpkgs overlay or a `runCommand`-based hand-rolled bootstrap.
 
 ### Final note: how to verify a successful match
 
