@@ -3,172 +3,123 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    # nixos-20.09 is the last NixOS release shipping glibc 2.31 — the same
-    # glibc version used by Bitcoin Core's GUIX release builds. We pull
-    # only glibc from here; everything else (gcc, build tools) comes from
-    # the modern `nixpkgs` input.
-    nixpkgs-glibc231.url = "github:NixOS/nixpkgs/nixos-20.09";
-    nixpkgs-glibc231.flake = false;
   };
 
-  outputs = { nixpkgs, nixpkgs-glibc231, ... }:
+  outputs = { nixpkgs, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
-      pkgsGlibc231 = import nixpkgs-glibc231 { inherit system; };
-      # Rebuild glibc 2.31 with the same configure flags GUIX uses (see
-      # contrib/guix/manifest.scm `define-public glibc-2.31`):
+      # Build glibc 2.31 with nixpkgs-25.11's stdenv, which uses gcc 14.3.0
+      # — the *same* compiler version GUIX uses for its release toolchain.
+      # We take 25.11's modern glibc derivation and override it down to
+      # 2.31, fetching the exact source GUIX uses
+      # (contrib/guix/manifest.scm `define-public glibc-2.31`: the 2.31
+      # stable branch at commit 7b27c450). Building the CRTs and
+      # libc_nonshared.a objects with gcc 14 — rather than nixos-20.09's
+      # gcc 8.3.0 — makes them carry the right .note.gnu.property USED
+      # bytes, the gcc-14 `sub %fs:0x28,%rax` canary check, and the
+      # gcc-14 __libc_csu_init register allocation natively, so no
+      # post-install byte patching is needed.
       #
-      #   --enable-stack-protector=all
-      #   --enable-cet
-      #   --enable-bind-now
-      #   --disable-werror
-      #   --disable-timezone-tools
-      #   --disable-profile
-      #
-      # Adding --enable-cet is what populates the resulting CRT objects
-      # (Scrt1.o, crt[in].o) with the CET property notes, which the
-      # linker then propagates into the final bitcoind as the
-      # .note.gnu.property section — currently absent in our binary.
-      glibc231 = pkgsGlibc231.glibc.overrideAttrs (old: {
-        configureFlags = (old.configureFlags or []) ++ [
-          "--enable-stack-protector=all"
-          "--enable-cet"
-          "--enable-bind-now"
-          "--disable-werror"
-          "--disable-timezone-tools"
-          "--disable-profile"
+      # GUIX's glibc-2.31 configure flags (same manifest):
+      #   --enable-stack-protector=all --enable-cet --enable-bind-now
+      #   --disable-werror --disable-timezone-tools --disable-profile
+      glibc231 = pkgs.glibc.overrideAttrs (old: {
+        version = "2.31";
+        src = pkgs.fetchgit {
+          # Name the checkout glibc-2.31 so the unpacked sourceRoot matches
+          # the `../glibc-2*/localedata/SUPPORTED` glob in the postInstall.
+          name = "glibc-2.31";
+          url = "https://sourceware.org/git/glibc.git";
+          rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
+          hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+        };
+        # 25.11's patches target glibc 2.40; none apply to 2.31. GUIX's
+        # two glibc patches (guix-prefix, riscv-jumptarget) are irrelevant
+        # on x86_64, matching the empty set used for the release binary.
+        patches = [ ];
+        # Drop the 25.11 configure flags that diverge from GUIX, then add
+        # GUIX's. Most important: --enable-kernel=3.10.0 sets the
+        # .note.ABI-tag to 3.10.0, but upstream's binary is 3.2.0 (glibc
+        # 2.31's default arch_minimum_kernel — GUIX doesn't set
+        # --enable-kernel). Also drop 25.11's stack-protector=strong /
+        # cet=permissive / fortify-source so they don't fight the GUIX
+        # values (and fortify-source isn't applied by GUIX at all).
+        configureFlags =
+          (builtins.filter
+            (f: !(pkgs.lib.hasPrefix "--enable-kernel" f
+              || f == "--enable-stack-protector=strong"
+              || f == "--enable-cet=permissive"
+              || f == "--enable-fortify-source"))
+            (old.configureFlags or [ ]))
+          ++ [
+            "--enable-stack-protector=all"
+            "--enable-cet"
+            "--enable-bind-now"
+            "--disable-werror"
+            "--disable-timezone-tools"
+            "--disable-profile"
+          ];
+        # nixpkgs' gcc-wrapper injects -fno-omit-frame-pointer, which adds
+        # a frame-pointer prologue to glibc's csu objects (notably
+        # __libc_csu_init in elf-init.oS). Upstream omits the frame pointer
+        # at -O2. Append the omit flags so they win over the wrapper's
+        # cc-cflags-before. (25.11 glibc uses a structured `env`.)
+        env = (old.env or { }) // {
+          NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer";
+        };
+        # GUIX's toolchain applies none of nixpkgs' compile hardenings.
+        # The decisive one here is zerocallusedregs (-fzero-call-used-regs):
+        # it appends register-zeroing xors before `ret` in glibc's
+        # nonshared members (__libc_csu_init, the stat wrappers), which
+        # upstream lacks. Disable the same set bitcoind does. Stack canaries
+        # are unaffected — they come from glibc's own
+        # --enable-stack-protector=all, not nixpkgs' stackprotector flag.
+        hardeningDisable = [
+          "zerocallusedregs" "strictoverflow" "stackprotector"
+          "stackclashprotection" "fortify" "fortify3"
         ];
-        # Drop nixpkgs' allow-kernel-2.6.32.patch — it hardcodes the
-        # .note.ABI-tag to 2.6.32 regardless of --enable-kernel. We want
-        # 3.2.0 (matching upstream's GUIX-built binary). The patch's
-        # original purpose was wider runtime-compat for nixpkgs users,
-        # which isn't a goal here.
-        patches = builtins.filter
-          (p: !(pkgs.lib.hasSuffix "allow-kernel-2.6.32.patch" (toString p)))
-          (old.patches or []);
-        # Patch the .note.gnu.property section in glibc's CRT objects
-        # and libc_nonshared.a object members to match upstream's USED
-        # bytes (x86 features used: x86,x87,XMM,YMM,XSAVE; ISA used:
-        # x86-64-baseline,v2,v3). Background:
-        #
-        # binutils 2.41's `_bfd_x86_elf_merge_gnu_properties` treats
-        # USED properties as OR_AND types — if the link's first input
-        # with a property section (first_pbfd) lacks USED while another
-        # input has USED, the linker REMOVES USED from the output.
-        # That's why our final bitcoind binary loses .note.gnu.property
-        # entirely: the CRT objects (built by nixos-20.09's gcc 8.3.0,
-        # which predates USED-emission) only have AND CET, and they're
-        # the first inputs in the link order. Their CET gets dropped
-        # (mixed inputs), and their lack-of-USED causes USED from later
-        # inputs to be dropped too. Net result: no property section.
-        #
-        # Upstream's GUIX-built glibc was compiled with a modern gcc
-        # that emits both CET and USED in CRTs. We can't easily rebuild
-        # glibc 2.31 with gcc 14 (multi-stage bootstrap blocked by
-        # gmp/isl ABI mismatches; see commit 37b05ef post-mortem), so
-        # we surgically patch the .o files post-install to have the
-        # exact upstream USED bytes. This makes them match what gcc 14
-        # would have emitted, and the final binary will end up with
-        # the byte-identical .note.gnu.property section.
-        postFixup = (old.postFixup or "") + ''
-          # 48 bytes: ELF note header (16) + 2 properties × 16 bytes each.
-          printf '\x04\x00\x00\x00\x20\x00\x00\x00\x05\x00\x00\x00GNU\x00\x01\x00\x01\xc0\x04\x00\x00\x00\x9b\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\xc0\x04\x00\x00\x00\x07\x00\x00\x00\x00\x00\x00\x00' > usedprop.bin
-          for f in $out/lib/Scrt1.o $out/lib/crti.o $out/lib/crtn.o $out/lib/crt1.o $out/lib/gcrt1.o $out/lib/Mcrt1.o $out/lib/rcrt1.o; do
-            if [ -f "$f" ]; then
-              ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=usedprop.bin "$f"
-            fi
-          done
-          if [ -f "$out/lib/libc_nonshared.a" ]; then
-            # Stage 1: patch each .oS member's .note.gnu.property to
-            # carry upstream's USED bytes, AND swap the gcc-8.3.0-style
-            # stack-canary check `xor %fs:0x28,%rax` (48 33 04 25 28 00 00 00)
-            # for the gcc-14-style `sub %fs:0x28,%rax` (48 2b 04 25 28 00 00 00).
-            # Both check the canary correctly; gcc 14's emitted code uses
-            # `sub`, gcc 8.3.0 uses `xor`. atexit.oS, stat64.oS, fstat64.oS
-            # and lstat64.oS were each 1 byte off (and possibly others
-            # — patch all .oS members defensively, the sed is a no-op
-            # for ones that don't contain the pattern).
-            WORK=$(mktemp -d)
-            cd "$WORK"
-            cp "$out/lib/libc_nonshared.a" libc_nonshared.a
-            chmod +w libc_nonshared.a
-            for o in $(${pkgs.binutils-unwrapped}/bin/ar t libc_nonshared.a); do
-              ${pkgs.binutils-unwrapped}/bin/ar x libc_nonshared.a "$o"
-              changed=0
-              if ${pkgs.binutils-unwrapped}/bin/readelf -n "$o" 2>/dev/null | grep -q gnu.property; then
-                ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=$OLDPWD/usedprop.bin "$o"
-                changed=1
-              fi
-              # Byte-patch `64 48 33 04 25 28 00 00 00` (xor %fs:0x28,%rax)
-              # → `64 48 2b 04 25 28 00 00 00` (sub %fs:0x28,%rax) in the
-              # .oS files known to have the gcc-8.3.0 canary check that
-              # diverges from upstream's gcc-14 version.
-              #
-              # Edit the file IN PLACE rather than via objcopy
-              # --update-section, because the latter ZEROES the
-              # .rela.text section (relocations targeting .text get
-              # marked stale and dropped). For a single-byte instruction
-              # tweak the relocations are still 100% valid, so direct
-              # bytewise patching is both correct and minimally invasive.
-              case "$o" in
-                atexit.oS|stat64.oS|fstat64.oS|lstat64.oS)
-                  ${pkgs.python3.out}/bin/python3 -c "
-import sys
-with open('$o', 'r+b') as f:
-    d = f.read()
-    new = d.replace(
-        b'\\x64\\x48\\x33\\x04\\x25\\x28\\x00\\x00\\x00',
-        b'\\x64\\x48\\x2b\\x04\\x25\\x28\\x00\\x00\\x00',
-    )
-    if new != d:
-        f.seek(0); f.write(new); f.truncate()
-        sys.exit(0)
-    sys.exit(1)
-" && changed=1
-                  ;;
-              esac
-              if [ "$changed" = "1" ]; then
-                ${pkgs.binutils-unwrapped}/bin/ar r libc_nonshared.a "$o"
-              fi
-              rm -f "$o"
-            done
+        # 25.11's postPatch seds nss/nss_files_fopen.c and
+        # include/nss_files.h, which don't exist in 2.31. Keep only the
+        # two 2.31-safe substitutions.
+        postPatch = ''
+          sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
+          echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
+        '';
+        # 25.11's postInstall generates the C.UTF-8 locale, but glibc 2.31
+        # ships no locales/C definition (C.UTF-8 landed in 2.35).
+        # Reconstruct the output-splitting steps without locale generation.
+        postInstall = ''
+          moveToOutput bin/getent $getent
 
-            # Stage 2: replace elf-init.oS's .text with a gcc-14-compiled
-            # version. The nixos-20.09 glibc was built with gcc 8.3.0,
-            # whose register allocation for __libc_csu_init differs from
-            # upstream's gcc-14-built version (131 bytes of .text differ).
-            # Compile csu/elf-init.c from glibc 2.31 with our gcc 14 plus
-            # the upstream flags, then objcopy --update-section just the
-            # .text into the original elf-init.oS (keeping its symbol
-            # table, relocations, .note.gnu.property intact).
-            cp ${./patches/glibc-elf-init.c} elf-init.c
-            ${pkgs.gcc14.cc}/bin/gcc -O2 -fPIE -DLIBC_NONSHARED=1 \
-              -DSHARED -fpie -ffreestanding \
-              -fstack-protector-all -fcf-protection=full \
-              '-Dattribute_hidden=__attribute__((visibility("hidden")))' \
-              '-Dweak_alias(x, y)=' \
-              '-Dlibc_hidden_def(x)=' \
-              '-Dweak_extern(x)=' \
-              -c elf-init.c -o elf-init-new.o
+          test -f $out/etc/ld.so.cache && rm $out/etc/ld.so.cache
 
-            # Overwrite the new .o's .note.gnu.property with the same
-            # canonical USED bytes used elsewhere, so the spliced member
-            # matches the section layout the original elf-init.oS had.
-            ${pkgs.binutils-unwrapped}/bin/objcopy --update-section .note.gnu.property=$OLDPWD/usedprop.bin elf-init-new.o
-
-            # Replace the elf-init.oS member outright. The new .o has
-            # its own correct .rela.text / .symtab so symbols stay
-            # resolved at link time. `ar r` renames elf-init.oS in
-            # the archive index.
-            mv elf-init-new.o elf-init.oS
-            ${pkgs.binutils-unwrapped}/bin/ar r libc_nonshared.a elf-init.oS
-            rm -f elf-init.oS
-
-            cp libc_nonshared.a "$out/lib/libc_nonshared.a"
-            cd "$OLDPWD"
-            rm -rf "$WORK"
+          if test -n "$linuxHeaders"; then
+              (cd $dev/include && \
+               ln -sv $(ls -d $linuxHeaders/include/* | grep -v scsi\$) .)
           fi
+
+          if test -n "$is64bit"; then
+              ln -s lib $out/lib64
+          fi
+
+          rm -rf $out/var $bin/bin/sln
+
+          ln -sf $out/lib/libpthread.so.0 $out/lib/libpthread.so
+          ln -sf $out/lib/librt.so.1 $out/lib/librt.so
+          ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
+          test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
+          touch $out/lib/libpthread.a
+
+          mkdir -p $static/lib
+          mv $out/lib/*.a $static/lib
+          mv $static/lib/lib*_nonshared.a $out/lib
+          test -f $out/lib/libutil.so.1 || mv $static/lib/libutil.a $out/lib
+          sed "/^GROUP/s|$out/lib/lib|$static/lib/lib|g" \
+            -i "$static"/lib/*.a
+
+          cp $bin/bin/getconf $bin/bin/getconf_
+          mv $bin/bin/getconf_ $bin/bin/getconf
         '';
       });
       drvs = import ./default.nix {

@@ -22,6 +22,64 @@ Only `bin/bitcoind` is hashed against upstream. `bin/bitcoin`,
 stripped (they would need similar split-debug + `.gnu_debuglink` CRC
 treatment to also match — out of scope unless someone needs it).
 
+## WIP (2026-06-03): issue #6 — remove workarounds (B) + full tarball (A)
+
+Working issue #6. Local reference artifacts (all gitignored):
+- `bitcoin/` — Core checkout at v31.0 tag **with a full GUIX build** in
+  `bitcoin/guix-build-31.0/` (4.8 GB). The final release tarball is at
+  `bitcoin/guix-build-31.0/output/x86_64-linux-gnu/bitcoin-31.0-x86_64-linux-gnu.tar.gz`
+  and the debug tarball `…-debug.tar.gz` alongside. Upstream `.o` files
+  survive in `…/distsrc-31.0-x86_64-linux-gnu/build/`.
+- `guix/guix/` — the GUIX repo checkout. `bitcoin/contrib/guix/` has the
+  manifest + build.sh + patches.
+
+### Progress
+
+- **B task #1 — DONE (committed)**: glibc 2.31 now built with gcc 14.3.0;
+  all four glibc byte-patch hacks removed; bitcoind still hashes to
+  `dae69848…`. Details in the "Glibc 2.31 build" section above. (gcc
+  parity: nixpkgs-25.11's stdenv == GUIX's gcc 14.3.0; source = git
+  `7b27c450`, nix hash `sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=`.)
+- **B task #2 — TODO**: eliminate the `.gnu_debuglink` CRC patch (below).
+- **A — TODO**: build + match the other binaries and the full tarball.
+
+### Task #2 finding (the `.gnu_debuglink` CRC)
+
+- **`.dbg` / `.gnu_debuglink` CRC** (task #2 / clean A): upstream's
+  `bitcoind.dbg` is 106 MB vs our 293 MB. Upstream's debug sections carry
+  the **SHF_COMPRESSED (`C`) flag** — and so do upstream's build `.o`
+  files — yet `HOST_CFLAGS` has no `-gz` and `split-debug.sh` uses plain
+  `objcopy --only-keep-debug`. ⇒ GUIX's **binutils is configured to
+  compress debug sections by default** (`--enable-compressed-debug-
+  sections=all`). Reproducing this (binutils config or `-gz`) is the
+  keystone to making every binary's debuglink CRC match *naturally*,
+  eliminating the byte patch and the per-binary CRC problem for A.
+  **Decompressed, the two `.dbg` files are 292,886,544 (upstream) vs
+  292,714,368 (ours) — only ~172 KB / 0.06 % apart.** So the DWARF
+  content is essentially identical; the whole 3× gap is compression. Plan
+  for task #2: (1) enable debug compression to match upstream's format
+  (and zlib output), (2) close the residual ~172 KB content delta, →
+  byte-identical `.dbg` → CRC matches with no patch. Caveat: byte-equal
+  compressed output also needs the same zlib version/level as GUIX's
+  binutils — verify, may be the sticking point.
+
+### Upstream binary set (sha256, from the GUIX tarball)
+
+```
+eb5670ae… bin/bitcoin            3e92883f… bin/bitcoin-cli
+dae69848… bin/bitcoind  ✓MATCH   3480af8f… bin/bitcoin-qt   (GUI)
+ce3b159c… bin/bitcoin-tx         1d18ee4b… bin/bitcoin-util
+7d8382b8… bin/bitcoin-wallet
+416e79bb… libexec/bitcoin-gui (GUI)  01c212ee… libexec/bitcoin-node
+c7a2a906… libexec/test_bitcoin
+```
+
+GUIX leaves `BUILD_TESTS` at default ON; that's what builds bitcoin-tx,
+bitcoin-util, bitcoin-wallet, test_bitcoin. Upstream CONFIGFLAGS:
+`-DREDUCE_EXPORTS=ON -DBUILD_BENCH=OFF -DBUILD_GUI_TESTS=OFF
+-DBUILD_FUZZ_BINARY=OFF -DCMAKE_SKIP_RPATH=TRUE`. split-debug is applied
+to every file in `bin/` + `libexec/` identically (build.sh:302).
+
 ## How it works
 
 Three Nix files compose into the reproducer:
@@ -54,11 +112,14 @@ Three Nix files compose into the reproducer:
    `--enable-host-bind-now`, `--enable-standard-branch-protection`,
    `--enable-initfini-array`, `--disable-nls`, …).
 
-4. **`flake.nix`** — pins `nixpkgs` to `nixos-25.11` and pins a separate
-   `nixpkgs-glibc231` to `nixos-20.09` (last NixOS release shipping
-   glibc 2.31). Rebuilds glibc 2.31 with GUIX's configure flags and
-   surgically patches its CRTs and `libc_nonshared.a` `.oS` members in
-   `postFixup` (see Workarounds below). Exposes:
+4. **`flake.nix`** — pins `nixpkgs` to `nixos-25.11` and builds glibc 2.31
+   by overriding 25.11's modern glibc derivation down to 2.31 (GUIX's
+   exact git source, commit `7b27c450`), built with 25.11's **gcc 14.3.0**
+   — the same gcc version GUIX uses. Because the CRTs and
+   `libc_nonshared.a` members are gcc-14-compiled, they carry the right
+   `.note.gnu.property`, `sub` canary, and `__libc_csu_init` codegen
+   natively — **no post-install byte patching** (this replaced the old
+   nixos-20.09 / gcc-8.3.0 + byte-patch approach). Exposes:
    - `nix build .#depends` — just the depends tree
    - `nix build .#bitcoind` (or `.#default`) — the full bitcoind
 
@@ -79,10 +140,6 @@ Three Nix files compose into the reproducer:
   deterministic SSA version numbering. Without it, SSA names are
   assigned non-deterministically depending on function-argument
   evaluation order → different generated code per gcc build.
-
-- **`patches/glibc-elf-init.c`** — verbatim copy of glibc 2.31's
-  `csu/elf-init.c`. flake.nix recompiles this with our gcc 14 and
-  splices the result into `libc_nonshared.a` (see Workarounds).
 
 ## Workarounds baked into the Nix derivations
 
@@ -125,49 +182,37 @@ These are subtle and easy to break, so document the reasoning.
   - `/build/bitcoin-${version}/src=.` (relative paths for bitcoin
     sources, must come after the broader fallback)
 
-### Glibc 2.31 byte patches (`flake.nix` postFixup)
+### Glibc 2.31 build (`flake.nix`) — replaced the old byte patches
 
-nixos-20.09's stdenv compiled the glibc 2.31 we depend on with
-gcc 8.3.0, which predates several encoding choices that upstream's
-gcc-14-bootstrapped GUIX glibc has. We surgically patch the affected
-bytes in the installed glibc:
+We build glibc 2.31 with gcc 14.3.0 (nixpkgs-25.11's stdenv == GUIX's gcc
+version) from GUIX's exact git source. This produces CRTs and
+`libc_nonshared.a` members that match upstream **natively**, so the four
+former byte-patch hacks (CRT `.note.gnu.property`, `.oS`
+`.note.gnu.property`, `xor`→`sub` canary, and the `elf-init.oS`
+`__libc_csu_init` recompile-splice) are **gone**. What it took, beyond the
+git source + GUIX's 6 configure flags:
 
-1. **CRT `.note.gnu.property` patch** — binutils 2.41's
-   `_bfd_x86_elf_merge_gnu_properties` OR_AND-merges USED properties
-   and removes them if `first_pbfd` lacks them. Our CRTs (built by
-   gcc 8.3.0) are first_pbfd and lack USED → the linker drops
-   `.note.gnu.property` entirely from the final binary. Fix: overwrite
-   the section in each CRT (`Scrt1.o`, `crti.o`, `crtn.o`, etc.) with
-   upstream's canonical USED bytes
-   (`x86 features: x87,XMM,YMM,XSAVE; ISA: baseline,v2,v3`).
+- **Filter 25.11's conflicting configure flags**: drop
+  `--enable-kernel=3.10.0` (would set `.note.ABI-tag` to 3.10.0; upstream
+  is 3.2.0 — glibc 2.31's default `arch_minimum_kernel`),
+  `--enable-stack-protector=strong`, `--enable-cet=permissive`,
+  `--enable-fortify-source`.
+- **`-fomit-frame-pointer -momit-leaf-frame-pointer`** via
+  `env.NIX_CFLAGS_COMPILE` — nixpkgs' wrapper forces
+  `-fno-omit-frame-pointer`, which would give `__libc_csu_init` a
+  frame-pointer prologue; upstream omits it at -O2.
+- **`hardeningDisable`** (same set as bitcoind) — the decisive one is
+  `zerocallusedregs`: `-fzero-call-used-regs` appends register-zeroing
+  `xor` instructions before `ret` in `__libc_csu_init` and the stat
+  wrappers, which upstream lacks (this was the last 16-byte delta).
+- **Porting 25.11→2.31 plumbing**: `patches = []` (2.40 patches don't
+  apply); `postPatch` minus the `nss/nss_files_fopen.c` +
+  `include/nss_files.h` seds (don't exist in 2.31); `src` `name =
+  "glibc-2.31"` (postInstall globs `../glibc-2*/localedata/SUPPORTED`);
+  `postInstall` minus the C.UTF-8 locale gen (no `locales/C` until 2.35).
 
-2. **Each `libc_nonshared.a` `.oS` member's `.note.gnu.property`** —
-   same treatment, since the linker pulls in selected `.oS` members
-   into the final binary.
-
-3. **Stack-canary check encoding patch** — gcc 8.3.0 emits
-   `xor %fs:0x28,%rax` (`64 48 33 04 25 28 00 00 00`) for the final
-   canary check, while gcc 14 emits `sub %fs:0x28,%rax`
-   (`64 48 2b 04 25 28 00 00 00`). Both check the canary correctly
-   (the only thing that matters is whether the result is zero). We
-   direct-byte-patch the 4 affected `.oS` members (`atexit`, `stat64`,
-   `fstat64`, `lstat64`) IN PLACE — preserving their `.rela.text`
-   relocations. `objcopy --update-section` would zero those out.
-
-4. **`elf-init.oS` full replacement** — `__libc_csu_init` is the one
-   function where gcc 8.3.0's vs gcc 14's register allocation differs
-   enough that no single-byte patch suffices (131 bytes diverge). We
-   recompile `csu/elf-init.c` (preserved verbatim at
-   `patches/glibc-elf-init.c`) with our gcc 14 plus upstream's flags
-   (`-O2 -fPIE -DLIBC_NONSHARED=1 -DSHARED -fpie -ffreestanding
-   -fstack-protector-all -fcf-protection=full`), patch its
-   `.note.gnu.property` with the canonical USED bytes, then `ar r`
-   the new file in.
-
-5. **glibc `.comment` rewrite** — `bitcoind.nix` postInstall replaces
-   the final `.comment` section with just `GCC: (GNU) 14.3.0\0`,
-   dropping the stamp left by nixos-20.09's gcc 8.3.0 building glibc's
-   CRTs.
+The `.comment` is now uniformly gcc-14, but `bitcoind.nix` still rewrites
+it (harmless, see below).
 
 ### Final binary patch (`bitcoind.nix` postInstall)
 
