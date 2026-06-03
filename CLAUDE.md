@@ -40,28 +40,45 @@ Working issue #6. Local reference artifacts (all gitignored):
   `dae69848…`. Details in the "Glibc 2.31 build" section above. (gcc
   parity: nixpkgs-25.11's stdenv == GUIX's gcc 14.3.0; source = git
   `7b27c450`, nix hash `sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=`.)
-- **B task #2 — TODO**: eliminate the `.gnu_debuglink` CRC patch (below).
+- **B task #2 — INVESTIGATED, deemed impractical**: keep the
+  `.gnu_debuglink` CRC patch. Rationale below.
 - **A — TODO**: build + match the other binaries and the full tarball.
+  Each stripped binary embeds its own `.gnu_debuglink` CRC (a CRC of its
+  non-reproducible `.dbg`), so A needs the same per-binary CRC patch.
 
-### Task #2 finding (the `.gnu_debuglink` CRC)
+### Task #2 finding — why the `.gnu_debuglink` CRC patch stays
 
-- **`.dbg` / `.gnu_debuglink` CRC** (task #2 / clean A): upstream's
-  `bitcoind.dbg` is 106 MB vs our 293 MB. Upstream's debug sections carry
-  the **SHF_COMPRESSED (`C`) flag** — and so do upstream's build `.o`
-  files — yet `HOST_CFLAGS` has no `-gz` and `split-debug.sh` uses plain
-  `objcopy --only-keep-debug`. ⇒ GUIX's **binutils is configured to
-  compress debug sections by default** (`--enable-compressed-debug-
-  sections=all`). Reproducing this (binutils config or `-gz`) is the
-  keystone to making every binary's debuglink CRC match *naturally*,
-  eliminating the byte patch and the per-binary CRC problem for A.
-  **Decompressed, the two `.dbg` files are 292,886,544 (upstream) vs
-  292,714,368 (ours) — only ~172 KB / 0.06 % apart.** So the DWARF
-  content is essentially identical; the whole 3× gap is compression. Plan
-  for task #2: (1) enable debug compression to match upstream's format
-  (and zlib output), (2) close the residual ~172 KB content delta, →
-  byte-identical `.dbg` → CRC matches with no patch. Caveat: byte-equal
-  compressed output also needs the same zlib version/level as GUIX's
-  binutils — verify, may be the sticking point.
+The CRC in a stripped binary is CRC32 of its `.dbg`. To drop the patch,
+our `.dbg` would have to be byte-identical to upstream's. It is not, and
+the reasons are structural, not incidental:
+
+- **Compression**: upstream's debug sections are SHF_COMPRESSED (GUIX's
+  binutils compresses by default); ours aren't. Fixable with `-gz`.
+- **Content is ~identical otherwise**: decompressed, the two `.dbg` are
+  292,886,544 (upstream) vs 292,713,176 (ours) — ~172 KB / 0.06 % apart,
+  spread proportionally across every debug section.
+- **That 0.06 % is recorded paths** (`.debug_line_str` and the cascade of
+  `.debug_str`/`.debug_info` offset shifts), and they diverge for reasons
+  we can't cheaply match:
+  - toolchain headers: ours `/nix/store/…gcc-14.3.0/include/c++/14.3.0`,
+    upstream `/usr/include/c++` (GUIX maps `/gnu/store/*`→`/usr`, *and*
+    lays c++ headers out without the version subdir);
+  - **target triple**: upstream `x86_64-linux-gnu` vs our gcc's
+    `x86_64-unknown-linux-gnu` — pervasive in include/lib paths and baked
+    into the gcc build;
+  - **GUIX ephemeral build dirs baked into libgcc/glibc debug info**:
+    `/tmp/guix-build-gcc-cross-x86_64-linux-gnu-14.3.0.drv-0/…` and
+    `/tmp/guix-build-glibc-cross-…/source/csu`. These come from the
+    compiler's own debug info (statically-linked csu/libgcc) and can't be
+    reproduced without rebuilding our gcc/glibc as `x86_64-linux-gnu`
+    cross toolchains with `-fdebug-prefix-map` to those exact `.drv-0`
+    paths.
+
+None of this affects the *stripped* runtime binary (already byte-equal at
+`dae69848…`); it's all debug-only. Matching it would mean a target-triple
+change plus deep path surgery across the whole toolchain — high cost, high
+risk, for a 4-byte debugger hint. So the CRC patch stays, and A patches the
+other binaries' CRCs the same way.
 
 ### Upstream binary set (sha256, from the GUIX tarball)
 
