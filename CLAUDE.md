@@ -6,21 +6,32 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-05-26): byte-identical SHA256 match achieved
+## Status (2026-06-03): all non-GUI release binaries byte-match
+
+Every non-GUI binary in the upstream `bitcoin-31.0-x86_64-linux-gnu`
+release now reproduces byte-for-byte:
 
 ```
-dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6  result/bin/bitcoind
-dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6  upstream
+eb5670ae…  bin/bitcoin            ce3b159c…  bin/bitcoin-tx
+3e92883f…  bin/bitcoin-cli        1d18ee4b…  bin/bitcoin-util
+dae69848…  bin/bitcoind           7d8382b8…  bin/bitcoin-wallet
+01c212ee…  libexec/bitcoin-node   c7a2a906…  libexec/test_bitcoin
 ```
 
-A reproducibility gate in `bitcoind.nix` `postFixup` asserts this hash
-after every build — if a toolchain or flag change breaks byte-equality,
-the Nix build itself fails. CI re-asserts the hash externally.
+A reproducibility gate in `bitcoind.nix` `postFixup` asserts all of these
+hashes after every build — if a toolchain or flag change breaks
+byte-equality for any of them, the Nix build itself fails. CI re-asserts
+externally.
 
-Only `bin/bitcoind` is hashed against upstream. `bin/bitcoin`,
-`bin/bitcoin-cli`, and `libexec/bitcoin-node` are produced but not
-stripped (they would need similar split-debug + `.gnu_debuglink` CRC
-treatment to also match — out of scope unless someone needs it).
+Not yet matched: the GUI binaries (`bin/bitcoin-qt`,
+`libexec/bitcoin-gui`) — they need the Qt6 depends tree (`NO_QT=1` is
+still set; separate follow-up). Because the upstream
+`bitcoin-31.0-x86_64-linux-gnu.tar.gz` *contains* bitcoin-qt, a
+byte-identical `.tar.gz` is blocked on the GUI work (plus the tarball also
+ships uncompressed manpages + `bitcoin.conf`/`README.md`/`share/rpcauth`
+and would need gzip-reproducible assembly). The `.dbg` debug files are
+produced but their `.gnu_debuglink` CRCs are patched to upstream's values
+(the `.dbg` themselves aren't byte-reproducible — see "Task #2 finding").
 
 ## WIP (2026-06-03): issue #6 — remove workarounds (B) + full tarball (A)
 
@@ -42,9 +53,14 @@ Working issue #6. Local reference artifacts (all gitignored):
   `7b27c450`, nix hash `sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=`.)
 - **B task #2 — INVESTIGATED, deemed impractical**: keep the
   `.gnu_debuglink` CRC patch. Rationale below.
-- **A — TODO**: build + match the other binaries and the full tarball.
-  Each stripped binary embeds its own `.gnu_debuglink` CRC (a CRC of its
-  non-reproducible `.dbg`), so A needs the same per-binary CRC patch.
+- **A — DONE for non-GUI binaries**: dropped `-DBUILD_TESTS=OFF` (GUIX
+  leaves it ON → builds bitcoin-tx/util/wallet/test_bitcoin) and
+  generalized the split-debug + `.comment` + `.gnu_debuglink` CRC patch to
+  every shipped binary. All 8 non-GUI binaries byte-match; gate asserts all
+  of them. Remaining: GUI binaries (Qt task) and gzip-reproducible
+  `.tar.gz` assembly (blocked on GUI, since the tarball contains
+  bitcoin-qt). Per-binary upstream CRCs are hardcoded in `bitcoind.nix`
+  (the `.dbg` aren't reproducible — see Task #2 finding).
 
 ### Task #2 finding — why the `.gnu_debuglink` CRC patch stays
 

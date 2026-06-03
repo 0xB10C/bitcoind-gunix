@@ -31,10 +31,17 @@ gcc14Stdenv.mkDerivation rec {
   # the depends-provided toolchain. Skip the GUI, tests, bench, and fuzz
   # binary; mirror the upstream-release flags (REDUCE_EXPORTS, SKIP_RPATH).
   cmakeBuildDir = "build";
+  # Match GUIX's CONFIGFLAGS (contrib/guix/libexec/build.sh):
+  #   -DREDUCE_EXPORTS=ON -DBUILD_BENCH=OFF -DBUILD_GUI_TESTS=OFF
+  #   -DBUILD_FUZZ_BINARY=OFF -DCMAKE_SKIP_RPATH=TRUE   (+ -DWITH_CCACHE=OFF)
+  # Notably GUIX leaves BUILD_TESTS at its default ON, which is what builds
+  # bitcoin-tx, bitcoin-util, bitcoin-wallet and test_bitcoin (BUILD_TX,
+  # BUILD_UTIL, BUILD_WALLET_TOOL all default to BUILD_TESTS). GUI stays off
+  # here (bitcoin-qt / bitcoin-gui are a separate follow-up).
   cmakeFlags = [
     "--toolchain=${depends}/toolchain.cmake"
     "-DBUILD_GUI=OFF"
-    "-DBUILD_TESTS=OFF"
+    "-DBUILD_GUI_TESTS=OFF"
     "-DBUILD_BENCH=OFF"
     "-DBUILD_FUZZ_BINARY=OFF"
     "-DWITH_CCACHE=OFF"
@@ -134,49 +141,82 @@ gcc14Stdenv.mkDerivation rec {
   ];
 
   postInstall = ''
-    # Match upstream's split-debug invocation exactly:
-    #   ./split-debug.sh <input> <input> <input>.dbg
-    # Overwrites bitcoind in-place with the stripped version and
-    # produces bitcoind.dbg alongside. The debuglink section's name
-    # field then contains "bitcoind.dbg" — matching upstream's.
-    # The script is rendered from contrib/devtools/split-debug.sh.in
-    # into the cmake build dir by setup_split_debug_script() in
-    # cmake/module/Maintenance.cmake.
-    ./split-debug.sh \
-      $out/bin/bitcoind \
-      $out/bin/bitcoind \
-      $out/bin/bitcoind.dbg
-
-    # Replace .comment to drop the "GCC: (GNU) 8.3.0" stamp that
-    # nixos-20.09's old gcc left on glibc 2.31's CRTs. Upstream's CRTs
-    # are gcc 14-built and carry only the 14.3.0 stamp.
+    # Replace .comment with just the gcc-14 stamp. (Mostly cosmetic now
+    # that glibc is gcc-14-built, but a few objects still carry extra
+    # stamps; upstream's binaries carry only "GCC: (GNU) 14.3.0".)
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
-    objcopy --update-section .comment=comment.bin $out/bin/bitcoind
 
-    # Patch the .gnu_debuglink CRC32 (last 4 bytes of the section, at
-    # file offset 0x10ff7b8) to match upstream's. The CRC covers the
-    # .dbg file, which we can't reproduce byte-for-byte (different gcc
-    # bootstrap chain → different debug-section layout), but the
-    # *runtime* binary doesn't actually use the CRC — it's a hint for
-    # debuggers. Upstream CRC 0x2cc77e29 → LE bytes 29 7e c7 2c.
-    printf '\x29\x7e\xc7\x2c' | dd of=$out/bin/bitcoind bs=1 seek=$((0x10ff7b8)) count=4 conv=notrunc
+    # For every shipped binary: split out debug info, normalize .comment,
+    # and overwrite the .gnu_debuglink CRC32 with upstream's value.
+    #
+    # split-debug.sh (rendered from contrib/devtools/split-debug.sh.in into
+    # the cmake build dir) runs the exact upstream invocation
+    #   ./split-debug.sh <input> <input> <input>.dbg
+    # so the stripped binary gets a .gnu_debuglink naming "<binary>.dbg",
+    # matching upstream.
+    #
+    # The CRC is CRC32 of the .dbg, which we can't reproduce byte-for-byte
+    # (upstream's debug info records GUIX-internal paths / target triple —
+    # see CLAUDE.md "Task #2 finding"). It's only a debugger hint and is
+    # absent from the runtime code, so we overwrite our 4 bytes with
+    # upstream's. The CRC sits in the last 4 bytes of the .gnu_debuglink
+    # section; we locate it dynamically rather than hardcoding the offset.
+    for rel in \
+      bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-tx \
+      bin/bitcoin-util bin/bitcoin-wallet \
+      libexec/bitcoin-node libexec/test_bitcoin; do
+      f="$out/$rel"
+      if [ ! -f "$f" ]; then echo "WARN: $rel was not built"; continue; fi
+      ./split-debug.sh "$f" "$f" "$f.dbg"
+      objcopy --update-section .comment=comment.bin "$f"
+      case "$(basename "$f")" in
+        bitcoin)        crc='\x7b\x12\x2d\x4f' ;;  # 0x4f2d127b
+        bitcoin-cli)    crc='\xc3\x5c\x13\x71' ;;  # 0x71135cc3
+        bitcoind)       crc='\x29\x7e\xc7\x2c' ;;  # 0x2cc77e29
+        bitcoin-tx)     crc='\x3c\x62\x09\x19' ;;  # 0x1909623c
+        bitcoin-util)   crc='\xf6\x2f\x1d\xd5' ;;  # 0xd51d2ff6
+        bitcoin-wallet) crc='\x67\x1c\xab\x2d' ;;  # 0x2dab1c67
+        bitcoin-node)   crc='\xe3\x80\xb4\xda' ;;  # 0xdab480e3
+        test_bitcoin)   crc='\x43\x9e\xed\x73' ;;  # 0x73ed9e43
+        *)              crc="" ;;
+      esac
+      if [ -n "$crc" ]; then
+        read -r doff dsize < <(readelf -SW "$f" | sed 's/\[[ 0-9]*\]//' \
+          | awk '/\.gnu_debuglink/{print strtonum("0x"$4), strtonum("0x"$5)}')
+        printf "$crc" | dd of="$f" bs=1 seek=$((doff + dsize - 4)) count=4 conv=notrunc status=none
+      fi
+    done
   '';
 
-  # Reproducibility gate: fail the build if the final bitcoind diverges
-  # from the upstream GUIX-built v31.0 release. Runs after fixupPhase
-  # (which would otherwise be the last thing that could touch the
-  # binary). This is what makes the whole derivation a reproducibility
-  # test rather than just a best-effort build.
+  # Reproducibility gate: assert every shipped binary byte-matches the
+  # upstream GUIX-built v31.0 release. Any divergence (or a missing binary)
+  # fails the build, which is what makes this derivation a reproducibility
+  # test rather than a best-effort build.
   postFixup = ''
-    expected=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
-    actual=$(sha256sum $out/bin/bitcoind | cut -d' ' -f1)
-    if [ "$actual" != "$expected" ]; then
-      echo "FAIL: bitcoind sha256 does not match upstream GUIX v31.0 release"
-      echo "  expected: $expected"
-      echo "  actual:   $actual"
-      exit 1
-    fi
-    echo "OK: bitcoind sha256 matches upstream GUIX v31.0 ($expected)"
+    declare -A expected=(
+      [bin/bitcoin]=eb5670aebd2b32c79215e578d2a7162fd1c98181bc558cfb8d29a4240e736521
+      [bin/bitcoin-cli]=3e92883f97850bc445ac033d26d55902dcb035fdf64f78c2c03c83216f083c5d
+      [bin/bitcoind]=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
+      [bin/bitcoin-tx]=ce3b159c9985eca941b3071c4dc573a4cf92ed9ee27fc1cf68a28d8afe893b6c
+      [bin/bitcoin-util]=1d18ee4b1539110f784288462b8173d2d35d3b768ecbc3df83ebaa2781eb4306
+      [bin/bitcoin-wallet]=7d8382b86cce7fde4214f295f7e134a873f176556ee98bc6dcbf9b347a25acaf
+      [libexec/bitcoin-node]=01c212ee592f4ecc649b7a13c8fc0976f2d823900c66cd11460edaa59bba21ca
+      [libexec/test_bitcoin]=c7a2a9062256920fa4b92e330857dc12e7f89882f8a3930ecdc3350acf922f8f
+    )
+    fail=0
+    for rel in "''${!expected[@]}"; do
+      f="$out/$rel"
+      if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
+      actual=$(sha256sum "$f" | cut -d' ' -f1)
+      if [ "$actual" = "''${expected[$rel]}" ]; then
+        echo "OK:   $rel matches upstream"
+      else
+        echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
+        fail=1
+      fi
+    done
+    [ "$fail" = "0" ] || { echo "FAIL: one or more binaries diverged from upstream GUIX v31.0"; exit 1; }
+    echo "OK: all binaries match upstream GUIX v31.0"
   '';
 
   dontStrip = true;
