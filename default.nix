@@ -129,32 +129,59 @@ let
     localSystem = "x86_64-linux";
     crossSystem = { config = "aarch64-linux-gnu"; };
   };
-  # Spike: cross-build the depends tree (NO_QT for now) with a *native*
-  # build stdenv (so the native helper tools — native_capnp, mpgen — use
-  # the build machine's gcc) plus the aarch64 cross cc-wrapper on PATH
-  # (so HOST packages use aarch64-linux-gnu-gcc). Stock nixpkgs cross
-  # toolchain for now — not yet the GUIX-exact gcc-14.3.0/glibc-2.31.
+
+  # Full-attempt (gap-closing): rebuild the aarch64 cross gcc 14.3.0 with
+  # GUIX's linux-base-gcc configure flags + the deterministic-SSA patch, so
+  # ALL cross-compiled code (depends, glibc, bitcoind) gets GUIX's codegen
+  # defaults — most importantly --enable-standard-branch-protection, which
+  # emits BTI landing pads + PAC return-signing on aarch64 everywhere
+  # (upstream has ~40.4k BTI vs ~34.5k from the stock cross gcc). This
+  # mirrors default.nix's native gcc rebuild, but for the cross compiler.
+  # (--enable-cet is x86-only and omitted here.)
+  crossGuixGcc = pkgsCrossAarch64.stdenv.cc.override {
+    cc = pkgsCrossAarch64.stdenv.cc.cc.overrideAttrs (old: {
+      configureFlags = (old.configureFlags or [ ]) ++ [
+        "--enable-standard-branch-protection=yes"
+        "--enable-default-pie=yes"
+        "--enable-default-ssp=yes"
+        "--enable-initfini-array=yes"
+        "--enable-host-bind-now=yes"
+        "--enable-gprofng=no"
+        "--disable-gcov"
+        "--disable-libgomp"
+        "--disable-libquadmath"
+        "--disable-libsanitizer"
+        "--disable-nls"
+      ];
+      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+    });
+  };
+
+  # aarch64 cross toolchain inputs: the GUIX-flags cross gcc wrapper
+  # (provides aarch64-linux-gnu-gcc/g++ + gcc-ar/-nm/-ranlib) and its
+  # bintools (aarch64-linux-gnu-ar/-strip/-objcopy/…).
+  aarch64CrossInputs = [
+    crossGuixGcc
+    crossGuixGcc.bintools
+  ];
+
+  # Cross-build the depends tree (NO_QT for now) with a *native* build
+  # stdenv (so the native helper tools — native_capnp, mpgen — use the
+  # build machine's gcc) plus the aarch64 cross toolchain on PATH (so HOST
+  # packages use aarch64-linux-gnu-gcc). glibc is still nixpkgs' (2.40) —
+  # the cross glibc 2.31 + binutils 2.41 are the remaining gap pieces.
   dependsAarch64 = pkgs.callPackage ./depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "aarch64-linux-gnu";
     buildQt = false;
-    # The aarch64 cross cc-wrapper (provides aarch64-linux-gnu-gcc/g++ and
-    # the gcc-ar/-nm/-ranlib helpers) + its bintools (aarch64-linux-gnu-ar,
-    # -strip, -objcopy, …).
-    crossInputs = [
-      pkgsCrossAarch64.stdenv.cc
-      pkgsCrossAarch64.stdenv.cc.bintools
-    ];
+    crossInputs = aarch64CrossInputs;
   };
   bitcoindAarch64 = pkgs.callPackage ./bitcoind-aarch64.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     depends = dependsAarch64;
-    crossInputs = [
-      pkgsCrossAarch64.stdenv.cc
-      pkgsCrossAarch64.stdenv.cc.bintools
-    ];
+    crossInputs = aarch64CrossInputs;
   };
 in {
   inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64;
