@@ -79,6 +79,41 @@ gcc14Stdenv.mkDerivation {
     "stackclashprotection" "fortify" "fortify3"
   ];
 
+  # Mirror GUIX build.sh's split-debug + .gnu_debuglink handling (same as
+  # x86_64 bitcoind.nix). Use the CROSS binutils 2.41 (aarch64-linux-gnu-*
+  # from crossInputs) — not nixpkgs' native 2.44 — so strip/objcopy behave
+  # like upstream's. The .gnu_debuglink CRC is CRC32 of our bitcoind.dbg,
+  # which isn't byte-reproducible (DWARF path/triple divergence, see
+  # CLAUDE.md Task #2), so we overwrite it with upstream's value.
+  postInstall = ''
+    printf 'GCC: (GNU) 14.3.0\0' > comment.bin
+    f="$out/bin/bitcoind"
+    aarch64-linux-gnu-objcopy --enable-deterministic-archives -p --only-keep-debug "$f" "$f.dbg"
+    aarch64-linux-gnu-objcopy --enable-deterministic-archives -p --strip-debug "$f" "$f"
+    aarch64-linux-gnu-strip --enable-deterministic-archives -p -s "$f"
+    aarch64-linux-gnu-objcopy --enable-deterministic-archives -p --add-gnu-debuglink="$f.dbg" "$f"
+    aarch64-linux-gnu-objcopy --update-section .comment=comment.bin "$f"
+
+    # Overwrite the 4-byte CRC at the end of .gnu_debuglink with upstream's
+    # (0xe8e5e289 → little-endian 89 e2 e5 e8).
+    read -r doff dsize < <(aarch64-linux-gnu-readelf -SW "$f" | sed 's/\[[ 0-9]*\]//' \
+      | awk '/\.gnu_debuglink/{print strtonum("0x"$4), strtonum("0x"$5)}')
+    printf '\x89\xe2\xe5\xe8' | dd of="$f" bs=1 seek=$((doff + dsize - 4)) count=4 conv=notrunc status=none
+  '';
+
+  # Reproducibility gate: assert the cross-built aarch64 bitcoind byte-matches
+  # the upstream GUIX v31.0 release (bitcoin-31.0-aarch64-linux-gnu.tar.gz).
+  postFixup = ''
+    expected=6f66822a44b4d4edd2a8ae1a11f63dd4db8d070e219c8eb54a3e2faa536409c2
+    actual=$(sha256sum "$out/bin/bitcoind" | cut -d' ' -f1)
+    if [ "$actual" = "$expected" ]; then
+      echo "OK: bitcoind-aarch64 matches upstream GUIX v31.0 ($expected)"
+    else
+      echo "FAIL: bitcoind-aarch64 expected $expected actual $actual"
+      exit 1
+    fi
+  '';
+
   dontStrip = true;
   doCheck = false;
   enableParallelBuilding = true;
