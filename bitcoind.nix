@@ -36,11 +36,13 @@ gcc14Stdenv.mkDerivation rec {
   #   -DBUILD_FUZZ_BINARY=OFF -DCMAKE_SKIP_RPATH=TRUE   (+ -DWITH_CCACHE=OFF)
   # Notably GUIX leaves BUILD_TESTS at its default ON, which is what builds
   # bitcoin-tx, bitcoin-util, bitcoin-wallet and test_bitcoin (BUILD_TX,
-  # BUILD_UTIL, BUILD_WALLET_TOOL all default to BUILD_TESTS). GUI stays off
-  # here (bitcoin-qt / bitcoin-gui are a separate follow-up).
+  # BUILD_UTIL, BUILD_WALLET_TOOL all default to BUILD_TESTS). We do NOT
+  # pass -DBUILD_GUI: the depends toolchain.cmake sets BUILD_GUI=ON and
+  # WITH_QRENCODE=ON automatically because the Qt depends are present
+  # (qt_packages non-empty). BUILD_GUI_TESTS stays off (matches GUIX;
+  # test_bitcoin-qt isn't in the release).
   cmakeFlags = [
     "--toolchain=${depends}/toolchain.cmake"
-    "-DBUILD_GUI=OFF"
     "-DBUILD_GUI_TESTS=OFF"
     "-DBUILD_BENCH=OFF"
     "-DBUILD_FUZZ_BINARY=OFF"
@@ -163,8 +165,8 @@ gcc14Stdenv.mkDerivation rec {
     # section; we locate it dynamically rather than hardcoding the offset.
     for rel in \
       bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-tx \
-      bin/bitcoin-util bin/bitcoin-wallet \
-      libexec/bitcoin-node libexec/test_bitcoin; do
+      bin/bitcoin-util bin/bitcoin-wallet bin/bitcoin-qt \
+      libexec/bitcoin-node libexec/bitcoin-gui libexec/test_bitcoin; do
       f="$out/$rel"
       if [ ! -f "$f" ]; then echo "WARN: $rel was not built"; continue; fi
       ./split-debug.sh "$f" "$f" "$f.dbg"
@@ -176,7 +178,9 @@ gcc14Stdenv.mkDerivation rec {
         bitcoin-tx)     crc='\x3c\x62\x09\x19' ;;  # 0x1909623c
         bitcoin-util)   crc='\xf6\x2f\x1d\xd5' ;;  # 0xd51d2ff6
         bitcoin-wallet) crc='\x67\x1c\xab\x2d' ;;  # 0x2dab1c67
+        bitcoin-qt)     crc='\x4b\xf2\xfc\xfd' ;;  # 0xfdfcf24b
         bitcoin-node)   crc='\xe3\x80\xb4\xda' ;;  # 0xdab480e3
+        bitcoin-gui)    crc='\x1f\x1d\x0f\x05' ;;  # 0x050f1d1f
         test_bitcoin)   crc='\x43\x9e\xed\x73' ;;  # 0x73ed9e43
         *)              crc="" ;;
       esac
@@ -200,7 +204,9 @@ gcc14Stdenv.mkDerivation rec {
       [bin/bitcoin-tx]=ce3b159c9985eca941b3071c4dc573a4cf92ed9ee27fc1cf68a28d8afe893b6c
       [bin/bitcoin-util]=1d18ee4b1539110f784288462b8173d2d35d3b768ecbc3df83ebaa2781eb4306
       [bin/bitcoin-wallet]=7d8382b86cce7fde4214f295f7e134a873f176556ee98bc6dcbf9b347a25acaf
+      [bin/bitcoin-qt]=3480af8fad820759a6299ea94bb3bb66f490b87c10ba44b1d0f671af382ff178
       [libexec/bitcoin-node]=01c212ee592f4ecc649b7a13c8fc0976f2d823900c66cd11460edaa59bba21ca
+      [libexec/bitcoin-gui]=416e79bbebec5506ac786557519f3f5fc3fb1936a4a6074685d5f0aa24e01801
       [libexec/test_bitcoin]=c7a2a9062256920fa4b92e330857dc12e7f89882f8a3930ecdc3350acf922f8f
     )
     fail=0
@@ -216,7 +222,7 @@ gcc14Stdenv.mkDerivation rec {
       fi
     done
     [ "$fail" = "0" ] || { echo "FAIL: one or more binaries diverged from upstream GUIX v31.0"; exit 1; }
-    echo "OK: all binaries match upstream GUIX v31.0"
+    echo "OK: all 10 binaries match upstream GUIX v31.0"
   '';
 
   dontStrip = true;
