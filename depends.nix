@@ -322,7 +322,14 @@ gcc14Stdenv.mkDerivation (rec {
   # `v31-guix-build.log` line 18550 for sqlite). It just changes IPC
   # between gcc stages from temp files to pipes — shouldn't affect
   # codegen, but included for compile-command parity.
-  env.NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer -pipe";
+  # aarch64 keeps the non-leaf frame pointer at -O2 (unlike x86_64, which
+  # omits it). So for aarch64 we only omit the LEAF frame pointer and let
+  # the wrapper's -fno-omit-frame-pointer keep the non-leaf one — matching
+  # upstream's bare -O2. x86_64 omits both (its -O2 default). See the
+  # frame-pointer note in bitcoind-aarch64.nix.
+  env.NIX_CFLAGS_COMPILE =
+    (if lib.hasPrefix "aarch64" hostTriple then "" else "-fomit-frame-pointer ")
+    + "-momit-leaf-frame-pointer -pipe";
 
   # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply to
   # depends compiles:
