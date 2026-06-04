@@ -6,32 +6,30 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-06-03): all non-GUI release binaries byte-match
+## Status (2026-06-04): ALL release binaries byte-match (incl. GUI)
 
-Every non-GUI binary in the upstream `bitcoin-31.0-x86_64-linux-gnu`
-release now reproduces byte-for-byte:
+Every binary in the upstream `bitcoin-31.0-x86_64-linux-gnu` release now
+reproduces byte-for-byte:
 
 ```
 eb5670ae…  bin/bitcoin            ce3b159c…  bin/bitcoin-tx
 3e92883f…  bin/bitcoin-cli        1d18ee4b…  bin/bitcoin-util
 dae69848…  bin/bitcoind           7d8382b8…  bin/bitcoin-wallet
-01c212ee…  libexec/bitcoin-node   c7a2a906…  libexec/test_bitcoin
+3480af8f…  bin/bitcoin-qt         01c212ee…  libexec/bitcoin-node
+416e79bb…  libexec/bitcoin-gui    c7a2a906…  libexec/test_bitcoin
 ```
 
-A reproducibility gate in `bitcoind.nix` `postFixup` asserts all of these
+A reproducibility gate in `bitcoind.nix` `postFixup` asserts all 10
 hashes after every build — if a toolchain or flag change breaks
 byte-equality for any of them, the Nix build itself fails. CI re-asserts
 externally.
 
-Not yet matched: the GUI binaries (`bin/bitcoin-qt`,
-`libexec/bitcoin-gui`) — they need the Qt6 depends tree (`NO_QT=1` is
-still set; separate follow-up). Because the upstream
-`bitcoin-31.0-x86_64-linux-gnu.tar.gz` *contains* bitcoin-qt, a
-byte-identical `.tar.gz` is blocked on the GUI work (plus the tarball also
-ships uncompressed manpages + `bitcoin.conf`/`README.md`/`share/rpcauth`
-and would need gzip-reproducible assembly). The `.dbg` debug files are
-produced but their `.gnu_debuglink` CRCs are patched to upstream's values
-(the `.dbg` themselves aren't byte-reproducible — see "Task #2 finding").
+What's left for a byte-identical `bitcoin-31.0-x86_64-linux-gnu.tar.gz`:
+just the gzip-reproducible *assembly* (the tarball also ships uncompressed
+manpages — nixpkgs gzips ours — plus `bitcoin.conf`/`README.md`/
+`share/rpcauth`, sorted, `gzip -9n`). The `.dbg` debug files are produced
+but their `.gnu_debuglink` CRCs are patched to upstream's values (the
+`.dbg` themselves aren't byte-reproducible — see "Task #2 finding").
 
 ## WIP (2026-06-03): issue #6 — remove workarounds (B) + full tarball (A)
 
@@ -53,14 +51,15 @@ Working issue #6. Local reference artifacts (all gitignored):
   `7b27c450`, nix hash `sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=`.)
 - **B task #2 — INVESTIGATED, deemed impractical**: keep the
   `.gnu_debuglink` CRC patch. Rationale below.
-- **A — DONE for non-GUI binaries**: dropped `-DBUILD_TESTS=OFF` (GUIX
-  leaves it ON → builds bitcoin-tx/util/wallet/test_bitcoin) and
-  generalized the split-debug + `.comment` + `.gnu_debuglink` CRC patch to
-  every shipped binary. All 8 non-GUI binaries byte-match; gate asserts all
-  of them. Remaining: GUI binaries (Qt task) and gzip-reproducible
-  `.tar.gz` assembly (blocked on GUI, since the tarball contains
-  bitcoin-qt). Per-binary upstream CRCs are hardcoded in `bitcoind.nix`
-  (the `.dbg` aren't reproducible — see Task #2 finding).
+- **A — DONE, all 10 binaries**: dropped `-DBUILD_TESTS=OFF` (GUIX leaves
+  it ON → builds bitcoin-tx/util/wallet/test_bitcoin) and generalized the
+  split-debug + `.comment` + `.gnu_debuglink` CRC patch to every shipped
+  binary. Then added the full Qt6 depends tree and matched bitcoin-qt +
+  bitcoin-gui too (see "Qt GUI" workarounds). All 10 binaries byte-match;
+  gate asserts all of them. Per-binary upstream CRCs are hardcoded in
+  `bitcoind.nix` (the `.dbg` aren't reproducible — see Task #2 finding).
+  Only the gzip-reproducible `.tar.gz` assembly remains for a full-archive
+  byte match.
 
 ### Task #2 finding — why the `.gnu_debuglink` CRC patch stays
 
@@ -122,14 +121,17 @@ Three Nix files compose into the reproducer:
    `depends/sources/` before the build (working around Nix's no-network
    sandbox). Uses `gcc14Stdenv` to match GUIX v31.0's GCC 14.2.0. Builds
    boost, libevent, sqlite, zeromq, systemtap, capnp + multiprocess
-   (native_capnp, native_libmultiprocess). GUI deps skipped via
-   `NO_QT=1`. `HOST=x86_64-linux-gnu` forces depends into
+   (native_capnp, native_libmultiprocess), **plus the full Qt6 GUI tree**
+   (qt + native_qt + the X11/font/xcb-util deps + qrencode; see the Qt
+   workarounds below). `HOST=x86_64-linux-gnu` forces depends into
    "cross-compile" mode (`depends_crosscompiling=TRUE` →
    `CMAKE_CROSSCOMPILING=TRUE` downstream), matching GUIX.
 
-2. **`bitcoind.nix`** — builds `bitcoind` with
+2. **`bitcoind.nix`** — builds all of Bitcoin Core (incl. the Qt GUI) with
    `cmake --toolchain ${depends}/toolchain.cmake`. CMake (replaced
-   autotools as of v29). Skips GUI/tests/bench/fuzz. Mirrors GUIX
+   autotools as of v29). Leaves `BUILD_TESTS` ON (GUIX does), so the tools
+   + test_bitcoin build; the depends toolchain auto-enables `BUILD_GUI` +
+   `WITH_QRENCODE` (Qt present). Skips bench/fuzz. Mirrors GUIX
    release flags (`REDUCE_EXPORTS=ON`, `CMAKE_SKIP_RPATH=TRUE`,
    `-O2 -g`). After install, runs `split-debug.sh` with the same args
    GUIX uses (`<bin> <bin> <bin>.dbg`). Then rewrites `.comment`,
@@ -214,6 +216,41 @@ These are subtle and easy to break, so document the reasoning.
   - `/build/bitcoin-${version}=/bitcoin` (general fallback)
   - `/build/bitcoin-${version}/src=.` (relative paths for bitcoin
     sources, must come after the broader fallback)
+
+### Qt GUI depends (`depends.nix`) — for bitcoin-qt / bitcoin-gui
+
+Building the Qt6 tree (dropping `NO_QT=1`) needed several `depends.nix`
+fixups, all done via `postUnpack` seds on the package `.mk` files
+(same pattern as the zeromq TIPC patch):
+
+- **`bison flex gperf`** added to `buildInputs` — libxkbcommon generates
+  its parser with bison; fontconfig regenerates a gperf header. (None are
+  used by the non-GUI packages, so they don't perturb the matched 8.)
+- **fontconfig freetype include**: fontconfig's configure finds freetype
+  via pkg-config ("FREETYPE yes") but the `FREETYPE_CFLAGS` don't reach
+  the compile in our Nix env (`<ft2build.h>` not found). Add
+  `-I$(host_prefix)/include/freetype2` to fontconfig's cflags.
+- **Depends-prefix baking** (the hard one). GUIX builds depends at
+  `/bitcoin/depends/x86_64-linux-gnu`; we build at
+  `/build/bitcoin-<ver>/depends/x86_64-linux-gnu` (the Nix build dir — we
+  can't build at `/bitcoin`, the sandbox root is read-only). Three
+  components bake that prefix as a *runtime* string into static libs that
+  get linked into bitcoin-qt/-gui:
+  - **Qt** `qt_prfxpath` + data dirs: set `-prefix
+    /bitcoin/depends/x86_64-linux-gnu` in `qt.mk` (CMAKE_INSTALL_PREFIX,
+    which all of Qt's baked runtime paths derive from). Do **not** add
+    `-extprefix` — CMAKE_STAGING_PREFIX would pull `/build` back into the
+    icon/data paths. Physical relocation to the real prefix is already
+    handled by qt.mk's `cmake --install --prefix $(staging_prefix_dir)`.
+  - **libxkbcommon** xkb config root:
+    `--with-xkb-config-root=/bitcoin/depends/x86_64-linux-gnu/share/X11/xkb`.
+  - **xcb-util-cursor** XCURSOR theme path (the sneaky last one — it's in
+    `libxcb-cursor.a`, not Qt): `--with-cursorpath=~/.local/share/icons:
+    ~/.icons:/bitcoin/depends/.../share/icons:/bitcoin/depends/.../share/pixmaps`.
+  The depends `postFixup` then also rewrites `/bitcoin/depends/...` → `$out`
+  in `*.cmake`/`*.pc` so the bitcoind build still *finds* Qt; the baked
+  runtime strings inside the `.a` libraries keep the GUIX prefix, matching
+  upstream.
 
 ### Glibc 2.31 build (`flake.nix`) — replaced the old byte patches
 

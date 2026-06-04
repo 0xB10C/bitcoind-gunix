@@ -9,6 +9,9 @@
 , automake
 , cmake # needed by boost, libevent, zeromq, capnp
 , which # invoked by upstream depends build scripts
+, bison # libxkbcommon generates its parser with bison/yacc
+, flex # companion lexer generator for the Qt/X11 deps
+, gperf # fontconfig regenerates a gperf hash header
 #
 , version
 , url
@@ -65,6 +68,119 @@ let
       sha256 = "098f824a495a1a837d56ae17e07b3f721ac86f8dbaf58896a389923458522108";
     };
 
+    # --- Qt GUI depends (for bitcoin-qt / bitcoin-gui) ---
+    # Versions/hashes mirror bitcoin/depends/packages/*.mk + qt_details.mk.
+    qtbase = {
+      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.3/submodules";
+      file = "qtbase-everywhere-src-6.8.3.tar.xz";
+      sha256 = "56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80";
+    };
+    qttranslations = {
+      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.3/submodules";
+      file = "qttranslations-everywhere-src-6.8.3.tar.xz";
+      sha256 = "c3c61d79c3d8fe316a20b3617c64673ce5b5519b2e45535f49bee313152fa531";
+    };
+    qttools = {
+      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.3/submodules";
+      file = "qttools-everywhere-src-6.8.3.tar.xz";
+      sha256 = "02a4e219248b94f1333df843d25763f35251c1074cdc4fb5bda67d340f8c8b3a";
+    };
+    # Qt's top-level cmake files are fetched individually from the qt5 repo
+    # and staged with a "-<version>" suffix (see qt.mk fetch_file calls).
+    qt-top-cmakelists = {
+      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/heads/6.8.3";
+      downloadFile = "CMakeLists.txt";
+      file = "CMakeLists.txt-6.8.3";
+      sha256 = "54e9a4e554da37792446dda4f52bc308407b01a34bcc3afbad58e4e0f71fac9b";
+    };
+    qt-top-ecmoptionaladdsubdirectory = {
+      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/heads/6.8.3/cmake";
+      downloadFile = "ECMOptionalAddSubdirectory.cmake";
+      file = "ECMOptionalAddSubdirectory.cmake-6.8.3";
+      sha256 = "97ee8bbfcb0a4bdcc6c1af77e467a1da0c5b386c42be2aa97d840247af5f6f70";
+    };
+    qt-top-qttoplevelhelpers = {
+      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/heads/6.8.3/cmake";
+      downloadFile = "QtTopLevelHelpers.cmake";
+      file = "QtTopLevelHelpers.cmake-6.8.3";
+      sha256 = "e11581b2101a6836ca991817d43d49e1f6016e4e672bbc3523eaa8b3eb3b64c2";
+    };
+    expat = {
+      urlPrefix = "https://github.com/libexpat/libexpat/releases/download/R_2_7_3";
+      file = "expat-2.7.3.tar.gz";
+      sha256 = "821ac9710d2c073eaf13e1b1895a9c9aa66c1157a99635c639fbff65cdbdd732";
+    };
+    libxcb = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "libxcb-1.17.0.tar.gz";
+      sha256 = "2c69287424c9e2128cb47ffe92171e10417041ec2963bceafb65cb3fcf8f0b85";
+    };
+    xcb_proto = {
+      urlPrefix = "https://xorg.freedesktop.org/archive/individual/proto";
+      file = "xcb-proto-1.17.0.tar.gz";
+      sha256 = "392d3c9690f8c8202a68fdb89c16fd55159ab8d65000a6da213f4a1576e97a16";
+    };
+    libXau = {
+      urlPrefix = "https://xorg.freedesktop.org/releases/individual/lib";
+      file = "libXau-1.0.12.tar.gz";
+      sha256 = "2402dd938da4d0a332349ab3d3586606175e19cb32cb9fe013c19f1dc922dcee";
+    };
+    xproto = {
+      urlPrefix = "https://xorg.freedesktop.org/releases/individual/proto";
+      file = "xproto-7.0.31.tar.gz";
+      sha256 = "6d755eaae27b45c5cc75529a12855fed5de5969b367ed05003944cf901ed43c7";
+    };
+    freetype = {
+      urlPrefix = "https://download.savannah.gnu.org/releases/freetype";
+      file = "freetype-2.11.1.tar.gz";
+      sha256 = "f8db94d307e9c54961b39a1cc799a67d46681480696ed72ecf78d4473770f09b";
+    };
+    fontconfig = {
+      urlPrefix = "https://www.freedesktop.org/software/fontconfig/release";
+      file = "fontconfig-2.12.6.tar.gz";
+      sha256 = "064b9ebf060c9e77011733ac9dc0e2ce92870b574cca2405e11f5353a683c334";
+    };
+    libxkbcommon = {
+      urlPrefix = "https://xkbcommon.org/download";
+      file = "libxkbcommon-0.8.4.tar.xz";
+      sha256 = "60ddcff932b7fd352752d51a5c4f04f3d0403230a584df9a2e0d5ed87c486c8b";
+    };
+    libxcb_util = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-0.4.1.tar.gz";
+      sha256 = "21c6e720162858f15fe686cef833cf96a3e2a79875f84007d76f6d00417f593a";
+    };
+    libxcb_util_cursor = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-cursor-0.1.6.tar.gz";
+      sha256 = "eae38b2dfc5c529a886e507ef576b12d2a20aa1f149608e4853af760f31be60b";
+    };
+    libxcb_util_render = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-renderutil-0.3.10.tar.gz";
+      sha256 = "e04143c48e1644c5e074243fa293d88f99005b3c50d1d54358954404e635128a";
+    };
+    libxcb_util_keysyms = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-keysyms-0.4.1.tar.gz";
+      sha256 = "1fa21c0cea3060caee7612b6577c1730da470b88cbdf846fa4e3e0ff78948e54";
+    };
+    libxcb_util_image = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-image-0.4.1.tar.gz";
+      sha256 = "0ebd4cf809043fdeb4f980d58cdcf2b527035018924f8c14da76d1c81001293b";
+    };
+    libxcb_util_wm = {
+      urlPrefix = "https://xcb.freedesktop.org/dist";
+      file = "xcb-util-wm-0.4.2.tar.gz";
+      sha256 = "dcecaaa535802fd57c84cceeff50c64efe7f2326bf752e16d2b77945649c8cd7";
+    };
+    qrencode = {
+      urlPrefix = "https://fukuchi.org/works/qrencode";
+      file = "qrencode-4.1.1.tar.gz";
+      sha256 = "da448ed4f52aba6bcb0cd48cac0dd51b8692bccc4cd127431402fca6f8171e8e";
+    };
+
   };
 
   # copies the 'dependsSources.file' into the depends/sources dir for each depends
@@ -105,6 +221,46 @@ gcc14Stdenv.mkDerivation rec {
     # its hash for caching / build-id computation.
     sed -i '/^\$(package)_patches += no_librt\.patch$/a\$(package)_patches += zeromq-disable-tipc.patch' \
       ${dependsDir}/packages/zeromq.mk
+
+    # fontconfig's configure detects freetype via pkg-config ("FREETYPE
+    # yes"), but in our Nix build env the resulting FREETYPE_CFLAGS don't
+    # reach the compile, so fcfreetype.c fails to find <ft2build.h>. Add the
+    # depends freetype include dir to fontconfig's cflags explicitly.
+    sed -i 's|^  \$(package)_cflags += -Wno-implicit-function-declaration$|&\n  $(package)_cflags += -I$(host_prefix)/include/freetype2|' \
+      ${dependsDir}/packages/fontconfig.mk
+
+    # Match GUIX's depends prefix (/bitcoin/depends/x86_64-linux-gnu) in
+    # the runtime paths that Qt and libxkbcommon bake into their static
+    # libs (and that get linked into bitcoin-qt / bitcoin-gui): Qt's
+    # qt_prfxpath + icon search dirs, and libxkbcommon's xkb config root.
+    # Our build prefix is /build/bitcoin-<ver>/depends/... (the Nix build
+    # dir; we can't build at /bitcoin — the sandbox root is read-only).
+    #
+    # For Qt we change only -prefix (CMAKE_INSTALL_PREFIX), which is what
+    # all of Qt's baked runtime paths derive from. We deliberately do NOT
+    # add -extprefix: setting CMAKE_STAGING_PREFIX makes Qt's icon/data
+    # search paths use the staging (physical) prefix instead of the install
+    # prefix, which would leave /build in the binary. Physical relocation
+    # to host_prefix is already handled by qt.mk's
+    # `cmake --install --prefix $(staging_prefix_dir)` (line ~302), so the
+    # files still land where the depends framework expects.
+    #
+    # The depends postFixup then rewrites the GUIX prefix back to $out in
+    # the *.cmake/*.pc files so the bitcoind build still finds Qt; the
+    # baked runtime strings in the .a libraries keep the GUIX prefix,
+    # matching upstream's bitcoin-qt / bitcoin-gui.
+    sed -i 's|-prefix \$(host_prefix)$|-prefix /bitcoin/depends/x86_64-linux-gnu|' \
+      ${dependsDir}/packages/qt.mk
+    sed -i 's|^\$(package)_config_opts += --disable-shared --disable-docs$|&\n$(package)_config_opts += --with-xkb-config-root=/bitcoin/depends/x86_64-linux-gnu/share/X11/xkb|' \
+      ${dependsDir}/packages/libxkbcommon.mk
+
+    # xcb-util-cursor bakes the XCURSOR theme search path from its datadir
+    # (~/.local/share/icons:~/.icons:$datadir/icons:$datadir/pixmaps) into
+    # libxcb-cursor.a, which is linked into bitcoin-qt / bitcoin-gui. Pin it
+    # to GUIX's prefix via --with-cursorpath (independent of our build-time
+    # datadir) so the baked string matches upstream.
+    sed -i 's|^\$(package)_config_opts += --disable-dependency-tracking --enable-option-checking$|&\n$(package)_config_opts += --with-cursorpath=~/.local/share/icons:~/.icons:/bitcoin/depends/x86_64-linux-gnu/share/icons:/bitcoin/depends/x86_64-linux-gnu/share/pixmaps|' \
+      ${dependsDir}/packages/libxcb_util_cursor.mk
   '';
 
   sourceRoot = dependsDir;
@@ -118,14 +274,14 @@ gcc14Stdenv.mkDerivation rec {
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
-    python3 libtool autoconf automake cmake which
+    python3 libtool autoconf automake cmake which bison flex gperf
   ];
 
   # The depends build invokes its own cmake configure commands; don't let
   # nixpkgs' cmake setup-hook run a top-level configure.
   dontUseCmakeConfigure = true;
 
-  # Skip Bitcoin's GUI for now: don't download/build/cache the Qt depends.
+  # Build the full depends tree including Qt (for bitcoin-qt / bitcoin-gui).
   # Multiprocess IPC (capnp + libmultiprocess) is built unconditionally.
   # HOST=x86_64-linux-gnu makes depends mark the build as a "cross-compile"
   # (host != build, where BUILD defaults to our native x86_64-pc-linux-gnu).
@@ -136,7 +292,7 @@ gcc14Stdenv.mkDerivation rec {
   # try_run checks (zmq_check_*, secp256k1's Valgrind detection, etc.) so
   # all the resulting depends archives and the secp256k1 region in the
   # final bitcoind match upstream's GUIX-built binary byte-for-byte.
-  makeFlags = [ "NO_QT=1" "HOST=x86_64-linux-gnu" ];
+  makeFlags = [ "HOST=x86_64-linux-gnu" ];
 
   # Override the nixpkgs gcc-wrapper's `-fno-omit-frame-pointer
   # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before) so depends
@@ -191,7 +347,13 @@ gcc14Stdenv.mkDerivation rec {
     # files like libevent's LibeventTargets-static.cmake. Rewrite
     # those to point at $out so consumers (the bitcoind build) can
     # find the installed libraries and headers.
+    # Rewrite both our build-time prefix and the GUIX prefix that Qt bakes
+    # (via -prefix above) to $out, so the bitcoind build finds the libs.
+    # Only *.cmake/*.pc are touched; the baked runtime strings inside the
+    # .a libraries keep the GUIX prefix (matching upstream's bitcoin-qt).
     find $out -type f \( -name '*.cmake' -o -name '*.pc' \) \
-      -exec sed -i "s|/build/bitcoin-${version}/depends/x86_64-linux-gnu|$out|g" {} +
+      -exec sed -i \
+        -e "s|/build/bitcoin-${version}/depends/x86_64-linux-gnu|$out|g" \
+        -e "s|/bitcoin/depends/x86_64-linux-gnu|$out|g" {} +
   '';
 }
