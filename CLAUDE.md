@@ -34,6 +34,75 @@ patched to upstream's values (the `.dbg` themselves aren't
 byte-reproducible — see "Task #2 finding"); the separate `-debug.tar.gz`
 is not assembled.
 
+## Status (2026-06-04): aarch64 bitcoind ALSO byte-matches (cross-compiled)
+
+`nix build .#bitcoindAarch64` cross-compiles — on an x86_64 machine, no
+qemu — a `bitcoind` for `aarch64-linux-gnu` whose sha256 is identical to
+the upstream GUIX `bitcoin-31.0-aarch64-linux-gnu` release binary:
+
+```
+6f66822a44b4d4edd2a8ae1a11f63dd4db8d070e219c8eb54a3e2faa536409c2  bin/bitcoind
+```
+
+A `postFixup` sha256 gate in `bitcoind-aarch64.nix` asserts it every build.
+
+What it took, beyond the depends/bitcoind cross-build plumbing (HOST=
+aarch64-linux-gnu, the aarch64 ELF interpreter `/lib/ld-linux-aarch64.so.1`,
+unset-CC-for-depends / set-CC-for-cmake), was a GUIX-exact aarch64 **cross
+toolchain** in `default.nix`, the cross analog of the native one:
+
+1. **cross binutils 2.41** (`crossBinutils241`) — override the build-host
+   cross binutils (`pkgsCrossAarch64.stdenv.cc.bintools.bintools`, *not*
+   `binutils-unwrapped` which is the aarch64-native one) down to 2.41.
+2. **cross glibc 2.31** (`crossGlibc231`) — `pkgsCrossAarch64.glibc`
+   overridden to GUIX's 2.31 git source, with: the 2.31 porting fixes
+   (no nss seds, no C.UTF-8 locale gen); `hardeningDisable`
+   (zerocallusedregs etc.); `-momit-leaf-frame-pointer` (keep the non-leaf
+   FP — see below); and `-mbranch-protection=standard` (it's built with the
+   *stock* cross gcc, so this per-compile flag gives its static members the
+   PAC/BTI that `--enable-standard-branch-protection` would).
+3. **cross gcc 14.3.0** (`crossGuixGcc`) — `pkgsCrossAarch64.stdenv.cc.cc`
+   with GUIX's linux-base-gcc flags (`--enable-standard-branch-protection`
+   → aarch64 BTI/PAC, default-pie/ssp, initfini-array, host-bind-now,
+   disable nls/libsanitizer/…) + the gcc-ssa-generation patch, **rebuilt
+   against glibc 2.31 via `libcCross = crossGlibc231`** (the scoped cross
+   analog of native `stdenvForGccRebuild`; the cc-wrapper + bintools `libc`
+   also point at 2.31). `--enable-cet` is x86-only and omitted.
+
+### The decisive aarch64-specific gotcha: frame pointers
+
+x86_64's `bitcoind.nix`/glibc use `-fomit-frame-pointer` because x86_64
+gcc omits the frame pointer at `-O2` by default. **aarch64 gcc at `-O2`
+KEEPS the non-leaf frame pointer and only omits the leaf one.** Upstream
+relies on that `-O2` default. nixpkgs' cross cc-wrapper forces
+`-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer` (keep both), so the
+correct flag everywhere on aarch64 (bitcoind, depends, glibc) is **only
+`-momit-leaf-frame-pointer`** — keep non-leaf, omit leaf. Copying x86_64's
+`-fomit-frame-pointer` stripped `stp x29,x30 / add x29,sp / ldp` from
+every non-leaf function → the binary was ~66 KB of `.text` + ~35 KB of
+`.eh_frame` (CFI) *below* upstream. This single flag closed the bulk of
+the gap; the glibc CRT codegen fixes (#2 above) closed the last 6
+functions (`__libc_csu_init/fini`, `atexit`, the stat wrappers).
+
+### Methodology note (how the gap was localized)
+
+bloaty section-diff (ours stripped vs upstream) flagged `.text`/`.eh_frame`;
+a per-function `nm --print-size` diff (our unstripped binary vs upstream's
+**decompressed** `.dbg` — `objcopy --decompress-debug-sections`; bloaty
+rejects the `.dbg`: empty build-id + SHF_COMPRESSED) showed the deltas were
+small (32–136 B) and pervasive → a global codegen flag (frame pointers),
+then narrowed to 6 glibc static members → branch protection + hardening.
+The upstream aarch64 release + `-debug.tar.gz` are the reference (sha
+`6f66822a…` / debuglink CRC `0xe8e5e289`).
+
+### Not yet done for aarch64 (optional, mirrors x86_64)
+
+Only `bitcoind` is built (spike: `BUILD_TESTS=OFF`, `NO_QT` depends). The
+other 9 release binaries (need `BUILD_TESTS=ON` + the Qt6 depends tree for
+aarch64) and the aarch64 `.tar.gz` are mechanical replication of the proven
+x86_64 pattern — the hard codegen gap is closed. Each shipped binary needs
+its own upstream `.gnu_debuglink` CRC (extract from the `-debug.tar.gz`).
+
 ## WIP (2026-06-03): issue #6 — remove workarounds (B) + full tarball (A)
 
 Working issue #6. Local reference artifacts (all gitignored):
