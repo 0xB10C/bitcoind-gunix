@@ -118,6 +118,44 @@ let
   tarball = pkgs.callPackage ./tarball.nix {
     inherit version url sha256 bitcoind;
   };
+
+  # --- aarch64 cross-compile spike (work in progress) ---
+  # nixpkgs instantiated to cross-compile x86_64 -> aarch64-linux-gnu. We
+  # use the GUIX target triple `aarch64-linux-gnu` (not nixpkgs' default
+  # `aarch64-unknown-linux-gnu`) so the cross compiler is named
+  # `aarch64-linux-gnu-gcc`, which is what Bitcoin's depends Makefile
+  # invokes for HOST packages.
+  pkgsCrossAarch64 = import pkgs.path {
+    localSystem = "x86_64-linux";
+    crossSystem = { config = "aarch64-linux-gnu"; };
+  };
+  # Spike: cross-build the depends tree (NO_QT for now) with a *native*
+  # build stdenv (so the native helper tools — native_capnp, mpgen — use
+  # the build machine's gcc) plus the aarch64 cross cc-wrapper on PATH
+  # (so HOST packages use aarch64-linux-gnu-gcc). Stock nixpkgs cross
+  # toolchain for now — not yet the GUIX-exact gcc-14.3.0/glibc-2.31.
+  dependsAarch64 = pkgs.callPackage ./depends.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = "aarch64-linux-gnu";
+    buildQt = false;
+    # The aarch64 cross cc-wrapper (provides aarch64-linux-gnu-gcc/g++ and
+    # the gcc-ar/-nm/-ranlib helpers) + its bintools (aarch64-linux-gnu-ar,
+    # -strip, -objcopy, …).
+    crossInputs = [
+      pkgsCrossAarch64.stdenv.cc
+      pkgsCrossAarch64.stdenv.cc.bintools
+    ];
+  };
+  bitcoindAarch64 = pkgs.callPackage ./bitcoind-aarch64.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    depends = dependsAarch64;
+    crossInputs = [
+      pkgsCrossAarch64.stdenv.cc
+      pkgsCrossAarch64.stdenv.cc.bintools
+    ];
+  };
 in {
-  inherit depends bitcoind tarball;
+  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64;
 }

@@ -16,6 +16,19 @@
 , version
 , url
 , sha256
+# Target triple for the depends build. Native x86_64 by default; set to
+# e.g. "aarch64-linux-gnu" to cross-compile (depends then uses
+# <hostTriple>-gcc, which crossInputs must provide on PATH).
+, hostTriple ? "x86_64-linux-gnu"
+# Build the Qt GUI dependency tree. Disabled for the aarch64 spike.
+, buildQt ? true
+# Extra nativeBuildInputs providing the `<hostTriple>-gcc`/`-ar`/… cross
+# toolchain when cross-compiling (empty for a native build). When
+# non-empty, the build also unsets the Nix-exported CC/CXX/… so Bitcoin's
+# depends derives the host_toolchain-prefixed cross tools instead of the
+# native `gcc` (hosts/default.mk add_host_tool_func treats an
+# environment-set CC as the host compiler).
+, crossInputs ? [ ]
 }:
 
 let
@@ -189,7 +202,7 @@ let
     ) dependsSources;
 
 in
-gcc14Stdenv.mkDerivation rec {
+gcc14Stdenv.mkDerivation (rec {
   name = "bitcoin-${version}-depends";
   pname = "bitcoin-depends";
 
@@ -229,7 +242,7 @@ gcc14Stdenv.mkDerivation rec {
     sed -i 's|^  \$(package)_cflags += -Wno-implicit-function-declaration$|&\n  $(package)_cflags += -I$(host_prefix)/include/freetype2|' \
       ${dependsDir}/packages/fontconfig.mk
 
-    # Match GUIX's depends prefix (/bitcoin/depends/x86_64-linux-gnu) in
+    # Match GUIX's depends prefix (/bitcoin/depends/${hostTriple}) in
     # the runtime paths that Qt and libxkbcommon bake into their static
     # libs (and that get linked into bitcoin-qt / bitcoin-gui): Qt's
     # qt_prfxpath + icon search dirs, and libxkbcommon's xkb config root.
@@ -249,9 +262,9 @@ gcc14Stdenv.mkDerivation rec {
     # the *.cmake/*.pc files so the bitcoind build still finds Qt; the
     # baked runtime strings in the .a libraries keep the GUIX prefix,
     # matching upstream's bitcoin-qt / bitcoin-gui.
-    sed -i 's|-prefix \$(host_prefix)$|-prefix /bitcoin/depends/x86_64-linux-gnu|' \
+    sed -i 's|-prefix \$(host_prefix)$|-prefix /bitcoin/depends/${hostTriple}|' \
       ${dependsDir}/packages/qt.mk
-    sed -i 's|^\$(package)_config_opts += --disable-shared --disable-docs$|&\n$(package)_config_opts += --with-xkb-config-root=/bitcoin/depends/x86_64-linux-gnu/share/X11/xkb|' \
+    sed -i 's|^\$(package)_config_opts += --disable-shared --disable-docs$|&\n$(package)_config_opts += --with-xkb-config-root=/bitcoin/depends/${hostTriple}/share/X11/xkb|' \
       ${dependsDir}/packages/libxkbcommon.mk
 
     # xcb-util-cursor bakes the XCURSOR theme search path from its datadir
@@ -259,7 +272,7 @@ gcc14Stdenv.mkDerivation rec {
     # libxcb-cursor.a, which is linked into bitcoin-qt / bitcoin-gui. Pin it
     # to GUIX's prefix via --with-cursorpath (independent of our build-time
     # datadir) so the baked string matches upstream.
-    sed -i 's|^\$(package)_config_opts += --disable-dependency-tracking --enable-option-checking$|&\n$(package)_config_opts += --with-cursorpath=~/.local/share/icons:~/.icons:/bitcoin/depends/x86_64-linux-gnu/share/icons:/bitcoin/depends/x86_64-linux-gnu/share/pixmaps|' \
+    sed -i 's|^\$(package)_config_opts += --disable-dependency-tracking --enable-option-checking$|&\n$(package)_config_opts += --with-cursorpath=~/.local/share/icons:~/.icons:/bitcoin/depends/${hostTriple}/share/icons:/bitcoin/depends/${hostTriple}/share/pixmaps|' \
       ${dependsDir}/packages/libxcb_util_cursor.mk
   '';
 
@@ -272,7 +285,11 @@ gcc14Stdenv.mkDerivation rec {
     ./patches/depends-funcs-test-source-exists.patch
   ];
 
-  nativeBuildInputs = [ pkg-config ];
+  # When cross-compiling, crossCC provides the `<host>-gcc`/`<host>-g++`
+  # (etc.) that the depends Makefile invokes for HOST packages; the native
+  # `gcc`/`g++` from the build stdenv stay the BUILD compiler for the
+  # native helper tools (native_capnp, mpgen, …).
+  nativeBuildInputs = [ pkg-config ] ++ crossInputs;
   buildInputs = [
     python3 libtool autoconf automake cmake which bison flex gperf
   ];
@@ -292,7 +309,7 @@ gcc14Stdenv.mkDerivation rec {
   # try_run checks (zmq_check_*, secp256k1's Valgrind detection, etc.) so
   # all the resulting depends archives and the secp256k1 region in the
   # final bitcoind match upstream's GUIX-built binary byte-for-byte.
-  makeFlags = [ "HOST=x86_64-linux-gnu" ];
+  makeFlags = [ "HOST=${hostTriple}" ] ++ lib.optionals (!buildQt) [ "NO_QT=1" ];
 
   # Override the nixpkgs gcc-wrapper's `-fno-omit-frame-pointer
   # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before) so depends
@@ -340,7 +357,7 @@ gcc14Stdenv.mkDerivation rec {
   postFixup = ''
     # HOST=x86_64-linux-gnu (set in makeFlags) makes depends install
     # under x86_64-linux-gnu/ — move it to $out.
-    mv x86_64-linux-gnu/* $out/
+    mv ${hostTriple}/* $out/
 
     # The depends build hardcodes its absolute build-time staging path
     # (e.g. /build/.../depends/x86_64-linux-gnu) into CMake config
@@ -353,7 +370,16 @@ gcc14Stdenv.mkDerivation rec {
     # .a libraries keep the GUIX prefix (matching upstream's bitcoin-qt).
     find $out -type f \( -name '*.cmake' -o -name '*.pc' \) \
       -exec sed -i \
-        -e "s|/build/bitcoin-${version}/depends/x86_64-linux-gnu|$out|g" \
-        -e "s|/bitcoin/depends/x86_64-linux-gnu|$out|g" {} +
+        -e "s|/build/bitcoin-${version}/depends/${hostTriple}|$out|g" \
+        -e "s|/bitcoin/depends/${hostTriple}|$out|g" {} +
   '';
-}
+} // lib.optionalAttrs (crossInputs != [ ]) {
+  # When cross-compiling, unset the Nix-exported well-known tool vars so
+  # depends uses the <hostTriple>- cross toolchain for HOST packages (see
+  # crossInputs). The native `gcc` (default_build_CC) still builds the
+  # native helper tools. Added conditionally so the native x86_64
+  # derivation is byte-identical (no stray empty preBuild).
+  preBuild = ''
+    unset CC CXX AR RANLIB NM STRIP OBJCOPY OBJDUMP
+  '';
+})
