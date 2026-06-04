@@ -24,12 +24,15 @@ hashes after every build — if a toolchain or flag change breaks
 byte-equality for any of them, the Nix build itself fails. CI re-asserts
 externally.
 
-What's left for a byte-identical `bitcoin-31.0-x86_64-linux-gnu.tar.gz`:
-just the gzip-reproducible *assembly* (the tarball also ships uncompressed
-manpages — nixpkgs gzips ours — plus `bitcoin.conf`/`README.md`/
-`share/rpcauth`, sorted, `gzip -9n`). The `.dbg` debug files are produced
-but their `.gnu_debuglink` CRCs are patched to upstream's values (the
-`.dbg` themselves aren't byte-reproducible — see "Task #2 finding").
+**The full release archive matches too**: `nix build .#tarball` assembles
+`bitcoin-31.0-x86_64-linux-gnu.tar.gz` byte-identical to upstream
+(`d3e4c58a…`), with its own sha256 gate. So both the individual binaries
+and the published `.tar.gz` reproduce.
+
+The `.dbg` debug files are produced but their `.gnu_debuglink` CRCs are
+patched to upstream's values (the `.dbg` themselves aren't
+byte-reproducible — see "Task #2 finding"); the separate `-debug.tar.gz`
+is not assembled.
 
 ## WIP (2026-06-03): issue #6 — remove workarounds (B) + full tarball (A)
 
@@ -58,8 +61,11 @@ Working issue #6. Local reference artifacts (all gitignored):
   bitcoin-gui too (see "Qt GUI" workarounds). All 10 binaries byte-match;
   gate asserts all of them. Per-binary upstream CRCs are hardcoded in
   `bitcoind.nix` (the `.dbg` aren't reproducible — see Task #2 finding).
-  Only the gzip-reproducible `.tar.gz` assembly remains for a full-archive
-  byte match.
+- **Full `.tar.gz` — DONE**: `tarball.nix` (`nix build .#tarball`) assembles
+  the release archive byte-identical to upstream (`d3e4c58a…`). Only fix
+  beyond the obvious packaging: `rpcauth.py` must stay 0755 (tar's `a+X`
+  keeps the exec bit only if already set). mtime pinned to the v31.0 commit
+  epoch 1776286524 (== GUIX SOURCE_DATE_EPOCH), owner 0/0, `gzip -9n`.
 
 ### Task #2 finding — why the `.gnu_debuglink` CRC patch stays
 
@@ -114,7 +120,8 @@ to every file in `bin/` + `libexec/` identically (build.sh:302).
 
 ## How it works
 
-Three Nix files compose into the reproducer:
+These Nix files compose into the reproducer (the 4th, `tarball.nix`, is
+new; `flake.nix` exposes `.#tarball`):
 
 1. **`depends.nix`** — builds Bitcoin Core's `depends/` tree. All
    dependency tarballs are pre-fetched via `fetchurl` and copied into
@@ -156,7 +163,16 @@ Three Nix files compose into the reproducer:
    natively — **no post-install byte patching** (this replaced the old
    nixos-20.09 / gcc-8.3.0 + byte-patch approach). Exposes:
    - `nix build .#depends` — just the depends tree
-   - `nix build .#bitcoind` (or `.#default`) — the full bitcoind
+   - `nix build .#bitcoind` (or `.#default`) — all 10 binaries
+   - `nix build .#tarball` — the full release archive
+
+5. **`tarball.nix`** — assembles `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
+   byte-identical to upstream from the `bitcoind` binaries (no `.dbg`) +
+   uncompressed man pages + the committed extras (`README.md`,
+   `bitcoin.conf`, `share/rpcauth`) from the release source tarball.
+   Reproduces GUIX build.sh's deterministic `tar … --mode='u+rw,go+r-w,a+X'`
+   + `gzip -9n`, pinning mtime to SOURCE_DATE_EPOCH (1776286524, the v31.0
+   commit time) and owner 0/0. Asserts the archive sha256 (`d3e4c58a…`).
 
 ## Patches
 
