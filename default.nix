@@ -160,9 +160,32 @@ let
         "--disable-timezone-tools"
         "--disable-profile"
       ];
+    # aarch64 keeps the non-leaf frame pointer at -O2 (omit only the leaf
+    # one), unlike x86_64's glibc231 which omits both — see the frame-pointer
+    # note in bitcoind-aarch64.nix. Without this, glibc's libc_nonshared.a
+    # members (atexit, the stat wrappers) lose their frame setup and come out
+    # ~12 bytes smaller than upstream's.
+    #
+    # -mbranch-protection=standard: glibc is built with the *stock* cross
+    # gcc, which lacks GUIX's --enable-standard-branch-protection. The only
+    # glibc code that ends up *in* the binary is the statically-linked
+    # members (libc_nonshared.a's atexit/stat wrappers, csu's
+    # __libc_csu_init/fini), and without branch protection they miss the
+    # paciasp/autiasp (PAC) + bti landing pads upstream's glibc has — ~8
+    # bytes/function. This flag is exactly what --enable-standard-branch-
+    # protection defaults the compiler to, so it reproduces that codegen.
     env = (old.env or { }) // {
-      NIX_CFLAGS_COMPILE = "-fomit-frame-pointer";
+      NIX_CFLAGS_COMPILE = "-momit-leaf-frame-pointer -mbranch-protection=standard";
     };
+    # Disable the same nixpkgs hardenings flake.nix's x86_64 glibc231 drops.
+    # The decisive one is zerocallusedregs (-fzero-call-used-regs): it
+    # appends register-zeroing before `ret` in glibc's nonshared members
+    # (__libc_csu_init/fini), which upstream lacks — our csu objects were
+    # coming out ~28/8 bytes larger without this.
+    hardeningDisable = [
+      "zerocallusedregs" "strictoverflow" "stackprotector"
+      "stackclashprotection" "fortify" "fortify3"
+    ];
     postPatch = ''
       sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
       echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
