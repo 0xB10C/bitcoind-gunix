@@ -115,6 +115,9 @@ let
     inherit version url sha256 depends;
     gcc14Stdenv = gcc14Glibc231Stdenv;
   };
+  tarball = pkgs.callPackage ./tarball.nix {
+    inherit version url sha256 bitcoind;
+  };
 in {
-  inherit depends bitcoind;
+  inherit depends bitcoind tarball;
 }
