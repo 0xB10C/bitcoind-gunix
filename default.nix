@@ -213,6 +213,7 @@ let
   });
   crossBintools241 = pkgsCrossAarch64.stdenv.cc.bintools.override {
     bintools = crossBinutils241;
+    libc = crossGlibc231;
   };
 
   # Full-attempt (gap-closing): rebuild the aarch64 cross gcc 14.3.0 with
@@ -223,9 +224,21 @@ let
   # (upstream has ~40.4k BTI vs ~34.5k from the stock cross gcc). This
   # mirrors default.nix's native gcc rebuild, but for the cross compiler.
   # (--enable-cet is x86-only and omitted here.)
+  #
+  # `libcCross = crossGlibc231` rebuilds the cross gcc (and its libstdc++)
+  # *targeting* glibc 2.31 — the scoped analog of default.nix's
+  # stdenvForGccRebuild. Setting the cc-wrapper/bintools `libc` to 2.31
+  # alone broke linking (gcc/libgcc still built against 2.40 startfiles);
+  # rebuilding gcc against 2.31 fixes that coherently, without the overlay
+  # approach's breakage (overlaying glibc hit the x86_64 *build* glibc too).
+  # This closes the remaining gap: 2.31 headers (inline functions → .text /
+  # .eh_frame) + 2.31 dynsym/symbol versions.
   crossGuixGcc = pkgsCrossAarch64.stdenv.cc.override {
     bintools = crossBintools241;
-    cc = pkgsCrossAarch64.stdenv.cc.cc.overrideAttrs (old: {
+    libc = crossGlibc231;
+    cc = (pkgsCrossAarch64.stdenv.cc.cc.override {
+      libcCross = crossGlibc231;
+    }).overrideAttrs (old: {
       configureFlags = (old.configureFlags or [ ]) ++ [
         "--enable-standard-branch-protection=yes"
         "--enable-default-pie=yes"
@@ -255,11 +268,12 @@ let
   # stdenv (so the native helper tools — native_capnp, mpgen — use the
   # build machine's gcc) plus the aarch64 cross toolchain on PATH (so HOST
   # packages use aarch64-linux-gnu-gcc). Uses the GUIX-flags cross gcc +
-  # binutils 2.41. glibc is still nixpkgs' 2.40: `crossGlibc231` (built &
-  # exposed as `.#crossGlibc231`) is ready, but wiring it via the
-  # cc-wrapper `libc` alone breaks linking (gcc/libgcc built against 2.40
-  # vs 2.31 startfiles) — it needs the cross gcc rebuilt against glibc 2.31
-  # (default.nix's stdenvForGccRebuild analog), the remaining gap piece.
+  # binutils 2.41, rebuilt against glibc 2.31 (crossGlibc231 via libcCross
+  # above). With 2.31 the binary's dynsym GLIBC symbol versions match
+  # upstream exactly (325×2.17, 2×2.25, 2.27, 2.28, 4×2.29, 2.30; max 2.30)
+  # and ~35 KB of .text inline-function delta closed. Remaining gap vs the
+  # upstream aarch64 binary: .text ≈ -66 KB, .eh_frame ≈ -35 KB (codegen
+  # iteration, like the x86_64 effort).
   dependsAarch64 = pkgs.callPackage ./depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
