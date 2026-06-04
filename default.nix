@@ -130,6 +130,91 @@ let
     crossSystem = { config = "aarch64-linux-gnu"; };
   };
 
+  # aarch64 cross glibc 2.31 — the same overrides flake.nix applies to the
+  # native glibc231 (GUIX git source, no patches, GUIX configure flags,
+  # -fomit-frame-pointer, postPatch/postInstall fixes for 2.31), applied to
+  # the aarch64 cross glibc. Pointing the cross cc-wrapper's libc at this
+  # makes all cross compiles use glibc 2.31 headers/CRTs (vs nixpkgs 2.40)
+  # — the .text (inline functions) + dynsym/version gap driver.
+  # NOTE: --enable-cet is x86-only and omitted.
+  crossGlibc231 = pkgsCrossAarch64.glibc.overrideAttrs (old: {
+    version = "2.31";
+    src = pkgs.fetchgit {
+      name = "glibc-2.31";
+      url = "https://sourceware.org/git/glibc.git";
+      rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
+      hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+    };
+    patches = [ ];
+    configureFlags =
+      (builtins.filter
+        (f: !(pkgs.lib.hasPrefix "--enable-kernel" f
+          || f == "--enable-stack-protector=strong"
+          || f == "--enable-cet=permissive"
+          || f == "--enable-fortify-source"))
+        (old.configureFlags or [ ]))
+      ++ [
+        "--enable-stack-protector=all"
+        "--enable-bind-now"
+        "--disable-werror"
+        "--disable-timezone-tools"
+        "--disable-profile"
+      ];
+    env = (old.env or { }) // {
+      NIX_CFLAGS_COMPILE = "-fomit-frame-pointer";
+    };
+    postPatch = ''
+      sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
+      echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
+    '';
+    postInstall = ''
+      moveToOutput bin/getent $getent
+      test -f $out/etc/ld.so.cache && rm $out/etc/ld.so.cache
+      if test -n "$linuxHeaders"; then
+          (cd $dev/include && \
+           ln -sv $(ls -d $linuxHeaders/include/* | grep -v scsi\$) .)
+      fi
+      if test -n "$is64bit"; then
+          ln -s lib $out/lib64
+      fi
+      rm -rf $out/var $bin/bin/sln
+      ln -sf $out/lib/libpthread.so.0 $out/lib/libpthread.so
+      ln -sf $out/lib/librt.so.1 $out/lib/librt.so
+      ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
+      test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
+      touch $out/lib/libpthread.a
+      mkdir -p $static/lib
+      mv $out/lib/*.a $static/lib
+      mv $static/lib/lib*_nonshared.a $out/lib
+      test -f $out/lib/libutil.so.1 || mv $static/lib/libutil.a $out/lib
+      sed "/^GROUP/s|$out/lib/lib|$static/lib/lib|g" -i "$static"/lib/*.a
+      cp $bin/bin/getconf $bin/bin/getconf_
+      mv $bin/bin/getconf_ $bin/bin/getconf
+    '';
+  });
+
+  # Downgrade the aarch64 cross binutils to GUIX's 2.41 (nixpkgs cross
+  # ships 2.44; 2.44 relaxes aarch64 more aggressively → smaller
+  # .text/.eh_frame than upstream). Override the *build-host* cross
+  # binutils (the one that runs on x86_64 and targets aarch64) —
+  # `stdenv.cc.bintools.bintools`, NOT `binutils-unwrapped` (which is the
+  # aarch64-native binutils and can't run on the build machine). Mirrors
+  # default.nix's native binutilsForGuix.
+  crossBinutils241 = pkgsCrossAarch64.stdenv.cc.bintools.bintools.overrideAttrs (_: {
+    version = "2.41";
+    src = pkgs.fetchurl {
+      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+    };
+    # Drop newer-binutils patches that may not apply to 2.41. Keep the
+    # default cross outputs (incl. `dev`) — unlike the native
+    # binutilsForGuix, the cross binutils' postInstall references $dev.
+    patches = [ ];
+  });
+  crossBintools241 = pkgsCrossAarch64.stdenv.cc.bintools.override {
+    bintools = crossBinutils241;
+  };
+
   # Full-attempt (gap-closing): rebuild the aarch64 cross gcc 14.3.0 with
   # GUIX's linux-base-gcc configure flags + the deterministic-SSA patch, so
   # ALL cross-compiled code (depends, glibc, bitcoind) gets GUIX's codegen
@@ -139,6 +224,7 @@ let
   # mirrors default.nix's native gcc rebuild, but for the cross compiler.
   # (--enable-cet is x86-only and omitted here.)
   crossGuixGcc = pkgsCrossAarch64.stdenv.cc.override {
+    bintools = crossBintools241;
     cc = pkgsCrossAarch64.stdenv.cc.cc.overrideAttrs (old: {
       configureFlags = (old.configureFlags or [ ]) ++ [
         "--enable-standard-branch-protection=yes"
@@ -168,8 +254,12 @@ let
   # Cross-build the depends tree (NO_QT for now) with a *native* build
   # stdenv (so the native helper tools — native_capnp, mpgen — use the
   # build machine's gcc) plus the aarch64 cross toolchain on PATH (so HOST
-  # packages use aarch64-linux-gnu-gcc). glibc is still nixpkgs' (2.40) —
-  # the cross glibc 2.31 + binutils 2.41 are the remaining gap pieces.
+  # packages use aarch64-linux-gnu-gcc). Uses the GUIX-flags cross gcc +
+  # binutils 2.41. glibc is still nixpkgs' 2.40: `crossGlibc231` (built &
+  # exposed as `.#crossGlibc231`) is ready, but wiring it via the
+  # cc-wrapper `libc` alone breaks linking (gcc/libgcc built against 2.40
+  # vs 2.31 startfiles) — it needs the cross gcc rebuilt against glibc 2.31
+  # (default.nix's stdenvForGccRebuild analog), the remaining gap piece.
   dependsAarch64 = pkgs.callPackage ./depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
@@ -184,5 +274,5 @@ let
     crossInputs = aarch64CrossInputs;
   };
 in {
-  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64;
+  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 crossGlibc231;
 }
