@@ -16,7 +16,15 @@
 }:
 
 let
-  cflags = "-O2 -g -fomit-frame-pointer -momit-leaf-frame-pointer"
+  # aarch64 frame pointers: upstream uses bare -O2, which on aarch64 KEEPS
+  # the non-leaf frame pointer but OMITS the leaf one. nixpkgs' cross
+  # cc-wrapper forces `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer`
+  # (keep both). So we override only the leaf one back to omit — letting the
+  # wrapper's -fno-omit-frame-pointer keep the non-leaf FP, matching upstream.
+  # (On x86_64 the -O2 default omits both, hence bitcoind.nix uses
+  # -fomit-frame-pointer there; here we must NOT, or every non-leaf function
+  # loses its frame setup and the binary shrinks ~66 KB below upstream.)
+  cflags = "-O2 -g -momit-leaf-frame-pointer"
     + " -ffile-prefix-map=${depends}=/bitcoin/depends/aarch64-linux-gnu"
     + " -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin"
     + " -ffile-prefix-map=/build/bitcoin-${version}/src=.";
