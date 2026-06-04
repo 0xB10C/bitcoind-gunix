@@ -37,9 +37,20 @@ let
   # `downloadFile` is the name on the remote server (defaults to `file`). It
   # only differs from `file` when the upstream depends Makefile renames the
   # tarball locally (e.g. capnp's `capnproto-c++` -> `capnproto-cxx`).
+  #
+  # Each source falls back to https://bitcoincore.org/depends-sources/ —
+  # Bitcoin Core's canonical depends-source mirror (the depends Makefile's own
+  # FALLBACK_DOWNLOAD_PATH). Several upstream hosts have since moved or 404'd
+  # (xorg.freedesktop.org reorganized its proto/lib archives, savannah's
+  # freetype mirror flakes), so the primary URL alone is no longer reliable;
+  # the mirror keeps the exact tarballs (same sha256), making the build
+  # reproducible regardless of upstream churn.
   mkFetchSource = {urlPrefix, file, sha256, downloadFile ? file}:
     fetchurl {
-      url = "${urlPrefix}/${downloadFile}";
+      urls = [
+        "${urlPrefix}/${downloadFile}"
+        "https://bitcoincore.org/depends-sources/${downloadFile}"
+      ];
       inherit sha256;
     };
 
