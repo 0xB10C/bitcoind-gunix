@@ -287,21 +287,19 @@ let
     crossGuixGcc.bintools
   ];
 
-  # Cross-build the depends tree (NO_QT for now) with a *native* build
-  # stdenv (so the native helper tools — native_capnp, mpgen — use the
-  # build machine's gcc) plus the aarch64 cross toolchain on PATH (so HOST
-  # packages use aarch64-linux-gnu-gcc). Uses the GUIX-flags cross gcc +
-  # binutils 2.41, rebuilt against glibc 2.31 (crossGlibc231 via libcCross
-  # above). With 2.31 the binary's dynsym GLIBC symbol versions match
-  # upstream exactly (325×2.17, 2×2.25, 2.27, 2.28, 4×2.29, 2.30; max 2.30)
-  # and ~35 KB of .text inline-function delta closed. Remaining gap vs the
-  # upstream aarch64 binary: .text ≈ -66 KB, .eh_frame ≈ -35 KB (codegen
-  # iteration, like the x86_64 effort).
+  # Cross-build the full depends tree (incl. the Qt6 GUI tree) with a *native*
+  # build stdenv (so the native helper tools — native_capnp, mpgen, native_qt
+  # — use the build machine's gcc) plus the aarch64 cross toolchain on PATH
+  # (so HOST packages use aarch64-linux-gnu-gcc). Uses the GUIX-flags cross
+  # gcc + binutils 2.41, rebuilt against glibc 2.31 (crossGlibc231 via
+  # libcCross above) — which makes all 10 cross-built binaries byte-match the
+  # upstream aarch64 release (the dynsym GLIBC symbol versions, .text/.eh_frame
+  # all line up; see CLAUDE.md's aarch64 section).
   dependsAarch64 = pkgs.callPackage ./depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "aarch64-linux-gnu";
-    buildQt = false;
+    buildQt = true;
     crossInputs = aarch64CrossInputs;
   };
   bitcoindAarch64 = pkgs.callPackage ./bitcoind-aarch64.nix {
@@ -310,6 +308,12 @@ let
     depends = dependsAarch64;
     crossInputs = aarch64CrossInputs;
   };
+  tarballAarch64 = pkgs.callPackage ./tarball.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindAarch64;
+    arch = "aarch64-linux-gnu";
+    expectedSha256 = "4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112";
+  };
 in {
-  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 crossGlibc231;
+  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231;
 }

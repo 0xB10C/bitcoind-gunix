@@ -22,15 +22,19 @@
 , url
 , sha256
 , bitcoind
+# Target triple in the archive name + the `bitcoind` arg's arch. Defaults to
+# x86_64; pass arch = "aarch64-linux-gnu" + the aarch64 bitcoind + expected
+# hash to assemble the aarch64 release archive.
+, arch ? "x86_64-linux-gnu"
+, expectedSha256 ? "d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074"
 }:
 
 let
   src = fetchurl { inherit url sha256; };
   # SOURCE_DATE_EPOCH = `git log --format=%at -1` of the v31.0 tag.
   sourceDateEpoch = "1776286524";
-  expectedSha256 = "d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074";
 in
-runCommandLocal "bitcoin-${version}-x86_64-linux-gnu.tar.gz"
+runCommandLocal "bitcoin-${version}-${arch}.tar.gz"
 {
   nativeBuildInputs = [ gnutar gzip coreutils ];
 } ''
@@ -83,5 +87,5 @@ runCommandLocal "bitcoin-${version}-x86_64-linux-gnu.tar.gz"
     echo "  actual:   $actual"
     exit 1
   fi
-  echo "OK: bitcoin-${version}-x86_64-linux-gnu.tar.gz matches upstream ($actual)"
+  echo "OK: bitcoin-${version}-${arch}.tar.gz matches upstream ($actual)"
 ''

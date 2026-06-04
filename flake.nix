@@ -128,7 +128,7 @@
       };
     in {
       packages.${system} = {
-        inherit (drvs) depends bitcoind tarball dependsAarch64 bitcoindAarch64 crossGlibc231;
+        inherit (drvs) depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231;
         default = drvs.bitcoind;
       };
     };
