@@ -34,17 +34,24 @@ patched to upstream's values (the `.dbg` themselves aren't
 byte-reproducible — see "Task #2 finding"); the separate `-debug.tar.gz`
 is not assembled.
 
-## Status (2026-06-04): aarch64 bitcoind ALSO byte-matches (cross-compiled)
+## Status (2026-06-04): FULL aarch64 release ALSO byte-matches (cross-compiled)
 
 `nix build .#bitcoindAarch64` cross-compiles — on an x86_64 machine, no
-qemu — a `bitcoind` for `aarch64-linux-gnu` whose sha256 is identical to
-the upstream GUIX `bitcoin-31.0-aarch64-linux-gnu` release binary:
+qemu — all 10 binaries of the `bitcoin-31.0-aarch64-linux-gnu` release,
+and `nix build .#tarballAarch64` assembles the full `.tar.gz`, every one
+byte-identical to the upstream GUIX release:
 
 ```
-6f66822a44b4d4edd2a8ae1a11f63dd4db8d070e219c8eb54a3e2faa536409c2  bin/bitcoind
+c793384c…  bin/bitcoin            b4128423…  bin/bitcoin-tx
+25c2743e…  bin/bitcoin-cli        3a0daa1c…  bin/bitcoin-util
+6f66822a…  bin/bitcoind           b7c2bb47…  bin/bitcoin-wallet
+760c3de5…  bin/bitcoin-qt         f213271f…  libexec/bitcoin-node
+f85193a8…  libexec/bitcoin-gui    940fd792…  libexec/test_bitcoin
+4de1d568…  bitcoin-31.0-aarch64-linux-gnu.tar.gz
 ```
 
-A `postFixup` sha256 gate in `bitcoind-aarch64.nix` asserts it every build.
+A `postFixup` sha256 gate in `bitcoind-aarch64.nix` asserts all 10
+binaries every build; `tarballAarch64` asserts the archive sha256.
 
 What it took, beyond the depends/bitcoind cross-build plumbing (HOST=
 aarch64-linux-gnu, the aarch64 ELF interpreter `/lib/ld-linux-aarch64.so.1`,
@@ -95,13 +102,18 @@ then narrowed to 6 glibc static members → branch protection + hardening.
 The upstream aarch64 release + `-debug.tar.gz` are the reference (sha
 `6f66822a…` / debuglink CRC `0xe8e5e289`).
 
-### Not yet done for aarch64 (optional, mirrors x86_64)
+### Full aarch64 release (all 10 + tarball) — DONE
 
-Only `bitcoind` is built (spike: `BUILD_TESTS=OFF`, `NO_QT` depends). The
-other 9 release binaries (need `BUILD_TESTS=ON` + the Qt6 depends tree for
-aarch64) and the aarch64 `.tar.gz` are mechanical replication of the proven
-x86_64 pattern — the hard codegen gap is closed. Each shipped binary needs
-its own upstream `.gnu_debuglink` CRC (extract from the `-debug.tar.gz`).
+`dependsAarch64` builds the full Qt6 tree (`buildQt = true`);
+`bitcoind-aarch64.nix` builds all 10 binaries (BUILD_TESTS left ON, GUI
+auto-enabled by the Qt depends) with per-binary split-debug +
+`.gnu_debuglink` CRC patch (cross binutils 2.41) and a 10-hash gate;
+`tarballAarch64` assembles the `.tar.gz` (`tarball.nix` parameterized by
+`arch` + `expectedSha256`). `depends.nix` needed no aarch64 changes — it
+was already `hostTriple`-parameterized — but its sources now fall back to
+the `bitcoincore.org/depends-sources` mirror (several upstream X.org /
+savannah source URLs have since 404'd; the mirror keeps the exact
+tarballs, so outputs are unchanged).
 
 ## WIP (2026-06-03): issue #6 — remove workarounds (B) + full tarball (A)
 
