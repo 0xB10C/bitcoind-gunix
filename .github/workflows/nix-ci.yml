@@ -34,16 +34,44 @@ jobs:
         with:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-      # The bitcoind derivation's postFixup compares the produced
-      # binary's sha256 against the upstream GUIX v31.0 release and
-      # fails the build on mismatch — so a successful `nix build` IS
-      # the reproducibility test. The second step re-asserts the
-      # hash externally for visibility in the CI logs.
-      - run: nix build .#bitcoind --print-build-logs
-      - name: Verify sha256 matches upstream GUIX v31.0
+      # The derivations' postFixup gates compare every produced binary's
+      # sha256 (bitcoind.nix: all 10 binaries) and the assembled archive's
+      # sha256 (tarball.nix) against the upstream GUIX v31.0 release and
+      # fail the build on mismatch — so a successful `nix build` IS the
+      # reproducibility test. Building .#tarball also builds .#bitcoind.
+      # The steps below re-assert the hashes externally for CI-log
+      # visibility. (Building the Qt GUI makes the first build long; the
+      # Cachix cache makes subsequent runs fast.)
+      - run: nix build .#bitcoind -o result-bitcoind --print-build-logs
+      - run: nix build .#tarball -o result-tarball --print-build-logs
+      - name: Verify all 10 binaries match upstream GUIX v31.0
         run: |
-          expected=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
-          actual=$(sha256sum result/bin/bitcoind | cut -d' ' -f1)
+          declare -A expected=(
+            [bin/bitcoin]=eb5670aebd2b32c79215e578d2a7162fd1c98181bc558cfb8d29a4240e736521
+            [bin/bitcoin-cli]=3e92883f97850bc445ac033d26d55902dcb035fdf64f78c2c03c83216f083c5d
+            [bin/bitcoind]=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
+            [bin/bitcoin-tx]=ce3b159c9985eca941b3071c4dc573a4cf92ed9ee27fc1cf68a28d8afe893b6c
+            [bin/bitcoin-util]=1d18ee4b1539110f784288462b8173d2d35d3b768ecbc3df83ebaa2781eb4306
+            [bin/bitcoin-wallet]=7d8382b86cce7fde4214f295f7e134a873f176556ee98bc6dcbf9b347a25acaf
+            [bin/bitcoin-qt]=3480af8fad820759a6299ea94bb3bb66f490b87c10ba44b1d0f671af382ff178
+            [libexec/bitcoin-node]=01c212ee592f4ecc649b7a13c8fc0976f2d823900c66cd11460edaa59bba21ca
+            [libexec/bitcoin-gui]=416e79bbebec5506ac786557519f3f5fc3fb1936a4a6074685d5f0aa24e01801
+            [libexec/test_bitcoin]=c7a2a9062256920fa4b92e330857dc12e7f89882f8a3930ecdc3350acf922f8f
+          )
+          rc=0
+          for rel in "${!expected[@]}"; do
+            actual=$(sha256sum "result-bitcoind/$rel" | cut -d' ' -f1)
+            if [ "$actual" = "${expected[$rel]}" ]; then
+              echo "OK:   $rel"
+            else
+              echo "FAIL: $rel  expected ${expected[$rel]}  actual $actual"; rc=1
+            fi
+          done
+          exit $rc
+      - name: Verify bitcoin-31.0-x86_64-linux-gnu.tar.gz matches upstream GUIX v31.0
+        run: |
+          expected=d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074
+          actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "expected: $expected"
           echo "actual:   $actual"
           [ "$actual" = "$expected" ]
