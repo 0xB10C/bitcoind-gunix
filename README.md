@@ -1,8 +1,9 @@
 # bitcoind-gunix
 
-A Nix flake that reproduces the official Bitcoin Core GUIX release for
-`x86_64-linux-gnu` with **byte-identical sha256**: all ten binaries **and**
-the full release archive.
+A Nix flake that reproduces the official Bitcoin Core GUIX release with
+**byte-identical sha256** — all ten binaries **and** the full release
+archive — for both `x86_64-linux-gnu` and `aarch64-linux-gnu`. The aarch64
+release is **cross-compiled on an x86_64 host** (no qemu).
 
 ## Status
 
@@ -18,6 +19,19 @@ dae69848…  bin/bitcoind           7d8382b8…  bin/bitcoin-wallet
 416e79bb…  libexec/bitcoin-gui    c7a2a906…  libexec/test_bitcoin
 
 d3e4c58a…  bitcoin-31.0-x86_64-linux-gnu.tar.gz
+```
+
+The same holds for the `aarch64-linux-gnu` release, cross-compiled on
+x86_64:
+
+```
+c793384c…  bin/bitcoin            b4128423…  bin/bitcoin-tx
+25c2743e…  bin/bitcoin-cli        3a0daa1c…  bin/bitcoin-util
+6f66822a…  bin/bitcoind           b7c2bb47…  bin/bitcoin-wallet
+760c3de5…  bin/bitcoin-qt         f213271f…  libexec/bitcoin-node
+f85193a8…  libexec/bitcoin-gui    940fd792…  libexec/test_bitcoin
+
+4de1d568…  bitcoin-31.0-aarch64-linux-gnu.tar.gz
 ```
 
 Each derivation's `postFixup` asserts these hashes and fails the build on
@@ -40,12 +54,18 @@ nix build .#bitcoind --print-build-logs
 nix build .#tarball --print-build-logs
 sha256sum result        # -> d3e4c58a…
 
+# The aarch64 release, cross-compiled on x86_64 (10 binaries + tarball):
+nix build .#bitcoindAarch64 --print-build-logs
+nix build .#tarballAarch64 --print-build-logs
+sha256sum result        # -> 4de1d568…
+
 # Just the depends tree:
 nix build .#depends
 ```
 
 The first build is long — it rebuilds the gcc 14 / glibc 2.31 toolchain
-and the full Qt6 depends tree. A binary cache makes repeat builds fast.
+and the full Qt6 depends tree (the aarch64 outputs use their own cross
+toolchain + cross depends). A binary cache makes repeat builds fast.
 
 If a build fails and you want to inspect intermediate state, add
 `--keep-failed`. The gates print `OK:`/`FAIL:` lines with the hashes.
@@ -69,17 +89,21 @@ remaining byte patch. See `CLAUDE.md` for the full rationale.
   glibc 2.31 by overriding 25.11's glibc down to 2.31 (GUIX's exact git
   source), compiled with 25.11's **gcc 14.3.0** — the same gcc version
   GUIX uses, so no post-install byte patching of glibc is needed.
-- `default.nix` — assembles the gcc 14 + glibc 2.31 toolchain. Downgrades
-  binutils to 2.41 (matching GUIX), applies the `gcc-ssa-generation` patch
-  and GUIX's `linux-base-gcc` configure flags.
+- `default.nix` — assembles the gcc 14 + glibc 2.31 toolchain (binutils
+  downgraded to 2.41, the `gcc-ssa-generation` patch, GUIX's
+  `linux-base-gcc` flags), and the matching **aarch64 cross toolchain**
+  (cross binutils 2.41 + cross gcc rebuilt against cross glibc 2.31 via
+  `libcCross`). Exposes both the x86_64 and aarch64 outputs.
 - `depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the full
-  Qt6 GUI dependencies) with `HOST=x86_64-linux-gnu` (cross-compile mode,
-  matching GUIX).
-- `bitcoind.nix` — builds all of Bitcoin Core via CMake, then split-debug,
-  `.comment` rewrite, `.gnu_debuglink` CRC patch, and asserts all ten
-  binary hashes.
-- `tarball.nix` — assembles `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
-  byte-identical to upstream and asserts its hash.
+  Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves both
+  `x86_64-linux-gnu` and the `aarch64-linux-gnu` cross build (`HOST=` puts
+  depends in cross-compile mode, matching GUIX either way).
+- `bitcoind.nix` / `bitcoind-aarch64.nix` — build all of Bitcoin Core via
+  CMake, then split-debug, `.comment` rewrite, `.gnu_debuglink` CRC patch,
+  and assert all ten binary hashes. The aarch64 variant cross-compiles with
+  the aarch64 ELF interpreter and the cross binutils.
+- `tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
+  byte-identical to upstream and asserts its hash (parameterized by `arch`).
 - `patches/` — patch files applied via the .nix derivations.
 - `CLAUDE.md` — design notes and the reproducibility methodology playbook.
 
