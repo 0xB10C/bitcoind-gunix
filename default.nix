@@ -329,14 +329,23 @@ let
   # approach's breakage (overlaying glibc hit the x86_64 *build* glibc too).
   # This closes the remaining gap: 2.31 headers (inline functions → .text /
   # .eh_frame) + 2.31 dynsym/symbol versions.
-  # NB: base the compiler on `gcc14`, not `stdenv.cc.cc` — nixos-26.05's
-  # default cross gcc is 15.2.0; we need GUIX's 14.3.0. The cc-wrapper itself
-  # (stdenv.cc) only contributes version-independent flags (-march=armv8-a,
-  # the frame-pointer defaults), so overriding just its `cc` is enough.
+  # NB: base the compiler on `buildPackages.gcc14`, not `gcc14` or
+  # `stdenv.cc.cc`. nixos-26.05's default cross gcc is 15.2.0; we need GUIX's
+  # 14.3.0. Critically, `pkgsCrossAarch64.gcc14.cc` resolves to the
+  # aarch64-NATIVE gcc (an ARM binary that can't run on the x86 build host) on
+  # 26.05 — wrapping it makes the cc-wrapper setup-hook put that native gcc's
+  # bin (with its UNPREFIXED `gcc`/`g++`) on the build PATH, where it shadows
+  # the depends build's native compiler and breaks native_qt's CMake compiler
+  # check ("ELF: not found"). `buildPackages.gcc14.cc` is the build→target
+  # cross gcc (runs on x86, prefix-only binaries), which is what we want. The
+  # cc-wrapper (stdenv.cc) only contributes version-independent flags
+  # (-march=armv8-a, the frame-pointer defaults), so overriding its `cc` is
+  # enough. (On nixos-25.11 the splice happened to give the cross gcc, so
+  # plain `gcc14.cc` worked there.)
   crossGuixGcc = pkgsCrossAarch64.stdenv.cc.override {
     bintools = crossBintools241;
     libc = crossGlibc231;
-    cc = (pkgsCrossAarch64.gcc14.cc.override {
+    cc = (pkgsCrossAarch64.buildPackages.gcc14.cc.override {
       libcCross = crossGlibc231;
     }).overrideAttrs (old: {
       configureFlags = (old.configureFlags or [ ]) ++ [

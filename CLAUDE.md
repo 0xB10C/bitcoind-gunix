@@ -6,11 +6,13 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-06-06): migrated to nixos-26.05 — x86_64 fully reproduces
+## Status (2026-06-06): migrated to nixos-26.05 — all 21 artifacts reproduce
 
 The flake is pinned to `nixos-26.05` (was `nixos-25.11`, now deprecated).
-All 10 x86_64 binaries + the `.tar.gz` still byte-match upstream
-(`dae69848…` / tarball `d3e4c58a…`); the `postFixup` gate passes.
+All 10 x86_64 binaries + the `.tar.gz` (`dae69848…` / `d3e4c58a…`) AND all 10
+aarch64 binaries + its `.tar.gz` (`4de1d568…`) still byte-match upstream; both
+`postFixup` gates pass. The fixes are summarized below; the aarch64 specifics
+are at the end of this status block.
 
 26.05's default toolchain is gcc 15.2.0 + binutils 2.46 (25.11 was gcc 14 +
 binutils 2.44). Only `gcc14` stays 14.3.0. Three regressions had to be
@@ -38,13 +40,22 @@ fixed, all in code that ends up statically linked into the binaries:
    cstdlib/cmath generation; shipped glibc is all C) via `preConfigure`
    export + `makeFlags` in flake.nix's glibc231.
 
-**aarch64 on 26.05 is WIP.** The cross glibc231 gets the same gcc14-CC fix
-(`crossGlibc231` in default.nix, using `pkgsCrossAarch64.buildPackages.gcc14`
-— the build→target cross gcc14, NOT the target-native one), and now builds.
-But the aarch64 depends build then fails: `native_qt` (a *native* x86
-package) invokes an aarch64-native `g++` — a separate nixos-26.05 cross
-cc-wrapper / depends compiler-resolution regression, unrelated to
-reproducibility, still to be solved.
+**aarch64 on 26.05 also fully reproduces** (all 10 + tarball `4de1d568…`).
+Two cross-specific fixes, both from the same 26.05 splicing change where
+`pkgsCrossAarch64.gcc14.cc` resolves to the aarch64-**native** gcc (an ARM
+binary) instead of the build→target cross gcc:
+
+- **`crossGlibc231`** (default.nix): same bootstrap-glibc issue as x86 — the
+  cross glibc was built by the bootstrap cross gcc15. Force
+  `CC=${pkgsCrossAarch64.buildPackages.gcc14}/bin/aarch64-linux-gnu-gcc`
+  (the build→target cross gcc14) via `preConfigure` + `makeFlags`.
+- **`crossGuixGcc`** (default.nix): was wrapping `pkgsCrossAarch64.gcc14.cc`,
+  which on 26.05 is the aarch64-native gcc. The cc-wrapper setup-hook then
+  put that native gcc's bin (with UNPREFIXED `gcc`/`g++`) on the depends
+  build PATH, shadowing the native compiler and breaking `native_qt`'s CMake
+  compiler check. Switched to `pkgsCrossAarch64.buildPackages.gcc14.cc` (the
+  x86-runnable cross gcc, prefix-only binaries). The gas-NOP issue does NOT
+  affect aarch64 (cross gcc bakes `--with-as` = cross binutils 2.41).
 
 ## Status (2026-06-04): ALL release binaries byte-match (incl. GUI)
 
