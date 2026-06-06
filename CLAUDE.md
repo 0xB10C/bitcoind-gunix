@@ -6,6 +6,46 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-06): migrated to nixos-26.05 — x86_64 fully reproduces
+
+The flake is pinned to `nixos-26.05` (was `nixos-25.11`, now deprecated).
+All 10 x86_64 binaries + the `.tar.gz` still byte-match upstream
+(`dae69848…` / tarball `d3e4c58a…`); the `postFixup` gate passes.
+
+26.05's default toolchain is gcc 15.2.0 + binutils 2.46 (25.11 was gcc 14 +
+binutils 2.44). Only `gcc14` stays 14.3.0. Three regressions had to be
+fixed, all in code that ends up statically linked into the binaries:
+
+1. **GOT relax-relocations** — 26.05's gcc14 assembles libstdc++ with
+   relaxable `R_X86_64_GOTPCRELX`; the link then relaxes 2 `_S_timezones`
+   GOT accesses, rippling `.text`/`.eh_frame`. Fixed by re-appending
+   `-Wa,-mrelax-relocations=no` to `CXXFLAGS_FOR_TARGET` in
+   `gcc14RebuiltWithGlibc231`'s `preBuild` (default.nix).
+2. **gas NOP-fill order** — binutils 2.46 pads alignment gaps short-first;
+   2.41 (GUIX) pads long-first (diverged `btree_release_tree_recursively`
+   at 0x181633). `depsBuildTarget` alone didn't fix it — native gcc has no
+   `--with-as`, so xgcc resolves `as` from PATH at build time, and a 2.46
+   `as` leaks in via `depsBuildBuild` (the gcc-wrapper-15.2.0 build
+   compiler). Fixed by `preConfigure` shadowing `as` with binutils 2.41 at
+   the front of PATH for the whole gcc build (default.nix).
+3. **glibc `__libc_csu_init`** — the function that walks `__init_array`
+   (csu, ~0xba4060). gcc15 emits r12/rbp register allocation; **gcc14 emits
+   r15/r14 == upstream** (verified by compiling `csu/elf-init.c` with both).
+   glibc is a stdenv *bootstrap* component, so `glibc.override { stdenv }`
+   is silently ignored — it's always built by the bootstrap compiler (gcc14
+   on 25.11, gcc15 on 26.05, which is exactly why 25.11 matched). Fixed by
+   forcing `CC=${pkgs.gcc14}/bin/gcc` (CC only — forcing CXX breaks glibc's
+   cstdlib/cmath generation; shipped glibc is all C) via `preConfigure`
+   export + `makeFlags` in flake.nix's glibc231.
+
+**aarch64 on 26.05 is WIP.** The cross glibc231 gets the same gcc14-CC fix
+(`crossGlibc231` in default.nix, using `pkgsCrossAarch64.buildPackages.gcc14`
+— the build→target cross gcc14, NOT the target-native one), and now builds.
+But the aarch64 depends build then fails: `native_qt` (a *native* x86
+package) invokes an aarch64-native `g++` — a separate nixos-26.05 cross
+cc-wrapper / depends compiler-resolution regression, unrelated to
+reproducibility, still to be solved.
+
 ## Status (2026-06-04): ALL release binaries byte-match (incl. GUI)
 
 Every binary in the upstream `bitcoin-31.0-x86_64-linux-gnu` release now
