@@ -367,6 +367,10 @@ gcc14Stdenv.mkDerivation (rec {
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection"
     "fortify" "fortify3" "format"
+    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see bitcoind.nix).
+    # strictflexarrays1 = -fstrict-flex-arrays=1 (codegen-affecting; GUIX gcc
+    # defaults to =0). libcxxhardeningfast is libc++-only (no-op for us).
+    "strictflexarrays1" "libcxxhardeningfast"
   ];
 
   doCheck = false;

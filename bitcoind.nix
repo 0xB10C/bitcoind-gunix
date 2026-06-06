@@ -137,9 +137,15 @@ gcc14Stdenv.mkDerivation rec {
   #   core_interface only; secp256k1 was picking it up via the nixpkgs
   #   global and diverging in secp256k1_ellswift_xdh (FORTIFY __chk
   #   variants cause register-pressure differences).
+  # - strictflexarrays1: -fstrict-flex-arrays=1. New nixos-26.05 cc-wrapper
+  #   default; codegen-affecting (GUIX's gcc defaults to =0). Leaving it on
+  #   shifted the bytes of every binary on the 26.05 bump.
+  # - libcxxhardeningfast: -D_LIBCPP_HARDENING_MODE=…FAST. New 26.05 default,
+  #   libc++-only (we use libstdc++) — a no-op for us, dropped for cleanliness.
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection" "fortify" "fortify3"
+    "strictflexarrays1" "libcxxhardeningfast"
   ];
 
   postInstall = ''

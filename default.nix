@@ -61,6 +61,50 @@ let
     patches = (old.patches or []) ++ [
       ./patches/gcc-ssa-generation.patch
     ];
+    # Assemble this gcc's target libs (libstdc++, libgcc) with OUR binutils
+    # 2.41 (GUIX's version), not nixos-26.05's default 2.46. bitcoind links
+    # these libs statically from $cc/lib (verified via `ld -t`), so their
+    # assembler (gas) determines the bytes. binutils 2.46 changed the
+    # alignment-NOP fill order (short-first; 2.41/2.44 emit long-first),
+    # diverging libgcc/libstdc++ inter-function padding (e.g.
+    # btree_release_tree_recursively at 0x181633) from upstream's GUIX-2.41
+    # build — confirmed by byte-diffing our binary vs the upstream dae69848…
+    # release at that offset.
+    #
+    # Setting depsBuildTarget alone is NOT enough: the gcc derivation also
+    # pulls a 2.46 `as` onto PATH via depsBuildBuild (= buildPackages.stdenv.cc
+    # = the gcc-wrapper-15.2.0 build compiler, which propagates
+    # binutils-wrapper-2.46), and that 2.46 `as` wins the PATH lookup when the
+    # newly-built xgcc assembles the target libs. Since this gcc is native
+    # (no --with-as), the assembler is resolved purely from PATH at build time.
+    # So we ALSO shadow `as` with the 2.41 one at the very front of PATH for
+    # the whole gcc build (preConfigure below). A global binutils overlay would
+    # be the "clean" version but breaks the 26.05 stdenv bootstrap.
+    depsBuildTarget = [ bintoolsWithGlibc231 pkgs.patchelf ];
+    preConfigure = (old.preConfigure or "") + ''
+      # Shadow `as` (and the target-triple-prefixed alias) with binutils 2.41's
+      # so xgcc assembles libgcc/libstdc++ with the GUIX NOP-fill order.
+      mkdir -p "$TMPDIR/forceas/bin"
+      ln -sf ${binutilsForGuix}/bin/as "$TMPDIR/forceas/bin/as"
+      ln -sf ${binutilsForGuix}/bin/as "$TMPDIR/forceas/bin/x86_64-unknown-linux-gnu-as"
+      ln -sf ${binutilsForGuix}/bin/as "$TMPDIR/forceas/bin/x86_64-pc-linux-gnu-as"
+      export PATH="$TMPDIR/forceas/bin:$PATH"
+    '';
+    # Force NON-relaxable GOT relocs (R_X86_64_GOTPCREL, not …GOTPCRELX) in the
+    # target libs: gas honors the LAST -mrelax-relocations, and 2.41's default
+    # is relaxable. Must be in preBuild — gcc/common/builder.nix overwrites
+    # EXTRA_FLAGS_FOR_TARGET for native builds, then seeds makeFlagsArray with
+    # CXXFLAGS_FOR_TARGET; re-appending later wins. Without this the final link
+    # relaxes libstdc++'s std::__timepunct_cache<>::_S_timezones GOT accesses
+    # to direct, dropping 2 .got entries and rippling .text/.eh_frame (all 10
+    # hashes off). Upstream keeps those GOT entries.
+    preBuild = (old.preBuild or "") + ''
+      makeFlagsArray+=(
+        "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET -Wa,-mrelax-relocations=no"
+        "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET -Wa,-mrelax-relocations=no"
+        "FLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET -Wa,-mrelax-relocations=no"
+      )
+    '';
     # Match GUIX's `linux-base-gcc` configure flags exactly, from
     # contrib/guix/manifest.scm:
     #
@@ -137,7 +181,12 @@ let
   # makes all cross compiles use glibc 2.31 headers/CRTs (vs nixpkgs 2.40)
   # — the .text (inline functions) + dynsym/version gap driver.
   # NOTE: --enable-cet is x86-only and omitted.
-  crossGlibc231 = pkgsCrossAarch64.glibc.overrideAttrs (old: {
+  # Built with the gcc-14 cross stdenv (nixos-26.05's default is gcc 15.2.0;
+  # the glibc CRT/nonshared members linked into the binaries must be gcc-14 —
+  # same reasoning as flake.nix's native glibc231).
+  crossGlibc231 = (pkgsCrossAarch64.glibc.override {
+    stdenv = pkgsCrossAarch64.gcc14Stdenv;
+  }).overrideAttrs (old: {
     version = "2.31";
     src = pkgs.fetchgit {
       name = "glibc-2.31";
@@ -176,7 +225,27 @@ let
     # protection defaults the compiler to, so it reproduces that codegen.
     env = (old.env or { }) // {
       NIX_CFLAGS_COMPILE = "-momit-leaf-frame-pointer -mbranch-protection=standard";
+      # Skip glibc's C++ link test — same nixos-26.05 reasoning as the native
+      # glibc231 (flake.nix): the cross build stdenv's libstdc++ is gcc 15's,
+      # built against a modern glibc, and won't link against the 2.31 being
+      # built. C++ is test-only here too; the installed glibc is pure C.
+      libc_cv_cxx_link_ok = "no";
     };
+    # Force the cross C compiler to gcc 14.3.0 (GUIX's version), exactly as
+    # flake.nix does for the native glibc231. glibc is a stdenv bootstrap
+    # component, so `.override { stdenv = … }` is ignored — on nixos-26.05 the
+    # cross glibc would otherwise build with the bootstrap cross gcc 15.2.0,
+    # giving __libc_csu_init the gcc-15 register allocation (diverges from
+    # upstream's gcc-14 codegen). Force CC only (not CXX — see flake.nix:
+    # forcing CXX breaks glibc's cstdlib/cmath generation; the shipped glibc
+    # is all C). `aarch64-linux-gnu-gcc` is the cross gcc14's driver name
+    # (targetPrefix = "aarch64-linux-gnu-").
+    preConfigure = (old.preConfigure or "") + ''
+      export CC=${pkgsCrossAarch64.buildPackages.gcc14}/bin/aarch64-linux-gnu-gcc
+    '';
+    makeFlags = (old.makeFlags or [ ]) ++ [
+      "CC=${pkgsCrossAarch64.buildPackages.gcc14}/bin/aarch64-linux-gnu-gcc"
+    ];
     # Disable the same nixpkgs hardenings flake.nix's x86_64 glibc231 drops.
     # The decisive one is zerocallusedregs (-fzero-call-used-regs): it
     # appends register-zeroing before `ret` in glibc's nonshared members
@@ -185,6 +254,10 @@ let
     hardeningDisable = [
       "zerocallusedregs" "strictoverflow" "stackprotector"
       "stackclashprotection" "fortify" "fortify3"
+      # New nixos-26.05 cross cc-wrapper defaults GUIX doesn't apply (see
+      # bitcoind.nix). strictflexarrays1 is codegen-affecting;
+      # libcxxhardeningfast is libc++-only (no-op for us).
+      "strictflexarrays1" "libcxxhardeningfast"
     ];
     postPatch = ''
       sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
@@ -256,10 +329,14 @@ let
   # approach's breakage (overlaying glibc hit the x86_64 *build* glibc too).
   # This closes the remaining gap: 2.31 headers (inline functions → .text /
   # .eh_frame) + 2.31 dynsym/symbol versions.
+  # NB: base the compiler on `gcc14`, not `stdenv.cc.cc` — nixos-26.05's
+  # default cross gcc is 15.2.0; we need GUIX's 14.3.0. The cc-wrapper itself
+  # (stdenv.cc) only contributes version-independent flags (-march=armv8-a,
+  # the frame-pointer defaults), so overriding just its `cc` is enough.
   crossGuixGcc = pkgsCrossAarch64.stdenv.cc.override {
     bintools = crossBintools241;
     libc = crossGlibc231;
-    cc = (pkgsCrossAarch64.stdenv.cc.cc.override {
+    cc = (pkgsCrossAarch64.gcc14.cc.override {
       libcCross = crossGlibc231;
     }).overrideAttrs (old: {
       configureFlags = (old.configureFlags or [ ]) ++ [

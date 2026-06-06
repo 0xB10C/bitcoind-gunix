@@ -81,6 +81,9 @@ gcc14Stdenv.mkDerivation {
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection" "fortify" "fortify3"
+    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see bitcoind.nix):
+    # strictflexarrays1 is codegen-affecting; libcxxhardeningfast is libc++-only.
+    "strictflexarrays1" "libcxxhardeningfast"
   ];
 
   # Mirror GUIX build.sh's split-debug + .gnu_debuglink handling (same as
