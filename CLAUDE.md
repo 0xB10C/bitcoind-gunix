@@ -201,37 +201,70 @@ Working issue #6. Local reference artifacts (all gitignored):
 
 ### Task #2 finding — why the `.gnu_debuglink` CRC patch stays
 
+**This is NOT a toolchain-version issue.** A common misconception: "now
+that we pin GUIX's exact gcc/glibc/binutils versions, can we drop the CRC
+patch?" No. The patch has nothing to do with versions — we've matched
+GUIX's gcc 14.3.0 / glibc 2.31 / binutils 2.41 since the nixos-25.11 days
+and the `.dbg` still diverged then. The blockers are **recorded paths and
+the target triple**, which version-matching does not change.
+
 The CRC in a stripped binary is CRC32 of its `.dbg`. To drop the patch,
-our `.dbg` would have to be byte-identical to upstream's. It is not, and
-the reasons are structural, not incidental:
+our `.dbg` would have to be byte-identical to upstream's. It is not. The
+*stripped runtime binary* is already byte-equal (`dae69848…`); the entire
+divergence is debug-only. Decompressed, the two `.dbg` are 292,886,544
+(upstream) vs 292,713,176 (ours) — ~172 KB / 0.06 % apart, spread
+proportionally across every debug section. That 0.06 % is entirely
+**recorded paths** (`.debug_line_str` + the cascade of
+`.debug_str`/`.debug_info` offset shifts).
 
-- **Compression**: upstream's debug sections are SHF_COMPRESSED (GUIX's
-  binutils compresses by default); ours aren't. Fixable with `-gz`.
-- **Content is ~identical otherwise**: decompressed, the two `.dbg` are
-  292,886,544 (upstream) vs 292,713,176 (ours) — ~172 KB / 0.06 % apart,
-  spread proportionally across every debug section.
-- **That 0.06 % is recorded paths** (`.debug_line_str` and the cascade of
-  `.debug_str`/`.debug_info` offset shifts), and they diverge for reasons
-  we can't cheaply match:
-  - toolchain headers: ours `/nix/store/…gcc-14.3.0/include/c++/14.3.0`,
-    upstream `/usr/include/c++` (GUIX maps `/gnu/store/*`→`/usr`, *and*
-    lays c++ headers out without the version subdir);
-  - **target triple**: upstream `x86_64-linux-gnu` vs our gcc's
-    `x86_64-unknown-linux-gnu` — pervasive in include/lib paths and baked
-    into the gcc build;
-  - **GUIX ephemeral build dirs baked into libgcc/glibc debug info**:
-    `/tmp/guix-build-gcc-cross-x86_64-linux-gnu-14.3.0.drv-0/…` and
-    `/tmp/guix-build-glibc-cross-…/source/csu`. These come from the
-    compiler's own debug info (statically-linked csu/libgcc) and can't be
-    reproduced without rebuilding our gcc/glibc as `x86_64-linux-gnu`
-    cross toolchains with `-fdebug-prefix-map` to those exact `.drv-0`
-    paths.
+#### The four structural divergences (and the fix each needs)
 
-None of this affects the *stripped* runtime binary (already byte-equal at
-`dae69848…`); it's all debug-only. Matching it would mean a target-triple
-change plus deep path surgery across the whole toolchain — high cost, high
-risk, for a 4-byte debugger hint. So the CRC patch stays, and A patches the
-other binaries' CRCs the same way.
+To make the `.dbg` byte-identical, ALL four must be matched:
+
+1. **Debug sections not compressed.** Upstream's are `SHF_COMPRESSED`
+   (GUIX's binutils compresses by default); ours aren't.
+   *Fix:* add `-gz` to the debug build. **Effort: trivial.**
+
+2. **Target triple.** Ours is `x86_64-unknown-linux-gnu` (nixpkgs
+   default), GUIX's is `x86_64-linux-gnu`. Pervasive in include/lib paths
+   in the debug info and baked into the gcc build itself.
+   *Fix:* build x86_64 as a **cross-to-self** to `x86_64-linux-gnu` —
+   exactly the "cross everywhere" change we want anyway, and exactly what
+   the aarch64 path already does (`aarch64-linux-gnu`). **Effort: medium —
+   a real toolchain restructure, but mirrors the existing aarch64 setup.**
+
+3. **Toolchain header paths.** Ours `/nix/store/…gcc-14.3.0/include/c++/
+   14.3.0`; upstream `/usr/include/c++` (GUIX maps `/gnu/store/*`→`/usr`
+   *and* lays the c++ headers out without the version subdir).
+   *Fix:* `-ffile-prefix-map` to rewrite our store paths to GUIX's `/usr`
+   layout, including the version-less c++ header dir. **Effort: medium,
+   fiddly — has to match GUIX's exact layout, not just any /usr mapping.**
+
+4. **GUIX ephemeral build dirs baked into libgcc/glibc debug info.**
+   `/tmp/guix-build-gcc-cross-x86_64-linux-gnu-14.3.0.drv-0/…` and
+   `/tmp/guix-build-glibc-cross-…/source/csu`. These come from the
+   *compiler's own* debug info in the statically-linked csu/libgcc
+   members — they're already baked into the precompiled toolchain, not
+   into our per-file compiles.
+   *Fix:* rebuild **our** gcc and glibc with `-fdebug-prefix-map` pointing
+   at GUIX's *exact* `.drv-0` ephemeral paths. **Effort: large and
+   fragile — deep toolchain surgery to reproduce throwaway build-dir names
+   purely for debugger metadata.** This is the real blocker.
+
+#### Verdict
+
+Dropping the patch is **days of high-risk work for a 4-byte debugger
+hint** that doesn't affect the runtime binary or the shipped release
+`.tar.gz` (which contains no `.dbg`; we don't even assemble the separate
+`-debug.tar.gz`). So the CRC patch stays for all 10 binaries.
+
+**When we do the cross-to-self change** (planned regardless — see the
+"cross everywhere" goal), fix #2 falls out for free and fix #4 becomes
+reachable in the same toolchain rebuild (we'll already be rebuilding gcc/
+glibc as `x86_64-linux-gnu`, so adding the `-fdebug-prefix-map` flags
+there is incremental). At that point revisit dropping the CRC patch:
+do #1 + #3 alongside, and byte-identical `.dbg` (hence no CRC patch, and
+a reproducible `-debug.tar.gz`) becomes plausible. Until then, keep it.
 
 ### Upstream binary set (sha256, from the GUIX tarball)
 
