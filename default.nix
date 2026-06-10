@@ -605,7 +605,14 @@ let
     depends = dependsX86Cross;
     crossInputs = x86CrossInputs;
   };
+  # The release archive assembled from the cross-to-self binaries. arch and
+  # expectedSha256 take tarball.nix's x86_64 defaults — the cross build must
+  # produce the SAME d3e4c58a… archive as the native `tarball`.
+  tarballX86Cross = pkgs.callPackage ./tarball.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindX86Cross;
+  };
 in {
   inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231
-    crossGlibc231X86 crossGuixGccX86 dependsX86Cross bitcoindX86Cross;
+    crossGlibc231X86 crossGuixGccX86 dependsX86Cross bitcoindX86Cross tarballX86Cross;
 }
