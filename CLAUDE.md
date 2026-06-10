@@ -6,13 +6,15 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-06-10): x86_64 cross-to-self REPRODUCES — all 10 binaries
+## Status (2026-06-10): x86_64 cross-to-self REPRODUCES — all 10 binaries + tarball
 
 Step 2 done: `nix build .#bitcoindX86Cross` builds the full x86_64 release
 **through the cross-to-self toolchain** and all 10 binaries byte-match the
-same upstream hashes as the native path (`dae69848…` etc.; gate asserted).
-This proves the cross-everywhere bet on x86_64: same compiler config +
-target ⇒ same bytes, native stdenv vs cross-to-self.
+same upstream hashes as the native path (`dae69848…` etc.; gate asserted),
+and `nix build .#tarballX86Cross` assembles the release archive
+byte-identical to upstream (`d3e4c58a…` — same tarball.nix, just fed the
+cross binaries). This proves the cross-everywhere bet on x86_64: same
+compiler config + target ⇒ same bytes, native stdenv vs cross-to-self.
 
 Wiring (additive; native + aarch64 drvs verified byte-identical):
 - `dependsX86Cross` — depends.nix with `crossInputs = x86CrossInputs`
@@ -34,10 +36,10 @@ Wiring (additive; native + aarch64 drvs verified byte-identical):
   (CC=x86_64-linux-gnu-gcc export, prefixed cross binutils 2.41 for
   split-debug). Intended to eventually replace bitcoind.nix.
 
-Step 1 (the toolchain itself) below; next: tarball from the cross build,
-then the `.dbg` divergence work (`-gz`, header prefix-maps,
-`-fdebug-prefix-map`) which this cross build unblocks, then unify/replace
-the native path and generalize over build hosts ("cross everywhere").
+Step 1 (the toolchain itself) below; next: the `.dbg` divergence work
+(`-gz`, header prefix-maps, `-fdebug-prefix-map`) which this cross build
+unblocks, then unify/replace the native path and generalize over build
+hosts ("cross everywhere").
 
 ### Step 1 (2026-06-10): the x86_64 cross-to-self toolchain
 
