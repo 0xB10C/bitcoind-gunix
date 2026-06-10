@@ -6,17 +6,32 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-06-10): x86_64 cross-to-self REPRODUCES — all 10 binaries + tarball
+## Status (2026-06-10): x86_64 cross-to-self IS the canonical path — native removed
 
-Step 2 done: `nix build .#bitcoindX86Cross` builds the full x86_64 release
-**through the cross-to-self toolchain** and all 10 binaries byte-match the
-same upstream hashes as the native path (`dae69848…` etc.; gate asserted),
-and `nix build .#tarballX86Cross` assembles the release archive
-byte-identical to upstream (`d3e4c58a…` — same tarball.nix, just fed the
-cross binaries). This proves the cross-everywhere bet on x86_64: same
-compiler config + target ⇒ same bytes, native stdenv vs cross-to-self.
+The cross-to-self build replaced the native one: `.#bitcoind` /
+`.#depends` / `.#tarball` now ARE the cross builds (same attr names, so CI
+needed no changes; `bitcoind-x86-cross.nix` became `bitcoind.nix`,
+replacing the native original). Removed: the whole native toolchain chain
+in default.nix (`binutilsForGuix` → `bintoolsWithGlibc231` →
+`stdenvForGccRebuild` → `gcc14RebuiltWithGlibc231` →
+`gcc14Glibc231Stdenv`) and flake.nix's native `glibc231` override — see
+git history (pre-2026-06-10) for those. Two native-only workarounds died
+with them (cross gcc bakes `--with-as`, so no PATH `as`-shadow or
+depsBuildTarget juggling). The aarch64 derivations were verified
+drv-identical throughout; the renamed x86 ones re-assert the same hashes.
 
-Wiring (additive; native + aarch64 drvs verified byte-identical):
+### How the cross-to-self build got proven (earlier 2026-06-10)
+
+`nix build .#bitcoindX86Cross` (now `.#bitcoind`) built the full x86_64
+release **through the cross-to-self toolchain** and all 10 binaries
+byte-matched the same upstream hashes as the native path (`dae69848…`
+etc.; gate asserted), and `.#tarballX86Cross` (now `.#tarball`) assembled
+the release archive byte-identical to upstream (`d3e4c58a…`). This proved
+the cross-everywhere bet on x86_64: same compiler config + target ⇒ same
+bytes, native stdenv vs cross-to-self.
+
+Wiring (was additive at the time; the X86Cross attrs are now the canonical
+`depends`/`bitcoind`/`tarball`):
 - `dependsX86Cross` — depends.nix with `crossInputs = x86CrossInputs`
   (hostTriple already defaulted to x86_64-linux-gnu). **One new
   cross-to-self-only gotcha**: `depends/hosts/linux.mk` special-cases an
@@ -375,36 +390,39 @@ new; `flake.nix` exposes `.#tarball`):
    `CMAKE_CROSSCOMPILING=TRUE` downstream), matching GUIX.
 
 2. **`bitcoind.nix`** — builds all of Bitcoin Core (incl. the Qt GUI) with
-   `cmake --toolchain ${depends}/toolchain.cmake`. CMake (replaced
-   autotools as of v29). Leaves `BUILD_TESTS` ON (GUIX does), so the tools
-   + test_bitcoin build; the depends toolchain auto-enables `BUILD_GUI` +
-   `WITH_QRENCODE` (Qt present). Skips bench/fuzz. Mirrors GUIX
-   release flags (`REDUCE_EXPORTS=ON`, `CMAKE_SKIP_RPATH=TRUE`,
-   `-O2 -g`). After install, runs `split-debug.sh` with the same args
-   GUIX uses (`<bin> <bin> <bin>.dbg`). Then rewrites `.comment`,
-   patches the `.gnu_debuglink` CRC32, and asserts the final hash.
+   `cmake --toolchain ${depends}/toolchain.cmake` and
+   `CC=x86_64-linux-gnu-gcc` (the cross-to-self compiler; as of
+   2026-06-10 this file is the former bitcoind-x86-cross.nix — the
+   original native version is in git history). CMake (replaced autotools
+   as of v29). Leaves `BUILD_TESTS` ON (GUIX does), so the tools +
+   test_bitcoin build; the depends toolchain auto-enables `BUILD_GUI` +
+   `WITH_QRENCODE` (Qt present). Skips bench/fuzz. Mirrors GUIX release
+   flags (`REDUCE_EXPORTS=ON`, `CMAKE_SKIP_RPATH=TRUE`, `-O2 -g`). After
+   install, split-debug via the prefixed cross binutils 2.41 (the GUIX
+   objcopy/strip sequence), `.comment` rewrite, `.gnu_debuglink` CRC32
+   patch, and the 10-hash gate.
 
-3. **`default.nix`** — entry point. Constructs the toolchain: wraps
-   `gcc14` with bintools/cc-wrapper pointing at glibc 2.31, then
-   rebuilds gcc 14 itself inside that wrapped stdenv (so libstdc++ is
-   compiled against glibc 2.31). Downgrades binutils to 2.41 (matches
-   GUIX). Applies `gcc-ssa-generation.patch` and the GUIX
-   `linux-base-gcc` configure flags
-   (`--enable-cet`, `--enable-default-pie`, `--enable-default-ssp=yes`,
+3. **`default.nix`** — entry point. Constructs the two GUIX-exact cross
+   toolchains — cross-to-self `x86_64-linux-gnu` (`crossGuixGccX86`) and
+   cross `aarch64-linux-gnu` (`crossGuixGcc`) — each: cross binutils
+   downgraded to 2.41, cross glibc overridden to GUIX's 2.31 git source
+   (commit `7b27c450`, CC forced to the build→target cross gcc 14.3.0 —
+   glibc is a bootstrap component, stdenv overrides are ignored), and the
+   cross gcc 14.3.0 rebuilt against glibc 2.31 via `libcCross` with
+   `gcc-ssa-generation.patch` + GUIX's `linux-base-gcc` configure flags
+   (`--enable-default-pie`, `--enable-default-ssp=yes`,
    `--enable-host-bind-now`, `--enable-standard-branch-protection`,
-   `--enable-initfini-array`, `--disable-nls`, …).
+   `--enable-initfini-array`, `--disable-nls`, x86-only `--enable-cet`,
+   …). On x86 additionally: `--with-as`/`--with-ld` re-pointed at the
+   2.41 cross binutils (gas NOP-fill order) and
+   `-Wa,-mrelax-relocations=no` for the target libs (GOTPCRELX).
 
-4. **`flake.nix`** — pins `nixpkgs` to `nixos-25.11` and builds glibc 2.31
-   by overriding 25.11's modern glibc derivation down to 2.31 (GUIX's
-   exact git source, commit `7b27c450`), built with 25.11's **gcc 14.3.0**
-   — the same gcc version GUIX uses. Because the CRTs and
-   `libc_nonshared.a` members are gcc-14-compiled, they carry the right
-   `.note.gnu.property`, `sub` canary, and `__libc_csu_init` codegen
-   natively — **no post-install byte patching** (this replaced the old
-   nixos-20.09 / gcc-8.3.0 + byte-patch approach). Exposes:
+4. **`flake.nix`** — pins `nixpkgs` to `nixos-26.05` and exposes the
+   outputs (all toolchain work lives in default.nix):
    - `nix build .#depends` — just the depends tree
    - `nix build .#bitcoind` (or `.#default`) — all 10 binaries
    - `nix build .#tarball` — the full release archive
+   - `…Aarch64` variants of all three for the aarch64 release
 
 5. **`tarball.nix`** — assembles `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
    byte-identical to upstream from the `bitcoind` binaries (no `.dbg`) +
@@ -508,10 +526,15 @@ fixups, all done via `postUnpack` seds on the package `.mk` files
   runtime strings inside the `.a` libraries keep the GUIX prefix, matching
   upstream.
 
-### Glibc 2.31 build (`flake.nix`) — replaced the old byte patches
+### Glibc 2.31 build — replaced the old byte patches
 
-We build glibc 2.31 with gcc 14.3.0 (nixpkgs-25.11's stdenv == GUIX's gcc
-version) from GUIX's exact git source. This produces CRTs and
+(Historical note: this build originally lived in `flake.nix` as a native
+glibc override; since 2026-06-10 it lives in `default.nix` as the CROSS
+glibcs `crossGlibc231X86` / `crossGlibc231`, with the same override set
+described here — the reasoning below is unchanged and still canonical.)
+
+We build glibc 2.31 with gcc 14.3.0 (GUIX's gcc version) from GUIX's
+exact git source. This produces CRTs and
 `libc_nonshared.a` members that match upstream **natively**, so the four
 former byte-patch hacks (CRT `.note.gnu.property`, `.oS`
 `.note.gnu.property`, `xor`→`sub` canary, and the `elf-init.oS`
