@@ -6,6 +6,46 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## WIP (2026-06-10): x86_64 cross-to-self toolchain ("cross everywhere", step 1)
+
+First step of the cross-everywhere / `.dbg`-fix plan: build the GUIX-style
+**`x86_64-linux-gnu` cross-to-self toolchain** (GUIX builds the x86_64
+release as a cross build to that vendor-less triple even on x86_64 hosts).
+`default.nix` now has `pkgsCrossX86` (`localSystem = x86_64-linux`,
+`crossSystem.config = x86_64-linux-gnu` — nixpkgs treats the differing
+config string as a real cross build) and the cross trio mirroring the
+aarch64 one: `crossBinutils241X86`, `crossGlibc231X86`, `crossGuixGccX86`
+(exposed as `.#crossGuixGccX86` / `.#crossGlibc231X86`). x86 deltas vs the
+aarch64 trio:
+
+- glibc: `--enable-cet` (x86-only), `-fomit-frame-pointer
+  -momit-leaf-frame-pointer` (omit BOTH; aarch64 keeps non-leaf), no
+  `-mbranch-protection`.
+- gcc: `--enable-cet=yes`; **`--with-as`/`--with-ld` re-pointed at cross
+  binutils 2.41** (nixpkgs bakes a 2.46 `--with-as` into cross gcc; a
+  second `--with-as` appended later wins. 2.46 gas would hit the
+  NOP-fill-order divergence the native build PATH-shadows around; aarch64
+  never had this — fixed-width instructions); and the same
+  `-Wa,-mrelax-relocations=no` target-lib preBuild as the native rebuild
+  (GOTPCRELX is x86-only).
+
+**Verified** (build succeeded, `nix build .#crossGuixGccX86`):
+`-dumpmachine` = `x86_64-linux-gnu`, gcc 14.3.0, `-print-prog-name=as/ld`
+→ binutils 2.41, all GUIX configure flags present; test binary is PIE,
+needs ≤ GLIBC_2.4, `.comment` = gcc 14.3.0; libstdc++.a has **0**
+`R_X86_64_GOTPCRELX` (4952 plain GOTPCREL), no `gettext` undef; cross
+glibc CRTs carry IBT/SHSTK notes natively, `atexit.oS` has the gcc-14
+`sub` canary + no FP prologue + no register-zeroing. **Decisive check:
+all 16 `libc_nonshared.a` members (incl. `elf-init.oS` /
+`__libc_csu_init`) and all 4 CRTs are byte-identical to the proven
+native glibc231's.**
+
+Next: wire depends/bitcoind through `crossGuixGccX86` (mirror
+`bitcoind-aarch64.nix` / `dependsAarch64` plumbing for
+`hostTriple = x86_64-linux-gnu`), assert the same 10 hashes, then the
+`.dbg` work (`-gz`, header prefix-maps, `-fdebug-prefix-map` for the
+GUIX `.drv-0` dirs — see Task #2 finding).
+
 ## Status (2026-06-06): migrated to nixos-26.05 — all 21 artifacts reproduce
 
 The flake is pinned to `nixos-26.05` (was `nixos-25.11`, now deprecated).

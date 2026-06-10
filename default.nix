@@ -400,6 +400,182 @@ let
     arch = "aarch64-linux-gnu";
     expectedSha256 = "4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112";
   };
+
+  # --- x86_64 cross-to-self toolchain ("cross everywhere", step 1) ---
+  # GUIX builds the x86_64 release with a *cross* toolchain targeting the
+  # vendor-less triple `x86_64-linux-gnu`, even though the build host is
+  # x86_64. Mirror that: instantiate nixpkgs cross-to-self. nixpkgs treats
+  # this as a real cross build (hostPlatform.config `x86_64-linux-gnu` !=
+  # buildPlatform.config `x86_64-unknown-linux-gnu`), so we get prefixed
+  # tools (`x86_64-linux-gnu-gcc`) — the exact analog of pkgsCrossAarch64.
+  # Long-term this replaces the native gcc14Glibc231Stdenv path entirely
+  # (and is what makes the .dbg target-triple divergence fixable — see
+  # CLAUDE.md "Task #2 finding").
+  pkgsCrossX86 = import pkgs.path {
+    localSystem = "x86_64-linux";
+    crossSystem = { config = "x86_64-linux-gnu"; };
+  };
+
+  # x86_64-linux-gnu cross binutils 2.41 — same override as the aarch64
+  # crossBinutils241: take the build-host cross binutils (runs on the build
+  # machine, emits/targets x86_64-linux-gnu) and downgrade it to GUIX's 2.41.
+  crossBinutils241X86 = pkgsCrossX86.stdenv.cc.bintools.bintools.overrideAttrs (_: {
+    version = "2.41";
+    src = pkgs.fetchurl {
+      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+    };
+    patches = [ ];
+  });
+
+  # x86_64-linux-gnu cross glibc 2.31 — the cross analog of flake.nix's
+  # native glibc231 (GUIX git source, GUIX configure flags incl. the
+  # x86-only --enable-cet, frame-pointer omission, hardeningDisable, 2.31
+  # porting fixes), structured like the aarch64 crossGlibc231. x86 deltas vs
+  # the aarch64 one: --enable-cet added; NIX_CFLAGS_COMPILE omits BOTH frame
+  # pointers (x86_64 gcc omits both at -O2; aarch64 keeps the non-leaf one)
+  # and needs no -mbranch-protection (that's the aarch64 PAC/BTI analog of
+  # CET, which glibc's own --enable-cet handles here).
+  crossGlibc231X86 = (pkgsCrossX86.glibc.override {
+    stdenv = pkgsCrossX86.gcc14Stdenv;
+  }).overrideAttrs (old: {
+    version = "2.31";
+    src = pkgs.fetchgit {
+      name = "glibc-2.31";
+      url = "https://sourceware.org/git/glibc.git";
+      rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
+      hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+    };
+    patches = [ ];
+    configureFlags =
+      (builtins.filter
+        (f: !(pkgs.lib.hasPrefix "--enable-kernel" f
+          || f == "--enable-stack-protector=strong"
+          || f == "--enable-cet=permissive"
+          || f == "--enable-fortify-source"))
+        (old.configureFlags or [ ]))
+      ++ [
+        "--enable-stack-protector=all"
+        "--enable-cet"
+        "--enable-bind-now"
+        "--disable-werror"
+        "--disable-timezone-tools"
+        "--disable-profile"
+      ];
+    env = (old.env or { }) // {
+      NIX_CFLAGS_COMPILE = "-fomit-frame-pointer -momit-leaf-frame-pointer";
+      # Skip glibc's C++ link test — same reasoning as the native glibc231
+      # and the aarch64 crossGlibc231: the build stdenv's libstdc++ is gcc
+      # 15's, built against a modern glibc, and won't link against the 2.31
+      # being built. C++ is test-only; the installed glibc is pure C.
+      libc_cv_cxx_link_ok = "no";
+    };
+    # glibc is a stdenv bootstrap component, so the `.override { stdenv }`
+    # above is silently ignored for the compiler choice — force the
+    # build→target cross gcc 14.3.0 via CC (CC only, not CXX — see
+    # flake.nix). Same fix as the aarch64 crossGlibc231.
+    preConfigure = (old.preConfigure or "") + ''
+      export CC=${pkgsCrossX86.buildPackages.gcc14}/bin/x86_64-linux-gnu-gcc
+    '';
+    makeFlags = (old.makeFlags or [ ]) ++ [
+      "CC=${pkgsCrossX86.buildPackages.gcc14}/bin/x86_64-linux-gnu-gcc"
+    ];
+    hardeningDisable = [
+      "zerocallusedregs" "strictoverflow" "stackprotector"
+      "stackclashprotection" "fortify" "fortify3"
+      "strictflexarrays1" "libcxxhardeningfast"
+    ];
+    postPatch = ''
+      sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
+      echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
+    '';
+    postInstall = ''
+      moveToOutput bin/getent $getent
+      test -f $out/etc/ld.so.cache && rm $out/etc/ld.so.cache
+      if test -n "$linuxHeaders"; then
+          (cd $dev/include && \
+           ln -sv $(ls -d $linuxHeaders/include/* | grep -v scsi\$) .)
+      fi
+      if test -n "$is64bit"; then
+          ln -s lib $out/lib64
+      fi
+      rm -rf $out/var $bin/bin/sln
+      ln -sf $out/lib/libpthread.so.0 $out/lib/libpthread.so
+      ln -sf $out/lib/librt.so.1 $out/lib/librt.so
+      ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
+      test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
+      touch $out/lib/libpthread.a
+      mkdir -p $static/lib
+      mv $out/lib/*.a $static/lib
+      mv $static/lib/lib*_nonshared.a $out/lib
+      test -f $out/lib/libutil.so.1 || mv $static/lib/libutil.a $out/lib
+      sed "/^GROUP/s|$out/lib/lib|$static/lib/lib|g" -i "$static"/lib/*.a
+      cp $bin/bin/getconf $bin/bin/getconf_
+      mv $bin/bin/getconf_ $bin/bin/getconf
+    '';
+  });
+
+  crossBintools241X86 = pkgsCrossX86.stdenv.cc.bintools.override {
+    bintools = crossBinutils241X86;
+    libc = crossGlibc231X86;
+  };
+
+  # x86_64-linux-gnu cross gcc 14.3.0 with GUIX's linux-base-gcc flags +
+  # the deterministic-SSA patch, rebuilt against glibc 2.31 via libcCross —
+  # the cross-to-self analog of gcc14RebuiltWithGlibc231, structured like
+  # the aarch64 crossGuixGcc. x86 deltas vs the aarch64 one:
+  #
+  # - `--enable-cet=yes` (x86-only, omitted on aarch64).
+  # - `--with-as` re-pointed at cross binutils 2.41. nixpkgs bakes --with-as
+  #   into cross gcc (verified: it points at the 2.46 cross binutils
+  #   wrapper), and gas's alignment-NOP fill order changed in 2.46
+  #   (short-first; 2.41 = GUIX emits long-first), which diverges the
+  #   inter-function padding of the statically-linked libgcc/libstdc++ on
+  #   x86 — the same bug the native build fixes by PATH-shadowing `as`
+  #   (gcc14RebuiltWithGlibc231 above). Appending a second --with-as wins
+  #   (autoconf last-takes-precedence). aarch64 never hit this: fixed-width
+  #   4-byte instructions leave gas no NOP-size choice.
+  # - target libs assembled with -Wa,-mrelax-relocations=no — same
+  #   GOTPCRELX issue as the native gcc rebuild (x86-only reloc type):
+  #   without it the final link relaxes libstdc++'s _S_timezones GOT
+  #   accesses that upstream keeps.
+  crossGuixGccX86 = pkgsCrossX86.stdenv.cc.override {
+    bintools = crossBintools241X86;
+    libc = crossGlibc231X86;
+    cc = (pkgsCrossX86.buildPackages.gcc14.cc.override {
+      libcCross = crossGlibc231X86;
+    }).overrideAttrs (old: {
+      configureFlags = (old.configureFlags or [ ]) ++ [
+        "--enable-standard-branch-protection=yes"
+        "--enable-cet=yes"
+        "--enable-default-pie=yes"
+        "--enable-default-ssp=yes"
+        "--enable-initfini-array=yes"
+        "--enable-host-bind-now=yes"
+        "--enable-gprofng=no"
+        "--disable-gcov"
+        "--disable-libgomp"
+        "--disable-libquadmath"
+        "--disable-libsanitizer"
+        "--disable-nls"
+        "--with-as=${crossBinutils241X86}/bin/x86_64-linux-gnu-as"
+        "--with-ld=${crossBinutils241X86}/bin/x86_64-linux-gnu-ld"
+      ];
+      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      # Same preBuild as gcc14RebuiltWithGlibc231: gcc/common/builder.nix
+      # seeds makeFlagsArray with the *_FOR_TARGET flags, so re-appending
+      # here wins and gas (2.41, default relaxable) emits non-relaxable
+      # R_X86_64_GOTPCREL in libgcc/libstdc++.
+      preBuild = (old.preBuild or "") + ''
+        makeFlagsArray+=(
+          "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET -Wa,-mrelax-relocations=no"
+          "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET -Wa,-mrelax-relocations=no"
+          "FLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET -Wa,-mrelax-relocations=no"
+        )
+      '';
+    });
+  };
 in {
-  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231;
+  inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231
+    crossGlibc231X86 crossGuixGccX86;
 }
