@@ -6,7 +6,40 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## WIP (2026-06-10): x86_64 cross-to-self toolchain ("cross everywhere", step 1)
+## Status (2026-06-10): x86_64 cross-to-self REPRODUCES — all 10 binaries
+
+Step 2 done: `nix build .#bitcoindX86Cross` builds the full x86_64 release
+**through the cross-to-self toolchain** and all 10 binaries byte-match the
+same upstream hashes as the native path (`dae69848…` etc.; gate asserted).
+This proves the cross-everywhere bet on x86_64: same compiler config +
+target ⇒ same bytes, native stdenv vs cross-to-self.
+
+Wiring (additive; native + aarch64 drvs verified byte-identical):
+- `dependsX86Cross` — depends.nix with `crossInputs = x86CrossInputs`
+  (hostTriple already defaulted to x86_64-linux-gnu). **One new
+  cross-to-self-only gotcha**: `depends/hosts/linux.mk` special-cases an
+  x86 build machine (`ifeq (86,$(findstring 86,$(build_arch)))`) and
+  forces ALL x86_64 host tools native+unprefixed (`CC=gcc -m64`, `AR=ar`,
+  `RANLIB=ranlib`, …) — in GUIX's container that native gcc IS the pinned
+  toolchain, but here it's the 2.42-glibc stdenv, so host packages picked
+  up glibc-2.38+ symbols (`__isoc23_strtoul` in capnp's libkj → mptest
+  link failure). Fixed by a cross-only `postPatch` (via `optionalAttrs`,
+  so the other depends drvs don't change) that disables the conditional —
+  the `else` branch then gives `CC=$(default_host_CC) -m64` =
+  `x86_64-linux-gnu-gcc -m64` + prefixed binutils, exactly what depends
+  does for this host on any non-x86 build machine. aarch64 never hit this
+  (the special-case is x86-host-only).
+- `bitcoind-x86-cross.nix` — bitcoind.nix's x86 values (frame pointers,
+  interpreter, CRCs, hashes) in bitcoind-aarch64.nix's cross structure
+  (CC=x86_64-linux-gnu-gcc export, prefixed cross binutils 2.41 for
+  split-debug). Intended to eventually replace bitcoind.nix.
+
+Step 1 (the toolchain itself) below; next: tarball from the cross build,
+then the `.dbg` divergence work (`-gz`, header prefix-maps,
+`-fdebug-prefix-map`) which this cross build unblocks, then unify/replace
+the native path and generalize over build hosts ("cross everywhere").
+
+### Step 1 (2026-06-10): the x86_64 cross-to-self toolchain
 
 First step of the cross-everywhere / `.dbg`-fix plan: build the GUIX-style
 **`x86_64-linux-gnu` cross-to-self toolchain** (GUIX builds the x86_64

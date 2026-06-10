@@ -180,7 +180,7 @@
     in {
       packages.${system} = {
         inherit (drvs) depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231
-          crossGlibc231X86 crossGuixGccX86;
+          crossGlibc231X86 crossGuixGccX86 dependsX86Cross bitcoindX86Cross;
         default = drvs.bitcoind;
       };
     };
