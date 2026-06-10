@@ -135,3 +135,59 @@ jobs:
           echo "expected: $expected"
           echo "actual:   $actual"
           [ "$actual" = "$expected" ]
+
+  # "Cross everywhere" verification on an AARCH64 build host. The flake
+  # exposes the same pipeline per build system (attr names refer to the
+  # TARGET), so on this arm runner `.#tarballAarch64` is an aarch64
+  # cross-to-self build (the trivial cross) and `.#tarball` is the x86_64
+  # release cross-compiled FROM aarch64. Every derivation gates the exact
+  # same upstream hashes as the x86_64-hosted jobs above — success here
+  # proves the outputs are build-host-independent. Nothing in these jobs
+  # shares store paths with the x86_64-hosted Cachix entries (different
+  # build-host drvs), so the first run is a long cold build; Cachix caches
+  # subsequent runs.
+  build-on-aarch64-host:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#tarballAarch64 -o result-tarball --print-build-logs
+      - name: Verify aarch64-on-aarch64 (cross-to-self) tarball matches upstream
+        run: |
+          expected=4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112
+          actual=$(sha256sum result-tarball | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]
+
+  build-x86-target-on-aarch64-host:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#tarball -o result-tarball --print-build-logs
+      - name: Verify x86_64-from-aarch64 tarball matches upstream
+        run: |
+          expected=d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074
+          actual=$(sha256sum result-tarball | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]

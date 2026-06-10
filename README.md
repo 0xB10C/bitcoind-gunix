@@ -50,6 +50,12 @@ follow-ups: https://github.com/0xB10C/bitcoind-gunix/issues/6
 
 Requires Nix with flakes enabled.
 
+The flake exposes the same pipeline for **both `x86_64-linux` and
+`aarch64-linux` build hosts** ("cross everywhere"); package names refer to
+the *target*. On an x86_64 machine `.#bitcoind` is a cross-to-self build
+and `.#bitcoindAarch64` a cross build; on an aarch64 machine it's exactly
+mirrored — every derivation gates the same upstream hashes either way.
+
 ```sh
 # All ten binaries (result/bin/* and result/libexec/*):
 nix build .#bitcoind --print-build-logs
@@ -90,7 +96,8 @@ remaining byte patch. See `CLAUDE.md` for the full rationale.
 ## Layout
 
 - `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` and exposes
-  the outputs; all toolchain construction lives in `default.nix`.
+  the outputs per build host (`packages.{x86_64,aarch64}-linux`); all
+  toolchain construction lives in `default.nix`.
 - `default.nix` — assembles the two GUIX-exact **cross toolchains**
   (binutils 2.41, glibc 2.31 from GUIX's git source, gcc 14.3.0 with the
   `gcc-ssa-generation` patch and GUIX's `linux-base-gcc` flags, rebuilt

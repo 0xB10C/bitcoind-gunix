@@ -16,14 +16,26 @@ let
   # NOP-fill order and depsBuildTarget. See CLAUDE.md's 2026-06-10 status
   # and git history (pre-2026-06-10 default.nix) for the native chain.
 
+  # The build host system, taken from the incoming pkgs ("cross
+  # everywhere"): every target's cross toolchain is instantiated FROM this
+  # system, so the same definitions build every target on any build host —
+  # on x86_64-linux, pkgsCrossX86 is a cross-to-self and pkgsCrossAarch64 a
+  # real cross; on aarch64-linux it's exactly mirrored. The target triples
+  # (and hence the GUIX-exact toolchain configs) never change; only the
+  # host the compilers run on does. The core bet — cross toolchains emit
+  # build-host-independent target bytes — is proven on x86_64 hosts (both
+  # targets' gates); other hosts re-assert the same gates.
+  buildSystem = pkgs.stdenv.hostPlatform.system;
+
   # --- aarch64 cross-compile ---
-  # nixpkgs instantiated to cross-compile x86_64 -> aarch64-linux-gnu. We
-  # use the GUIX target triple `aarch64-linux-gnu` (not nixpkgs' default
+  # nixpkgs instantiated to cross-compile buildSystem -> aarch64-linux-gnu.
+  # We use the GUIX target triple `aarch64-linux-gnu` (not nixpkgs' default
   # `aarch64-unknown-linux-gnu`) so the cross compiler is named
   # `aarch64-linux-gnu-gcc`, which is what Bitcoin's depends Makefile
-  # invokes for HOST packages.
+  # invokes for HOST packages. (On an aarch64-linux build host this is a
+  # cross-to-self, the exact mirror of pkgsCrossX86 on x86_64.)
   pkgsCrossAarch64 = import pkgs.path {
-    localSystem = "x86_64-linux";
+    localSystem = buildSystem;
     crossSystem = { config = "aarch64-linux-gnu"; };
   };
 
@@ -263,7 +275,7 @@ let
   # native one is removed — see the NOTE above); it is also what makes the
   # .dbg target-triple divergence fixable (CLAUDE.md "Task #2 finding").
   pkgsCrossX86 = import pkgs.path {
-    localSystem = "x86_64-linux";
+    localSystem = buildSystem;
     crossSystem = { config = "x86_64-linux-gnu"; };
   };
 
