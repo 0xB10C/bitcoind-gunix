@@ -405,7 +405,9 @@ gcc14Stdenv.mkDerivation (rec {
     unset CC CXX AR RANLIB NM STRIP OBJCOPY OBJDUMP
   '';
 } // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple) {
-  # Cross-to-self only: hosts/linux.mk special-cases an x86 build machine —
+  # x86_64-target cross builds only (on a non-x86 build machine the make
+  # conditional below is false and the sed is a harmless no-op):
+  # hosts/linux.mk special-cases an x86 build machine —
   # `ifeq (86,$(findstring 86,$(build_arch)))` forces ALL the x86_64 host
   # tools to the native unprefixed ones (CC="gcc -m64", AR=ar, RANLIB=
   # ranlib, NM=nm, STRIP=strip). In GUIX's container that native gcc IS the

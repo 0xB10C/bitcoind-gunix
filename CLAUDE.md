@@ -6,6 +6,24 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-10): "cross everywhere" — generalized over build hosts
+
+default.nix now derives `localSystem` for both cross package sets from the
+incoming `pkgs` (`buildSystem = pkgs.stdenv.hostPlatform.system`), and
+flake.nix exposes the same pipeline per build host
+(`packages.{x86_64-linux,aarch64-linux}.*`, attr names = TARGET). On an
+aarch64 host, `.#bitcoindAarch64` becomes a cross-to-self (the trivial
+cross) and `.#bitcoind` a real aarch64→x86_64 cross — with ZERO definition
+changes; the target triples and toolchain configs are host-independent.
+x86_64-hosted drvs verified byte-identical to before the change (pure
+refactor for the existing host); aarch64-hosted drvs evaluate. Actual
+byte-verification on an aarch64 host runs in CI: two new
+`ubuntu-24.04-arm` jobs build `.#tarballAarch64` (aarch64-on-aarch64) and
+`.#tarball` (x86_64-from-aarch64), each gating the same upstream hashes —
+green arm jobs prove build-host-independence (this machine has no qemu
+binfmt, so CI is where the proof runs; expect the first arm runs to be
+long cold builds with no Cachix overlap with the x86-hosted paths).
+
 ## Status (2026-06-10): x86_64 cross-to-self IS the canonical path — native removed
 
 The cross-to-self build replaced the native one: `.#bitcoind` /
