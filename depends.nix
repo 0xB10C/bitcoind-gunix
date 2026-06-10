@@ -404,4 +404,23 @@ gcc14Stdenv.mkDerivation (rec {
   preBuild = ''
     unset CC CXX AR RANLIB NM STRIP OBJCOPY OBJDUMP
   '';
+} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple) {
+  # Cross-to-self only: hosts/linux.mk special-cases an x86 build machine —
+  # `ifeq (86,$(findstring 86,$(build_arch)))` forces ALL the x86_64 host
+  # tools to the native unprefixed ones (CC="gcc -m64", AR=ar, RANLIB=
+  # ranlib, NM=nm, STRIP=strip). In GUIX's container that native gcc IS the
+  # pinned 2.31-glibc toolchain, but here it would be the plain build
+  # stdenv (glibc 2.42) — host packages then carry glibc-2.38+ symbol refs
+  # (__isoc23_strtoul in capnp's libkj) that can't link against our 2.31.
+  # Disable the special-case so the `else` branch applies: CC=
+  # $(default_host_CC) -m64 = x86_64-linux-gnu-gcc -m64 and prefixed
+  # binutils — i.e. exactly what depends does for an x86_64-linux-gnu host
+  # on any NON-x86 build machine, and what it already does for the aarch64
+  # cross build. A separate optionalAttrs (not optionalString inside
+  # postUnpack) so the native/aarch64 derivations stay byte-identical.
+  postPatch = ''
+    sed -i 's|ifeq (86,$(findstring 86,$(build_arch)))|ifeq (x86-build-machine-special-case,disabled-for-cross-to-self)|' \
+      hosts/linux.mk
+    grep -q 'disabled-for-cross-to-self' hosts/linux.mk || { echo "linux.mk sed failed"; exit 1; }
+  '';
 })

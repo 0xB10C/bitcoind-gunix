@@ -575,7 +575,37 @@ let
       '';
     });
   };
+
+  # x86_64-linux-gnu cross toolchain inputs — the cross-to-self analog of
+  # aarch64CrossInputs. Prefix-only binaries (x86_64-linux-gnu-gcc/-objcopy/
+  # …), so they never shadow the native build compiler on PATH.
+  x86CrossInputs = [
+    crossGuixGccX86
+    crossGuixGccX86.bintools
+  ];
+
+  # Cross-to-self depends + bitcoind: the same release as `depends`/
+  # `bitcoind` (identical 10 upstream hashes asserted) but built through the
+  # x86_64-linux-gnu cross toolchain like GUIX does, instead of the native
+  # gcc14Glibc231Stdenv. depends.nix needs no changes — hostTriple is
+  # already "x86_64-linux-gnu" (its default; the native path sets HOST= to
+  # force depends' cross-compile mode), and passing crossInputs flips it to
+  # use the prefixed cross tools for HOST packages (native helper tools use
+  # the plain gcc14Stdenv, exactly like dependsAarch64).
+  dependsX86Cross = pkgs.callPackage ./depends.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = "x86_64-linux-gnu";
+    buildQt = true;
+    crossInputs = x86CrossInputs;
+  };
+  bitcoindX86Cross = pkgs.callPackage ./bitcoind-x86-cross.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    depends = dependsX86Cross;
+    crossInputs = x86CrossInputs;
+  };
 in {
   inherit depends bitcoind tarball dependsAarch64 bitcoindAarch64 tarballAarch64 crossGlibc231
-    crossGlibc231X86 crossGuixGccX86;
+    crossGlibc231X86 crossGuixGccX86 dependsX86Cross bitcoindX86Cross;
 }
