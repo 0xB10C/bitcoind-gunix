@@ -2,8 +2,12 @@
 
 A Nix flake that reproduces the official Bitcoin Core GUIX release with
 **byte-identical sha256** — all ten binaries **and** the full release
-archive — for both `x86_64-linux-gnu` and `aarch64-linux-gnu`. The aarch64
-release is **cross-compiled on an x86_64 host** (no qemu).
+archive — for both `x86_64-linux-gnu` and `aarch64-linux-gnu`. Both
+targets are built the way GUIX builds them: through a **cross toolchain
+for the vendor-less target triple** — a "cross-to-self"
+`x86_64-linux-gnu` toolchain for the x86_64 release, and an aarch64 cross
+toolchain for the aarch64 release (**cross-compiled on an x86_64 host**,
+no qemu).
 
 ## Status
 
@@ -85,23 +89,22 @@ remaining byte patch. See `CLAUDE.md` for the full rationale.
 
 ## Layout
 
-- `flake.nix` — entry point. Pins `nixpkgs` to `nixos-25.11` and builds
-  glibc 2.31 by overriding 25.11's glibc down to 2.31 (GUIX's exact git
-  source), compiled with 25.11's **gcc 14.3.0** — the same gcc version
-  GUIX uses, so no post-install byte patching of glibc is needed.
-- `default.nix` — assembles the gcc 14 + glibc 2.31 toolchain (binutils
-  downgraded to 2.41, the `gcc-ssa-generation` patch, GUIX's
-  `linux-base-gcc` flags), and the matching **aarch64 cross toolchain**
-  (cross binutils 2.41 + cross gcc rebuilt against cross glibc 2.31 via
-  `libcCross`). Exposes both the x86_64 and aarch64 outputs.
+- `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` and exposes
+  the outputs; all toolchain construction lives in `default.nix`.
+- `default.nix` — assembles the two GUIX-exact **cross toolchains**
+  (binutils 2.41, glibc 2.31 from GUIX's git source, gcc 14.3.0 with the
+  `gcc-ssa-generation` patch and GUIX's `linux-base-gcc` flags, rebuilt
+  against glibc 2.31 via `libcCross`): cross-to-self `x86_64-linux-gnu`
+  and cross `aarch64-linux-gnu`. Exposes both targets' outputs.
 - `depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the full
   Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves both
   `x86_64-linux-gnu` and the `aarch64-linux-gnu` cross build (`HOST=` puts
   depends in cross-compile mode, matching GUIX either way).
 - `bitcoind.nix` / `bitcoind-aarch64.nix` — build all of Bitcoin Core via
-  CMake, then split-debug, `.comment` rewrite, `.gnu_debuglink` CRC patch,
-  and assert all ten binary hashes. The aarch64 variant cross-compiles with
-  the aarch64 ELF interpreter and the cross binutils.
+  CMake with the prefixed cross compiler, then split-debug (cross binutils
+  2.41), `.comment` rewrite, `.gnu_debuglink` CRC patch, and assert all
+  ten binary hashes. The two differ in frame-pointer flags, ELF
+  interpreter, and the per-binary CRC/hash tables.
 - `tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
   byte-identical to upstream and asserts its hash (parameterized by `arch`).
 - `patches/` — patch files applied via the .nix derivations.
