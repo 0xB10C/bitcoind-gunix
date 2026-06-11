@@ -13,7 +13,8 @@
 # 1776286524). We can't reproduce those ambient conditions in the Nix
 # sandbox, so we pin them explicitly on the tar command line
 # (--mtime / --owner / --group / --numeric-owner) — same resulting bytes.
-{ runCommandLocal
+{ lib
+, runCommandLocal
 , gnutar
 , gzip
 , coreutils
@@ -26,6 +27,11 @@
 # x86_64; pass arch = "aarch64-linux-gnu" + the aarch64 bitcoind + expected
 # hash to assemble the aarch64 release archive.
 , arch ? "x86_64-linux-gnu"
+# debug = true assembles the -debug.tar.gz instead: only the .dbg files,
+# selected exactly like GUIX build.sh's `find DISTNAME -name "*.dbg"` (note:
+# unlike the main archive, no directory entries match, so the archive
+# contains just the 10 file entries). Pass the matching expectedSha256.
+, debug ? false
 , expectedSha256 ? "d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074"
 }:
 
@@ -33,13 +39,24 @@ let
   src = fetchurl { inherit url sha256; };
   # SOURCE_DATE_EPOCH = `git log --format=%at -1` of the v31.0 tag.
   sourceDateEpoch = "1776286524";
+  archiveName = "bitcoin-${version}-${arch}${lib.optionalString debug "-debug"}.tar.gz";
 in
-runCommandLocal "bitcoin-${version}-${arch}.tar.gz"
+runCommandLocal archiveName
 {
   nativeBuildInputs = [ gnutar gzip coreutils ];
-} ''
+} (''
   D=bitcoin-${version}
-  mkdir -p "$D/bin" "$D/libexec" "$D/share/man/man1" "$D/share/rpcauth"
+  mkdir -p "$D/bin" "$D/libexec"
+'' + (if debug then ''
+  # Debug archive: just the ten .dbg files.
+  for b in bitcoin bitcoin-cli bitcoind bitcoin-qt bitcoin-tx bitcoin-util bitcoin-wallet; do
+    cp ${bitcoind}/bin/$b.dbg "$D/bin/$b.dbg"
+  done
+  for b in bitcoin-gui bitcoin-node test_bitcoin; do
+    cp ${bitcoind}/libexec/$b.dbg "$D/libexec/$b.dbg"
+  done
+'' else ''
+  mkdir -p "$D/share/man/man1" "$D/share/rpcauth"
 
   # Stripped runtime binaries (the .dbg debug files are excluded from the
   # main archive — they ship in the separate -debug tarball).
@@ -66,16 +83,17 @@ runCommandLocal "bitcoin-${version}-${arch}.tar.gz"
   cp srctmp/bitcoin-${version}/README.md "$D/README.md"
   cp srctmp/bitcoin-${version}/share/examples/bitcoin.conf "$D/bitcoin.conf"
   cp srctmp/bitcoin-${version}/share/rpcauth/* "$D/share/rpcauth/"
+'') + ''
 
   # Normalize permissions before tar (its --mode is symbolic, so the a+X
   # result depends on the current executable bit).
   find "$D" -type d -exec chmod 755 {} +
   find "$D" -type f -exec chmod 644 {} +
-  # Executables: the 10 binaries and the rpcauth.py script (upstream ships
-  # all of these 0755; tar's `a+X` only keeps the exec bit if it's set).
-  chmod 755 "$D"/bin/* "$D"/libexec/* "$D"/share/rpcauth/rpcauth.py
+  # Executables (and the .dbg files, which objcopy creates 0755 — upstream
+  # ships them 0755 too; tar's `a+X` only keeps the exec bit if it's set).
+  chmod 755 "$D"/bin/* "$D"/libexec/* ${lib.optionalString (!debug) ''"$D"/share/rpcauth/rpcauth.py''}
 
-  find "$D" -not -name '*.dbg' -print0 | LC_ALL=C sort -z \
+  find "$D" ${if debug then "-name '*.dbg'" else "-not -name '*.dbg'"} -print0 | LC_ALL=C sort -z \
     | tar --create --no-recursion --mode='u+rw,go+r-w,a+X' --null --files-from=- \
           --mtime=@${sourceDateEpoch} --owner=0 --group=0 --numeric-owner \
     | gzip -9n > "$out"
@@ -87,5 +105,5 @@ runCommandLocal "bitcoin-${version}-${arch}.tar.gz"
     echo "  actual:   $actual"
     exit 1
   fi
-  echo "OK: bitcoin-${version}-${arch}.tar.gz matches upstream ($actual)"
-''
+  echo "OK: ${archiveName} matches upstream ($actual)"
+'')

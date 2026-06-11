@@ -6,6 +6,81 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-11): .dbg BYTE-IDENTICAL — CRC patch GONE, -debug.tar.gz reproduces
+
+All ten `.dbg` debug files are now byte-identical to upstream's, so the
+LAST byte-patch (the `.gnu_debuglink` CRC32 overwrite) is removed —
+`objcopy --add-gnu-debuglink` computes upstream's CRC naturally — and
+`nix build .#debugTarball` assembles `bitcoin-31.0-x86_64-linux-gnu-
+debug.tar.gz` byte-identical to upstream (`96e35061…`). bitcoind.nix's
+gate now asserts ALL 20 artifacts (10 binaries + 10 .dbg) every build.
+EVERY published artifact of the x86_64 release now reproduces exactly.
+
+What it took (each fix verified by re-diffing bitcoind.dbg vs upstream;
+the old "Task #2 finding" was largely obsolete — its #2 came free with
+cross-to-self, its #3 needed only three header maps, and several real
+divergences weren't in that list at all):
+
+- **bitcoind.nix flags**: comp_dir map to GUIX's real
+  `/distsrc-base/distsrc-31.0-x86_64-linux-gnu` (DISTSRC; NOT /bitcoin —
+  only depends lives there), `-fdebug-prefix-map=…/src=.` like build.sh,
+  `cmakeBuildType=RelWithDebInfo` (bitcoin's default; nixpkgs' hook forced
+  Release — visible as `-g -g -O2 -O2 -O2` vs `-g -O2 -O2` in
+  DW_AT_producer), NO explicit frame-pointer flags (a NoFp cc-wrapper
+  variant stops nixpkgs' -fno-omit-frame-pointer injection; every explicit
+  flag is recorded in DW_AT_producer and upstream compiles bare `-O2 -g`),
+  drop nixpkgs' `-frandom-seed=<outhash>` (reproducible-builds hook),
+  store→/usr header maps (gcc c++ headers map VERSION-LESS to
+  /usr/include/c++ — GUIX's --with-gxx-include-dir layout; sys-include →
+  /usr/include; lib/gcc → /usr/lib/gcc; linux-headers → /usr/include).
+- **kernel headers pinned to GUIX's 6.1.119** (`linuxHeaders61`): header
+  VERSION leaks into DWARF — 6.18 has rtnetlink enumerators (RTM_NEW
+  MULTICAST, RTA_FLOWLABEL, …) 6.1 lacks. Used for glibc --with-headers →
+  gcc sys-include → bitcoind compiles.
+- **glibc 2.31 with debug info**: `separateDebugInfo=false` (its hook
+  added `-ggdb` — recorded; its fixup stripped the members) + dontStrip;
+  `-fdebug-prefix-map=/build/glibc-2.31=/tmp/guix-build-glibc-cross-
+  x86_64-linux-gnu-2.31.drv-0/source` (glibc compiles with CWD in source
+  subdirs, so ONE map covers all comp_dirs); `--disable-static-pie`
+  (nixpkgs passes --enable-static-pie → glibc adds a recorded `-fpie` to
+  csu objects; upstream has none) with the forced CC rebuilt
+  `--enable-default-pie` (same PIE codegen, no flag — GUIX's
+  linux-base-gcc builds their glibc, see manifest.scm base-gcc-for-libc)
+  + `--with-as/--with-ld` = cross binutils 2.41 (gas GENERATES
+  .debug_line; 2.46's encoding diverges); hardeningDisable += "pic" (the
+  wrapper's default -fPIC injection broke glibc's pie-default detection →
+  non-PIE crt selection vs default-PIE driver → iconvconfig link failure,
+  and would be recorded where glibc passes no own pic/pie flag); static
+  libs kept in $out/lib next to the shared ones like GUIX (no $static
+  split — `-static` links must find -lc/-lm, e.g. Qt's feature checks).
+- **gcc target libs with debug info**: dontStrip + `-g` in
+  CFLAGS_FOR_TARGET only (libgcc CUs; producer `-g -g -g -O2 -O2 -O2`
+  reproduced exactly: the compile line is FLAGS_FOR_TARGET +
+  CFLAGS_FOR_TARGET + [literal -O2 + GCC_CFLAGS(=CFLAGS_FOR_TARGET) +
+  LIBGCC2_DEBUG_CFLAGS(-g)], so -g lands 3× and FLAGS_FOR_TARGET gets
+  EXTRA's -O2 stripped → 3×); `-fdebug-prefix-map=/build/build=/tmp/
+  guix-build-gcc-cross-x86_64-linux-gnu-14.3.0.drv-0/build` (same source
+  shape, one map covers comp_dir + relative names); glibc-dev →
+  /usr/include map for unwind-dw2-fde-dip's <elf.h>; libstdc++/libsupc++
+  archives strip-debug'd in postFixup (upstream has no CUs from them —
+  libsupc++'s C members would otherwise leak cp-demangle.c).
+- **compressed debug sections**: crossBinutils241X86 configured
+  `--enable-compressed-debug-sections=all` like GUIX (that's why
+  split-debug.sh needs no explicit flag) and WITHOUT nixpkgs'
+  `--with-system-zlib` (GUIX uses binutils' bundled zlib; same 2.41
+  tarball ⇒ identical deflate bytes).
+- **Qt posix ipc features preseeded** (depends.nix qt.mk sed:
+  HAVE_GETTIME, HAVE_SHM_OPEN_SHM_UNLINK, TEST_posix_shm,
+  TEST_posix_sem): in the sandbox Qt's configure-time link checks fail
+  where GUIX's container passes them, leaving QT_FEATURE_posix_shm/
+  posix_sem OFF; upstream compiles qsharedmemory_posix.cpp /
+  qsystemsemaphore_posix.cpp to feature-gated EMPTY objects whose two
+  STT_FILE symtab entries were the final 96 bytes of
+  bitcoin-qt.dbg/bitcoin-gui.dbg.
+
+The aarch64 `.dbg` are NOT yet byte-matched (the aarch64 toolchain keeps
+the old structure; its CRC patch stays) — same recipe applies if wanted.
+
 ## Status (2026-06-10): "cross everywhere" — generalized over build hosts
 
 default.nix now derives `localSystem` for both cross package sets from the

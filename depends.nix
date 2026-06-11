@@ -424,5 +424,21 @@ gcc14Stdenv.mkDerivation (rec {
     sed -i 's|ifeq (86,$(findstring 86,$(build_arch)))|ifeq (x86-build-machine-special-case,disabled-for-cross-to-self)|' \
       hosts/linux.mk
     grep -q 'disabled-for-cross-to-self' hosts/linux.mk || { echo "linux.mk sed failed"; exit 1; }
+
+    # Preseed the Qt configure check results that come out differently in
+    # the Nix sandbox than in GUIX's container, to upstream's values:
+    # HAVE_GETTIME/HAVE_SHM_OPEN_SHM_UNLINK make FindWrapRt succeed (the
+    # WrapRt::WrapRt target must exist for the posix ipc features), and
+    # TEST_posix_shm/TEST_posix_sem turn on
+    # QT_FEATURE_posix_shm/posix_sem like upstream. The effect on the
+    # output is exactly two feature-gated-to-EMPTY objects
+    # (qsharedmemory_posix.cpp, qsystemsemaphore_posix.cpp — the selected
+    # ipc backend is sysv on both sides, and the stripped runtime binaries
+    # byte-matched all along): they contribute the two STT_FILE symtab
+    # entries that were the final 96 bytes between our
+    # bitcoin-qt.dbg/bitcoin-gui.dbg and upstream's.
+    sed -i 's|-DCMAKE_PREFIX_PATH=$(host_prefix)$|-DCMAKE_PREFIX_PATH=$(host_prefix) -DHAVE_GETTIME=ON -DHAVE_SHM_OPEN_SHM_UNLINK=ON -DTEST_posix_shm=ON -DTEST_posix_sem=ON|' \
+      packages/qt.mk
+    grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
   '';
 })

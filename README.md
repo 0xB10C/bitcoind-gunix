@@ -64,6 +64,10 @@ nix build .#bitcoind --print-build-logs
 nix build .#tarball --print-build-logs
 sha256sum result        # -> d3e4c58a…
 
+# The debug-symbols archive (x86_64; all ten .dbg byte-identical too):
+nix build .#debugTarball --print-build-logs
+sha256sum result        # -> 96e35061…
+
 # The aarch64 release, cross-compiled on x86_64 (10 binaries + tarball):
 nix build .#bitcoindAarch64 --print-build-logs
 nix build .#tarballAarch64 --print-build-logs
@@ -87,11 +91,13 @@ bitcoin-tx,bitcoin-util,bitcoin-wallet}`, `libexec/{bitcoin-gui,
 bitcoin-node,test_bitcoin}`) and the `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
 archive.
 
-Not reproduced: the separate `-debug.tar.gz`. The `.dbg` debug files are
-produced but aren't byte-reproducible (their DWARF records GUIX-internal
-build paths and a different target triple), so each stripped binary's
-4-byte `.gnu_debuglink` CRC is patched to upstream's value — the only
-remaining byte patch. See `CLAUDE.md` for the full rationale.
+For x86_64, the separate `bitcoin-31.0-x86_64-linux-gnu-debug.tar.gz` is
+**also reproduced** (`nix build .#debugTarball` → `96e35061…`): all ten
+`.dbg` debug files are byte-identical to upstream's, so no byte patching
+of any kind remains in the x86_64 pipeline (the historical
+`.gnu_debuglink` CRC patch is gone — the CRC now matches naturally).
+The aarch64 `.dbg` files are not yet byte-matched (their CRC patch
+remains); the runtime binaries and release archive reproduce as above.
 
 ## Layout
 
