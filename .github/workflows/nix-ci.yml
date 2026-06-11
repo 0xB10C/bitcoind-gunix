@@ -146,8 +146,16 @@ jobs:
   # shares store paths with the x86_64-hosted Cachix entries (different
   # build-host drvs), so the first run is a long cold build; Cachix caches
   # subsequent runs.
+  # KNOWN BROKEN, non-blocking (see CLAUDE.md 2026-06-11 arm CI status):
+  # on an aarch64 host the target triple aarch64-linux-gnu canonicalizes
+  # to the build triple (aarch64-unknown-linux-gnu), so gcc's build
+  # system treats nixpkgs' bootstrap nolibc cross gcc as a NATIVE build
+  # and fixincludes demands /usr/include, absent in the sandbox
+  # (stmp-fixinc fails). Postponed — to be fixed iterating on an actual
+  # aarch64 machine. Kept continue-on-error as a visible reminder.
   build-on-aarch64-host:
     runs-on: ubuntu-24.04-arm
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v6

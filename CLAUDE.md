@@ -6,6 +6,35 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-11): arm CI first run — x86_64-from-aarch64 PROVEN; aarch64-on-aarch64 POSTPONED
+
+The two `ubuntu-24.04-arm` CI jobs (the outstanding "cross everywhere"
+byte-proof) ran for the first time:
+
+- **`build-x86-target-on-aarch64-host` PASSED**: the x86_64 release
+  cross-compiled FROM an aarch64 host gates the same upstream hashes
+  (`d3e4c58a…` tarball). The cross-everywhere bet — same toolchain
+  config + target ⇒ same bytes, regardless of build host — is now
+  byte-proven in both directions for the x86_64 target.
+- **`build-on-aarch64-host` (aarch64-on-aarch64 trivial cross) FAILS
+  structurally and is POSTPONED.** Root cause: config.sub canonicalizes
+  the vendor-less target `aarch64-linux-gnu` → `aarch64-unknown-linux-gnu`
+  (aarch64's default vendor is "unknown"; x86_64's is "pc", which is why
+  the x86_64 cross-to-self never hit this) — which EQUALS the build
+  triple on an aarch64 host. nixpkgs still treats it as cross (the
+  config strings differ), but gcc's own build system sees build ==
+  target → NATIVE build → fixincludes runs against
+  BUILD_SYSTEM_HEADER_DIR=/usr/include, absent in the Nix sandbox →
+  `stmp-fixinc` fails in the BOOTSTRAP `aarch64-linux-gnu-nolibc-gcc`
+  (nixpkgs' cross-stage-static gcc 15.2.0, built long before our pinned
+  toolchain). A fix means overriding that bootstrap gcc (e.g.
+  `--disable-fixincludes`) gated to aarch64 build hosts — bootstrap
+  override plumbing with every test iteration a multi-hour cold arm CI
+  run, since this machine has no aarch64 builder or qemu binfmt.
+  **Decision: tackle it in the future ON an aarch64 runner/machine for
+  fast iteration.** Until then the CI job is `continue-on-error: true`
+  (kept visible as a reminder, non-blocking).
+
 ## Status (2026-06-11, later): aarch64 .dbg ALSO byte-identical — NO byte patches left ANYWHERE
 
 The x86_64 `.dbg` recipe (next section) was mirrored onto the aarch64
