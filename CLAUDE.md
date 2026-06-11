@@ -6,6 +6,58 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-11, evening): riscv64 release reproduced — ROUND 1, all 22 artifacts
+
+The third target. `nix build .#bitcoindRiscv64` byte-matches all 10
+binaries AND all 10 `.dbg` of the upstream
+`bitcoin-31.0-riscv64-linux-gnu` release on the FIRST build, and
+`.#tarballRiscv64` / `.#debugTarballRiscv64` assemble both archives
+byte-identically (`7ece4ea3…` / `acd0e38f…`). A 20-hash gate in
+`bitcoind-riscv64.nix` + the two tarball gates assert this every build;
+CI got a `build-riscv64` job (analog of `build-aarch64`). 66 artifacts
+across three targets now reproduce.
+
+The riscv64 pipeline is a 1:1 mirror of the aarch64 one (trio
+`crossBinutils241Riscv64`/`crossGlibc231Riscv64`/`crossGuixGccRiscv64` +
+NoFp wrappers in default.nix; `bitcoind-riscv64.nix`). That round 1
+matched validates the recipe — every divergence class found on
+x86_64/aarch64 was pre-checked against the upstream riscv64 `.dbg`
+before building. The riscv64-only deltas:
+
+- **No `--with-arch` issue (the aarch64 trap inverted)**: every upstream
+  CU's producer records driver-injected `-mabi=lp64d -misa-spec=20191213
+  -mtls-dialect=trad -march=rv64imafdc_zicsr_zifencei` — but these come
+  from gcc's OWN config.gcc defaults for riscv64-linux (rv64gc/lp64d
+  canonicalized), and nixpkgs passes NO --with-arch/--with-abi for riscv
+  (riscv-multiplatform defines no gcc.arch — checked in nixpkgs source),
+  so nixpkgs' and GUIX's gcc inject identical strings with zero
+  intervention. Also no cc-wrapper -march injection (same reason).
+- **glibc needs GUIX's `glibc-riscv-jumptarget.patch`** (riscv sysdeps
+  asm HIDDEN_JUMPTARGET fixes; part of GUIX's glibc-2.31 origin patches;
+  copied into `patches/`). The other GUIX glibc patch
+  (glibc-guix-prefix) remains unapplied on all targets (never affected
+  shipped members).
+- **Frame pointers**: riscv -O2 omits the FP with NO leaf/non-leaf split
+  (`-momit-leaf-frame-pointer` is not a riscv option) → depends gets
+  plain `-fomit-frame-pointer` (new three-way arch conditional in
+  depends.nix), and the NoFp wrappers strip only
+  `-fno-omit-frame-pointer` (the cc-wrapper injects no leaf variant for
+  riscv+gcc14 — that arm of the wrapper is gcc>=15.1-gated).
+- **No CET (x86-only) / no standard-branch-protection (aarch64-only)**
+  in any riscv gcc configure; interpreter is
+  `/lib/ld-linux-riscv64-lp64d.so.1`; GUIX drv-0/DISTSRC paths follow
+  the exact aarch64 pattern with the riscv64 triple (verified in
+  upstream comp_dirs before building).
+- depends' Qt posix-ipc preseed gate widened to riscv64 (same
+  sandbox-vs-container divergence); hosts/linux.mk needs nothing (its
+  special case is x86-host-only).
+
+Method note: this is what "pre-verify before building" buys — the
+upstream reference (tarball hashes from SHA256SUMS, producers/comp_dirs
+from the `.dbg` via arch-agnostic GNU readelf, wrapper/gcc flag
+behavior from nixpkgs+GUIX sources) was fully diffed against the plan
+BEFORE the multi-hour cold build, and the build then passed first try.
+
 ## Status (2026-06-11): arm CI first run — x86_64-from-aarch64 PROVEN; aarch64-on-aarch64 POSTPONED
 
 The two `ubuntu-24.04-arm` CI jobs (the outstanding "cross everywhere"

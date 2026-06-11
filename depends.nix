@@ -337,10 +337,15 @@ gcc14Stdenv.mkDerivation (rec {
   # omits it). So for aarch64 we only omit the LEAF frame pointer and let
   # the wrapper's -fno-omit-frame-pointer keep the non-leaf one — matching
   # upstream's bare -O2. x86_64 omits both (its -O2 default). See the
-  # frame-pointer note in bitcoind-aarch64.nix.
+  # frame-pointer note in bitcoind-aarch64.nix. riscv64 also omits the
+  # frame pointer at -O2, but has no leaf/non-leaf split —
+  # -momit-leaf-frame-pointer is not a riscv option, so it gets only
+  # -fomit-frame-pointer (overriding the wrapper's injection).
   env.NIX_CFLAGS_COMPILE =
-    (if lib.hasPrefix "aarch64" hostTriple then "" else "-fomit-frame-pointer ")
-    + "-momit-leaf-frame-pointer -pipe";
+    (if lib.hasPrefix "aarch64" hostTriple then "-momit-leaf-frame-pointer"
+     else if lib.hasPrefix "riscv64" hostTriple then "-fomit-frame-pointer"
+     else "-fomit-frame-pointer -momit-leaf-frame-pointer")
+    + " -pipe";
 
   # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply to
   # depends compiles:
@@ -441,10 +446,11 @@ gcc14Stdenv.mkDerivation (rec {
       packages/qt.mk
     grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
   '';
-} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "aarch64" hostTriple) {
-  # aarch64 cross build: same Qt posix ipc preseed as the x86_64 block
-  # above (the sandbox-vs-GUIX-container configure-check divergence is
-  # host-independent; the two feature-gated-to-EMPTY objects contribute
+} // lib.optionalAttrs (crossInputs != [ ]
+    && (lib.hasPrefix "aarch64" hostTriple || lib.hasPrefix "riscv64" hostTriple)) {
+  # aarch64/riscv64 cross builds: same Qt posix ipc preseed as the x86_64
+  # block above (the sandbox-vs-GUIX-container configure-check divergence
+  # is host-independent; the two feature-gated-to-EMPTY objects contribute
   # STT_FILE symtab entries to bitcoin-qt.dbg/bitcoin-gui.dbg). The
   # hosts/linux.mk special-case does NOT apply here (it's x86-build-
   # machine + x86-host only), so no linux.mk sed. A separate optionalAttrs

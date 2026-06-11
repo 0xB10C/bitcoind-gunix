@@ -415,6 +415,240 @@ let
     expectedSha256 = "91917647aaf50965fc834e048256fce17e8f5590658c7e8de2879fb66cdc9a73";
   };
 
+  # --- riscv64 cross-compile ---
+  # The riscv64-linux-gnu release, mirroring the aarch64 cross pipeline
+  # above 1:1 (see the aarch64 comments for the full reasoning on each
+  # piece). riscv64-specific deltas, all verified against the upstream
+  # riscv64 .dbg/binaries before this was written:
+  # - NO --with-arch/-march handling anywhere: nixpkgs passes no
+  #   --with-arch for riscv (riscv-multiplatform defines no gcc.arch), and
+  #   gcc's own config.gcc default (rv64gc/lp64d) is what GUIX's gcc gets
+  #   too — the driver-injected `-mabi=lp64d -misa-spec=20191213
+  #   -mtls-dialect=trad -march=rv64imafdc_zicsr_zifencei` recorded in
+  #   every upstream CU's DW_AT_producer comes from those shared defaults.
+  # - NO --enable-standard-branch-protection (aarch64-only) and NO
+  #   --enable-cet (x86-only).
+  # - glibc needs GUIX's glibc-riscv-jumptarget.patch (riscv sysdeps asm:
+  #   HIDDEN_JUMPTARGET fixes; part of GUIX's glibc-2.31 source).
+  # - frame pointers: riscv gcc at -O2 omits the frame pointer (like
+  #   x86_64, no leaf/non-leaf split — -momit-leaf-frame-pointer does not
+  #   exist on riscv). The cc-wrapper injects only -fno-omit-frame-pointer
+  #   here (the leaf variant is gcc>=15.1 on riscv), so the NoFp variants
+  #   strip just that one flag.
+  pkgsCrossRiscv64 = import pkgs.path {
+    localSystem = buildSystem;
+    crossSystem = { config = "riscv64-linux-gnu"; };
+  };
+
+  linuxHeaders61Riscv64 = pkgsCrossRiscv64.linuxHeaders.overrideAttrs (o: {
+    version = "6.1.119";
+    src = pkgs.fetchurl {
+      url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
+      hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
+    };
+  });
+
+  # Stock cross gcc14 wrapper used as crossGlibc231Riscv64's forced CC —
+  # see gcc14X86NoFp/gcc14Aarch64NoFpCC. Only default-PIE is baked (GUIX's
+  # linux-base-gcc); no branch-protection/CET analog on riscv.
+  gcc14Riscv64NoFpCC = pkgsCrossRiscv64.buildPackages.gcc14.cc.overrideAttrs (o: {
+    configureFlags = (o.configureFlags or [ ]) ++ [
+      "--enable-default-pie=yes"
+      "--with-as=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-as"
+      "--with-ld=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-ld"
+    ];
+  });
+  gcc14Riscv64NoFp = (pkgsCrossRiscv64.buildPackages.gcc14.override {
+    cc = gcc14Riscv64NoFpCC;
+  }).overrideAttrs (old: {
+    postFixup = (old.postFixup or "") + ''
+      substituteInPlace $out/nix-support/cc-cflags-before \
+        --replace-fail "-fno-omit-frame-pointer" ""
+    '';
+  });
+
+  # riscv64 cross glibc 2.31 — same override set as crossGlibc231 (aarch64)
+  # above, plus GUIX's riscv jumptarget patch.
+  crossGlibc231Riscv64 = (pkgsCrossRiscv64.glibc.override {
+    stdenv = pkgsCrossRiscv64.gcc14Stdenv;
+    linuxHeaders = linuxHeaders61Riscv64;
+  }).overrideAttrs (old: {
+    version = "2.31";
+    src = pkgs.fetchgit {
+      name = "glibc-2.31";
+      url = "https://sourceware.org/git/glibc.git";
+      rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
+      hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+    };
+    patches = [ ./patches/glibc-riscv-jumptarget.patch ];
+    configureFlags =
+      (builtins.filter
+        (f: !(pkgs.lib.hasPrefix "--enable-kernel" f
+          || f == "--enable-stack-protector=strong"
+          || f == "--enable-cet=permissive"
+          || f == "--enable-fortify-source"))
+        (old.configureFlags or [ ]))
+      ++ [
+        "--enable-stack-protector=all"
+        "--enable-bind-now"
+        "--disable-werror"
+        "--disable-timezone-tools"
+        "--disable-profile"
+        "--disable-static-pie"
+      ];
+    env = (old.env or { }) // {
+      NIX_CFLAGS_COMPILE = "-fdebug-prefix-map=/build/glibc-2.31=/tmp/guix-build-glibc-cross-riscv64-linux-gnu-2.31.drv-0/source"
+        + " -ffile-prefix-map=${gcc14Riscv64NoFpCC}/lib/gcc=/usr/lib/gcc"
+        + " -ffile-prefix-map=${linuxHeaders61Riscv64}/include=/usr/include";
+      libc_cv_cxx_link_ok = "no";
+    };
+    separateDebugInfo = false;
+    dontStrip = true;
+    preConfigure = (old.preConfigure or "") + ''
+      export CC=${gcc14Riscv64NoFp}/bin/riscv64-linux-gnu-gcc
+      export NIX_CFLAGS_COMPILE=$(echo "$NIX_CFLAGS_COMPILE" | sed 's/-frandom-seed=[^ ]*//')
+    '';
+    makeFlags = (old.makeFlags or [ ]) ++ [
+      "CC=${gcc14Riscv64NoFp}/bin/riscv64-linux-gnu-gcc"
+    ];
+    hardeningDisable = [
+      "zerocallusedregs" "strictoverflow" "stackprotector"
+      "stackclashprotection" "fortify" "fortify3"
+      "strictflexarrays1" "libcxxhardeningfast"
+      "pic"
+    ];
+    postPatch = ''
+      sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
+      echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
+    '';
+    postInstall = ''
+      moveToOutput bin/getent $getent
+      test -f $out/etc/ld.so.cache && rm $out/etc/ld.so.cache
+      if test -n "$linuxHeaders"; then
+          (cd $dev/include && \
+           ln -sv $(ls -d $linuxHeaders/include/* | grep -v scsi\$) .)
+      fi
+      if test -n "$is64bit"; then
+          ln -s lib $out/lib64
+      fi
+      rm -rf $out/var $bin/bin/sln
+      ln -sf $out/lib/libpthread.so.0 $out/lib/libpthread.so
+      ln -sf $out/lib/librt.so.1 $out/lib/librt.so
+      ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
+      test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
+      touch $out/lib/libpthread.a
+      mkdir -p $static/lib
+      cp $bin/bin/getconf $bin/bin/getconf_
+      mv $bin/bin/getconf_ $bin/bin/getconf
+    '';
+  });
+
+  crossBinutils241Riscv64 = pkgsCrossRiscv64.stdenv.cc.bintools.bintools.overrideAttrs (old: {
+    version = "2.41";
+    src = pkgs.fetchurl {
+      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+    };
+    patches = [ ];
+    configureFlags =
+      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
+      ++ [ "--enable-compressed-debug-sections=all" ];
+  });
+  crossBintools241Riscv64 = pkgsCrossRiscv64.stdenv.cc.bintools.override {
+    bintools = crossBinutils241Riscv64;
+    libc = crossGlibc231Riscv64;
+  };
+
+  # riscv64 cross gcc 14.3.0 with GUIX's linux-base-gcc flags — see
+  # crossGuixGcc (aarch64). riscv deltas: no --enable-standard-
+  # branch-protection (aarch64-only), no --enable-cet (x86-only), no
+  # --with-arch filtering / -march stripping (nixpkgs passes none for
+  # riscv), no -Wa,-mrelax-relocations (GOTPCRELX is x86-only).
+  crossGuixGccRiscv64 = pkgsCrossRiscv64.stdenv.cc.override {
+    bintools = crossBintools241Riscv64;
+    libc = crossGlibc231Riscv64;
+    cc = (pkgsCrossRiscv64.buildPackages.gcc14.cc.override {
+      libcCross = crossGlibc231Riscv64;
+    }).overrideAttrs (old: {
+      configureFlags = (old.configureFlags or [ ]) ++ [
+        "--enable-default-pie=yes"
+        "--enable-default-ssp=yes"
+        "--enable-initfini-array=yes"
+        "--enable-host-bind-now=yes"
+        "--enable-gprofng=no"
+        "--disable-gcov"
+        "--disable-libgomp"
+        "--disable-libquadmath"
+        "--disable-libsanitizer"
+        "--disable-nls"
+        "--with-as=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-as"
+        "--with-ld=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-ld"
+      ];
+      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      preBuild = (old.preBuild or "") + ''
+        EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"
+        GUIXMAPS="-fdebug-prefix-map=/build/build=/tmp/guix-build-gcc-cross-riscv64-linux-gnu-14.3.0.drv-0/build -ffile-prefix-map=${pkgs.lib.getDev crossGlibc231Riscv64}/include=/usr/include -ffile-prefix-map=${linuxHeaders61Riscv64}/include=/usr/include"
+        makeFlagsArray+=(
+          "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS -g"
+          "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+          "FLAGS_FOR_TARGET=$EXTRA_SANS_O2 $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+        )
+      '';
+      dontStrip = true;
+      postFixup = (old.postFixup or "") + ''
+        find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
+          ${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-objcopy \
+            --enable-deterministic-archives --strip-debug "$f"
+        done
+      '';
+    });
+  };
+
+  riscv64CrossInputs = [
+    crossGuixGccRiscv64
+    crossGuixGccRiscv64.bintools
+  ];
+
+  crossGuixGccRiscv64NoFp = crossGuixGccRiscv64.overrideAttrs (old: {
+    postFixup = (old.postFixup or "") + ''
+      substituteInPlace $out/nix-support/cc-cflags-before \
+        --replace-fail "-fno-omit-frame-pointer" ""
+    '';
+  });
+  riscv64CrossInputsNoFp = [
+    crossGuixGccRiscv64NoFp
+    crossGuixGccRiscv64NoFp.bintools
+  ];
+
+  dependsRiscv64 = pkgs.callPackage ./depends.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = "riscv64-linux-gnu";
+    buildQt = true;
+    crossInputs = riscv64CrossInputs;
+  };
+  bitcoindRiscv64 = pkgs.callPackage ./bitcoind-riscv64.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    depends = dependsRiscv64;
+    crossInputs = riscv64CrossInputsNoFp;
+    guixGcc = crossGuixGccRiscv64.cc;
+    linuxHeaders = linuxHeaders61Riscv64;
+  };
+  tarballRiscv64 = pkgs.callPackage ./tarball.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindRiscv64;
+    arch = "riscv64-linux-gnu";
+    expectedSha256 = "7ece4ea365bba9b2008b27f0717ef6a518598a572edaa2815e775faadc53c136";
+  };
+  debugTarballRiscv64 = pkgs.callPackage ./tarball.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindRiscv64;
+    arch = "riscv64-linux-gnu";
+    debug = true;
+    expectedSha256 = "acd0e38f4bb99c7c3024e494ca218d3ae67ec4a8b3b7ae556a8292353fe308b5";
+  };
+
   # --- x86_64 cross-to-self toolchain ---
   # GUIX builds the x86_64 release with a *cross* toolchain targeting the
   # vendor-less triple `x86_64-linux-gnu`, even though the build host is
@@ -801,5 +1035,6 @@ let
   };
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
-    debugTarballAarch64 crossGlibc231 crossGlibc231X86 crossGuixGccX86;
+    debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
+    crossGlibc231 crossGlibc231X86 crossGuixGccX86;
 }
