@@ -28,7 +28,7 @@
           drvs = import ./default.nix { inherit pkgs; };
         in {
           inherit (drvs) depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
-            crossGlibc231 crossGlibc231X86 crossGuixGccX86;
+            debugTarballAarch64 crossGlibc231 crossGlibc231X86 crossGuixGccX86;
           default = drvs.bitcoind;
         });
     };

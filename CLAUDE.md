@@ -6,6 +6,59 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-11, later): aarch64 .dbg ALSO byte-identical — NO byte patches left ANYWHERE
+
+The x86_64 `.dbg` recipe (next section) was mirrored onto the aarch64
+cross toolchain the same day, and after three build rounds all ten
+aarch64 `.dbg` files byte-match upstream's; the aarch64 `.gnu_debuglink`
+CRC patch — the last byte patch in the whole project — is removed, and
+`nix build .#debugTarballAarch64` assembles
+`bitcoin-31.0-aarch64-linux-gnu-debug.tar.gz` byte-identical to upstream
+(`91917647…`). bitcoind-aarch64.nix's gate now asserts all 20 aarch64
+artifacts. Every published artifact of BOTH releases (44 files: 2×10
+binaries, 2×10 .dbg, 4 tarballs) now reproduces exactly.
+
+The mirror was 1:1 (binutils compressed-debug-sections + bundled zlib,
+kernel headers 6.1.119, NoFp wrappers, glibc --disable-static-pie +
+default-PIE forced CC + pic-hardening-off + unsplit static libs + drv-0
+debug-prefix-map, libgcc -g multiplicity + GUIX maps, /usr header maps,
+DISTSRC=/distsrc-base/distsrc-31.0-aarch64-linux-gnu, RelWithDebInfo,
+frandom-seed strip, Qt posix ipc preseeds aarch64-gated in depends.nix)
+with three aarch64-only deltas:
+
+- **glibc's forced CC bakes `--enable-standard-branch-protection=yes`**
+  (verified in manifest.scm: GUIX's linux-base-gcc — the
+  base-gcc-for-libc — has it), replacing the previously EXPLICIT
+  `-mbranch-protection=standard` which was recorded in DW_AT_producer.
+  Same PAC/BTI codegen, clean producer. Frame pointers likewise: the
+  explicit `-momit-leaf-frame-pointer` died with the NoFp wrappers (the
+  aarch64 -O2 default = keep non-leaf, omit leaf = upstream).
+- **`--with-arch=armv8-a` FILTERED OUT of both gcc configures** (the
+  decisive aarch64-only find, round 3): nixpkgs configures the cross gcc
+  with it, and a configured --with-arch makes the gcc DRIVER self-inject
+  `-march=armv8-a` into every cc1 line via OPTION_DEFAULT_SPECS —
+  recorded in EVERY CU's DW_AT_producer (glibc, libgcc, bitcoind alike).
+  Upstream's GUIX gcc has no --with-arch. Stripping the wrapper's
+  cc-cflags-before `-march` injection (round 2) was necessary but not
+  sufficient — the producer-string position shift (-march moving after
+  -mbranch-protection) was the tell that a second injection source
+  existed. armv8-a is the aarch64 baseline default → codegen identical.
+- **kernel-headers map for libgcc's unwind-dw2.c** (`-ffile-prefix-map=
+  ${linuxHeaders61Aarch64}/include=/usr/include` in crossGuixGcc's
+  GUIXMAPS): its <asm/…>/<asm-generic/…> includes resolve through
+  glibc-dev's include SYMLINKS, which gcc canonicalizes to the
+  linux-headers store path — escaping the glibc-dev map that sufficed on
+  x86 (unwind-dw2-fde-dip.c there only needed <elf.h>, a real file).
+
+Methodology note: round 1 (the plain mirror) already got within ~5 KB /
+102 MB on bitcoind.dbg; the residue was localized by per-section size
+diff → .debug_line_str string diff (the unmapped kernel-header dirs in
+ONE line table at 0x136ce5b → DW_AT_stmt_list lookup → unwind-dw2.c) +
+unique-producer-set diff (the -march flag). After round 2, decompressed
+sections were size-identical except .debug_str at exactly +150 bytes =
+10 producer variants × " -march=armv8-a" — pointing straight at the
+configured --with-arch.
+
 ## Status (2026-06-11): .dbg BYTE-IDENTICAL — CRC patch GONE, -debug.tar.gz reproduces
 
 All ten `.dbg` debug files are now byte-identical to upstream's, so the
@@ -78,8 +131,8 @@ divergences weren't in that list at all):
   STT_FILE symtab entries were the final 96 bytes of
   bitcoin-qt.dbg/bitcoin-gui.dbg.
 
-The aarch64 `.dbg` are NOT yet byte-matched (the aarch64 toolchain keeps
-the old structure; its CRC patch stays) — same recipe applies if wanted.
+(The aarch64 `.dbg` were byte-matched with the same recipe later the
+same day — see the status section above.)
 
 ## Status (2026-06-10): "cross everywhere" — generalized over build hosts
 
