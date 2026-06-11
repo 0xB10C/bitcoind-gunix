@@ -441,4 +441,17 @@ gcc14Stdenv.mkDerivation (rec {
       packages/qt.mk
     grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
   '';
+} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "aarch64" hostTriple) {
+  # aarch64 cross build: same Qt posix ipc preseed as the x86_64 block
+  # above (the sandbox-vs-GUIX-container configure-check divergence is
+  # host-independent; the two feature-gated-to-EMPTY objects contribute
+  # STT_FILE symtab entries to bitcoin-qt.dbg/bitcoin-gui.dbg). The
+  # hosts/linux.mk special-case does NOT apply here (it's x86-build-
+  # machine + x86-host only), so no linux.mk sed. A separate optionalAttrs
+  # block so the x86_64 depends derivation stays byte-identical.
+  postPatch = ''
+    sed -i 's|-DCMAKE_PREFIX_PATH=$(host_prefix)$|-DCMAKE_PREFIX_PATH=$(host_prefix) -DHAVE_GETTIME=ON -DHAVE_SHM_OPEN_SHM_UNLINK=ON -DTEST_posix_shm=ON -DTEST_posix_sem=ON|' \
+      packages/qt.mk
+    grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
+  '';
 })

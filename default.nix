@@ -39,6 +39,52 @@ let
     crossSystem = { config = "aarch64-linux-gnu"; };
   };
 
+  # Kernel headers pinned to GUIX's 6.1.119 for the aarch64 target — same
+  # reasoning as linuxHeaders61 below (the headers VERSION leaks into the
+  # .dbg via <linux/rtnetlink.h> enum DIEs).
+  linuxHeaders61Aarch64 = pkgsCrossAarch64.linuxHeaders.overrideAttrs (o: {
+    version = "6.1.119";
+    src = pkgs.fetchurl {
+      url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
+      hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
+    };
+  });
+
+  # Stock cross gcc14 wrapper used as crossGlibc231's forced CC — the
+  # aarch64 analog of gcc14X86NoFp below (see its comment for the full
+  # reasoning: glibc's statically-linked members carry debug info whose
+  # DW_AT_producer must record NO explicit flags, like upstream's).
+  # aarch64 delta: --enable-standard-branch-protection=yes is baked in
+  # (GUIX's linux-base-gcc — the base-gcc-for-libc that builds their
+  # glibc — has it; it makes the PAC/BTI codegen a compiler DEFAULT, so
+  # the previously explicit -mbranch-protection=standard, which would be
+  # recorded in DW_AT_producer, is dropped). --with-as/--with-ld point at
+  # cross binutils 2.41: gas GENERATES the .debug_line programs (and
+  # assembles glibc's .S CUs entirely); 2.46's encoding diverges.
+  # --with-arch=armv8-a (nixpkgs' platform default) is FILTERED OUT: a
+  # configured --with-arch makes the gcc DRIVER self-inject
+  # `-march=armv8-a` into every cc1 command line (OPTION_DEFAULT_SPECS),
+  # and cc1 records it in DW_AT_producer — upstream's GUIX gcc has no
+  # --with-arch and records no -march. armv8-a is the aarch64 compiler
+  # baseline either way, so codegen is identical (gates verify).
+  gcc14Aarch64NoFpCC = pkgsCrossAarch64.buildPackages.gcc14.cc.overrideAttrs (o: {
+    configureFlags = (builtins.filter (f: f != "--with-arch=armv8-a") (o.configureFlags or [ ])) ++ [
+      "--enable-default-pie=yes"
+      "--enable-standard-branch-protection=yes"
+      "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
+      "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
+    ];
+  });
+  gcc14Aarch64NoFp = (pkgsCrossAarch64.buildPackages.gcc14.override {
+    cc = gcc14Aarch64NoFpCC;
+  }).overrideAttrs (old: {
+    postFixup = (old.postFixup or "") + ''
+      substituteInPlace $out/nix-support/cc-cflags-before \
+        --replace-fail "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer" "" \
+        --replace-fail "-march=armv8-a" ""
+    '';
+  });
+
   # aarch64 cross glibc 2.31 — GUIX git source, no patches, GUIX configure
   # flags, frame-pointer handling, postPatch/postInstall fixes for 2.31
   # (the same override set as crossGlibc231X86 below, with the aarch64
@@ -51,6 +97,7 @@ let
   # gcc-14-compiled to match upstream's codegen).
   crossGlibc231 = (pkgsCrossAarch64.glibc.override {
     stdenv = pkgsCrossAarch64.gcc14Stdenv;
+    linuxHeaders = linuxHeaders61Aarch64;
   }).overrideAttrs (old: {
     version = "2.31";
     src = pkgs.fetchgit {
@@ -73,42 +120,54 @@ let
         "--disable-werror"
         "--disable-timezone-tools"
         "--disable-profile"
+        # No -fpie in upstream's csu/crt DW_AT_producer — see
+        # crossGlibc231X86. The codegen stays PIE because the forced CC is
+        # default-PIE (gcc14Aarch64NoFpCC).
+        "--disable-static-pie"
       ];
-    # aarch64 keeps the non-leaf frame pointer at -O2 (omit only the leaf
-    # one), unlike x86_64's glibc231 which omits both — see the frame-pointer
-    # note in bitcoind-aarch64.nix. Without this, glibc's libc_nonshared.a
-    # members (atexit, the stat wrappers) lose their frame setup and come out
-    # ~12 bytes smaller than upstream's.
-    #
-    # -mbranch-protection=standard: glibc is built with the *stock* cross
-    # gcc, which lacks GUIX's --enable-standard-branch-protection. The only
-    # glibc code that ends up *in* the binary is the statically-linked
-    # members (libc_nonshared.a's atexit/stat wrappers, csu's
-    # __libc_csu_init/fini), and without branch protection they miss the
-    # paciasp/autiasp (PAC) + bti landing pads upstream's glibc has — ~8
-    # bytes/function. This flag is exactly what --enable-standard-branch-
-    # protection defaults the compiler to, so it reproduces that codegen.
+    # NO explicit codegen flags (upstream's glibc DW_AT_producer records
+    # bare `-g -O2`): the aarch64 -O2 default keeps the non-leaf frame
+    # pointer and omits the leaf one — exactly what the previously explicit
+    # -momit-leaf-frame-pointer reproduced against the wrapper's
+    # -fno-omit-frame-pointer injection; the forced CC below is the NoFp
+    # wrapper so nothing injects FP flags. Branch protection (PAC/BTI in
+    # the csu/nonshared members) comes from the forced CC's baked
+    # --enable-standard-branch-protection (replacing the previously
+    # explicit -mbranch-protection=standard). Same codegen, clean producer.
+    # The prefix maps mirror crossGlibc231X86's (GUIX's ephemeral
+    # glibc-cross-aarch64 build dir for DW_AT_comp_dir; /usr spellings for
+    # the forced CC's internal headers + the kernel headers).
     env = (old.env or { }) // {
-      NIX_CFLAGS_COMPILE = "-momit-leaf-frame-pointer -mbranch-protection=standard";
+      NIX_CFLAGS_COMPILE = "-fdebug-prefix-map=/build/glibc-2.31=/tmp/guix-build-glibc-cross-aarch64-linux-gnu-2.31.drv-0/source"
+        + " -ffile-prefix-map=${gcc14Aarch64NoFpCC}/lib/gcc=/usr/lib/gcc"
+        + " -ffile-prefix-map=${linuxHeaders61Aarch64}/include=/usr/include";
       # Skip glibc's C++ link test — the cross build stdenv's libstdc++ is
       # gcc 15's, built against a modern glibc, and won't link against the
       # 2.31 being built. C++ is test-only; the installed glibc is pure C.
       libc_cv_cxx_link_ok = "no";
     };
+    # Keep the debug info — glibc's statically-linked members' DWARF flows
+    # into the .dbg files; see crossGlibc231X86's note (nixpkgs'
+    # separateDebugInfo hook would add a recorded -ggdb and strip the
+    # members).
+    separateDebugInfo = false;
+    dontStrip = true;
     # Force the cross C compiler to gcc 14.3.0 (GUIX's version). glibc is a
     # stdenv bootstrap component, so `.override { stdenv = … }` is ignored
     # — on nixos-26.05 the cross glibc would otherwise build with the
     # bootstrap cross gcc 15.2.0, giving __libc_csu_init the gcc-15
     # register allocation (diverges from upstream's gcc-14 codegen). Force
     # CC only (not CXX — forcing CXX breaks glibc's cstdlib/cmath
-    # generation; the shipped glibc is all C).
-    # `aarch64-linux-gnu-gcc` is the cross gcc14's driver name
-    # (targetPrefix = "aarch64-linux-gnu-").
+    # generation; the shipped glibc is all C). Through the NoFp wrapper
+    # variant (gcc14Aarch64NoFp above). Also drop the
+    # -frandom-seed=<out-hash> appended by nixpkgs' reproducible-builds
+    # hook — it would be recorded in DW_AT_producer.
     preConfigure = (old.preConfigure or "") + ''
-      export CC=${pkgsCrossAarch64.buildPackages.gcc14}/bin/aarch64-linux-gnu-gcc
+      export CC=${gcc14Aarch64NoFp}/bin/aarch64-linux-gnu-gcc
+      export NIX_CFLAGS_COMPILE=$(echo "$NIX_CFLAGS_COMPILE" | sed 's/-frandom-seed=[^ ]*//')
     '';
     makeFlags = (old.makeFlags or [ ]) ++ [
-      "CC=${pkgsCrossAarch64.buildPackages.gcc14}/bin/aarch64-linux-gnu-gcc"
+      "CC=${gcc14Aarch64NoFp}/bin/aarch64-linux-gnu-gcc"
     ];
     # Disable the same nixpkgs hardenings crossGlibc231X86 drops.
     # The decisive one is zerocallusedregs (-fzero-call-used-regs): it
@@ -122,6 +181,10 @@ let
       # bitcoind.nix). strictflexarrays1 is codegen-affecting;
       # libcxxhardeningfast is libc++-only (no-op for us).
       "strictflexarrays1" "libcxxhardeningfast"
+      # "pic": see crossGlibc231X86 — the wrapper's default -fPIC injection
+      # breaks glibc's pie-default detection and would be recorded in
+      # DW_AT_producer where glibc passes no own pic/pie flag.
+      "pic"
     ];
     postPatch = ''
       sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
@@ -143,11 +206,11 @@ let
       ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
       test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
       touch $out/lib/libpthread.a
+      # Keep the static libs in $out/lib next to the shared ones, like
+      # GUIX's glibc — see crossGlibc231X86's note (`-static` links, e.g.
+      # Qt's configure-time feature probes, must find -lc/-lm). The
+      # $static output remains declared but empty.
       mkdir -p $static/lib
-      mv $out/lib/*.a $static/lib
-      mv $static/lib/lib*_nonshared.a $out/lib
-      test -f $out/lib/libutil.so.1 || mv $static/lib/libutil.a $out/lib
-      sed "/^GROUP/s|$out/lib/lib|$static/lib/lib|g" -i "$static"/lib/*.a
       cp $bin/bin/getconf $bin/bin/getconf_
       mv $bin/bin/getconf_ $bin/bin/getconf
     '';
@@ -160,7 +223,7 @@ let
   # `stdenv.cc.bintools.bintools`, NOT `binutils-unwrapped` (which is the
   # aarch64-native binutils and can't run on the build machine). Same
   # override as crossBinutils241X86.
-  crossBinutils241 = pkgsCrossAarch64.stdenv.cc.bintools.bintools.overrideAttrs (_: {
+  crossBinutils241 = pkgsCrossAarch64.stdenv.cc.bintools.bintools.overrideAttrs (old: {
     version = "2.41";
     src = pkgs.fetchurl {
       url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
@@ -170,6 +233,14 @@ let
     # default cross outputs (incl. `dev`) — the cross binutils' postInstall
     # references $dev.
     patches = [ ];
+    # Match GUIX's binutils compression config — same reasoning as
+    # crossBinutils241X86 below: --enable-compressed-debug-sections=all
+    # (upstream's .dbg sections are SHF_COMPRESSED with no explicit
+    # split-debug flag) and bundled zlib, not --with-system-zlib
+    # (identical 2.41 zlib ⇒ identical deflate bytes).
+    configureFlags =
+      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
+      ++ [ "--enable-compressed-debug-sections=all" ];
   });
   crossBintools241 = pkgsCrossAarch64.stdenv.cc.bintools.override {
     bintools = crossBinutils241;
@@ -211,7 +282,10 @@ let
     cc = (pkgsCrossAarch64.buildPackages.gcc14.cc.override {
       libcCross = crossGlibc231;
     }).overrideAttrs (old: {
-      configureFlags = (old.configureFlags or [ ]) ++ [
+      # --with-arch filtered out — see gcc14Aarch64NoFpCC: the configured
+      # default makes the driver inject a recorded -march=armv8-a into
+      # every compile (bitcoind's CUs included); GUIX's gcc has none.
+      configureFlags = (builtins.filter (f: f != "--with-arch=armv8-a") (old.configureFlags or [ ])) ++ [
         "--enable-standard-branch-protection=yes"
         "--enable-default-pie=yes"
         "--enable-default-ssp=yes"
@@ -223,8 +297,51 @@ let
         "--disable-libquadmath"
         "--disable-libsanitizer"
         "--disable-nls"
+        # Re-point the baked --with-as/--with-ld at cross binutils 2.41
+        # (nixpkgs bakes the 2.46 wrapper; a second --with-as appended
+        # later wins). On aarch64 this is debug-only — gas generates the
+        # .debug_line programs and 2.46's encoding diverges; the code
+        # bytes never depended on gas here (fixed-width instructions, no
+        # NOP-fill choice — see crossGuixGccX86 for the x86 story).
+        "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
+        "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
       ];
       patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      # Debug info for libgcc with upstream's exact DW_AT_producer
+      # `-g -g -g -O2 -O2 -O2` + GUIX's ephemeral gcc build dir for
+      # DW_AT_comp_dir — the aarch64 analog of crossGuixGccX86's preBuild
+      # (see its comment for the compile-line model that puts -g in
+      # CFLAGS_FOR_TARGET only and strips -O2 from FLAGS_FOR_TARGET).
+      # No -Wa,-mrelax-relocations here: GOTPCRELX is x86-only.
+      # -march=armv8-a is stripped from EXTRA_FLAGS_FOR_TARGET: nixpkgs
+      # puts the platform arch there, so it lands in every libgcc CU's
+      # DW_AT_producer — upstream's gcc build passes no -march (armv8-a IS
+      # the aarch64 baseline default; codegen-identical, the 10-hash gate
+      # verifies). The kernel-headers map covers libgcc's unwind-dw2.c:
+      # its <asm/…>/<asm-generic/…> includes resolve through the glibc-dev
+      # include SYMLINKS, which gcc canonicalizes to the linux-headers
+      # store path — so the glibc-dev map alone misses them (x86's
+      # unwind-dw2-fde-dip only needed <elf.h>, a real glibc-dev file).
+      preBuild = (old.preBuild or "") + ''
+        EXTRA_FLAGS_FOR_TARGET="''${EXTRA_FLAGS_FOR_TARGET/-march=armv8-a /}"
+        EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"
+        GUIXMAPS="-fdebug-prefix-map=/build/build=/tmp/guix-build-gcc-cross-aarch64-linux-gnu-14.3.0.drv-0/build -ffile-prefix-map=${pkgs.lib.getDev crossGlibc231}/include=/usr/include -ffile-prefix-map=${linuxHeaders61Aarch64}/include=/usr/include"
+        makeFlagsArray+=(
+          "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS -g"
+          "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+          "FLAGS_FOR_TARGET=$EXTRA_SANS_O2 $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+        )
+      '';
+      # Keep libgcc's objects unstripped (their CUs ship in upstream's
+      # .dbg) but strip libstdc++/libsupc++ — upstream has no CUs from
+      # them (libsupc++'s C members would otherwise leak cp-demangle.c).
+      dontStrip = true;
+      postFixup = (old.postFixup or "") + ''
+        find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
+          ${crossBinutils241}/bin/aarch64-linux-gnu-objcopy \
+            --enable-deterministic-archives --strip-debug "$f"
+        done
+      '';
     });
   };
 
@@ -234,6 +351,28 @@ let
   aarch64CrossInputs = [
     crossGuixGcc
     crossGuixGcc.bintools
+  ];
+
+  # Wrapper variant for the bitcoind compile that does NOT inject
+  # `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer` — the aarch64
+  # analog of crossGuixGccX86NoFp (see its comment). With the injection
+  # gone, the aarch64 -O2 default applies: keep the non-leaf frame
+  # pointer, omit the leaf one — exactly what the previously explicit
+  # -momit-leaf-frame-pointer achieved, but with upstream's clean
+  # DW_AT_producer (bare `-O2 -g`). depends keeps the regular wrapper.
+  # (also strips the wrapper's -march=armv8-a injection — recorded in
+  # every CU's DW_AT_producer; upstream compiles with no -march, and
+  # armv8-a is the compiler default anyway).
+  crossGuixGccNoFp = crossGuixGcc.overrideAttrs (old: {
+    postFixup = (old.postFixup or "") + ''
+      substituteInPlace $out/nix-support/cc-cflags-before \
+        --replace-fail "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer" "" \
+        --replace-fail "-march=armv8-a" ""
+    '';
+  });
+  aarch64CrossInputsNoFp = [
+    crossGuixGccNoFp
+    crossGuixGccNoFp.bintools
   ];
 
   # Cross-build the full depends tree (incl. the Qt6 GUI tree) with a *native*
@@ -255,13 +394,25 @@ let
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     depends = dependsAarch64;
-    crossInputs = aarch64CrossInputs;
+    crossInputs = aarch64CrossInputsNoFp;
+    guixGcc = crossGuixGcc.cc;
+    linuxHeaders = linuxHeaders61Aarch64;
   };
   tarballAarch64 = pkgs.callPackage ./tarball.nix {
     inherit version url sha256;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
     expectedSha256 = "4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112";
+  };
+  # The separate aarch64 -debug.tar.gz with the ten .dbg files —
+  # reproducible since 2026-06-11 (byte-identical .dbg, same recipe as
+  # x86_64's; see bitcoind-aarch64.nix).
+  debugTarballAarch64 = pkgs.callPackage ./tarball.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindAarch64;
+    arch = "aarch64-linux-gnu";
+    debug = true;
+    expectedSha256 = "91917647aaf50965fc834e048256fce17e8f5590658c7e8de2879fb66cdc9a73";
   };
 
   # --- x86_64 cross-to-self toolchain ---
@@ -650,5 +801,5 @@ let
   };
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
-    crossGlibc231 crossGlibc231X86 crossGuixGccX86;
+    debugTarballAarch64 crossGlibc231 crossGlibc231X86 crossGuixGccX86;
 }

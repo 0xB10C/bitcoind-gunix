@@ -64,7 +64,7 @@ nix build .#bitcoind --print-build-logs
 nix build .#tarball --print-build-logs
 sha256sum result        # -> d3e4c58a…
 
-# The debug-symbols archive (x86_64; all ten .dbg byte-identical too):
+# The debug-symbols archive (all ten .dbg byte-identical too):
 nix build .#debugTarball --print-build-logs
 sha256sum result        # -> 96e35061…
 
@@ -72,6 +72,10 @@ sha256sum result        # -> 96e35061…
 nix build .#bitcoindAarch64 --print-build-logs
 nix build .#tarballAarch64 --print-build-logs
 sha256sum result        # -> 4de1d568…
+
+# The aarch64 debug-symbols archive:
+nix build .#debugTarballAarch64 --print-build-logs
+sha256sum result        # -> 91917647…
 
 # Just the depends tree:
 nix build .#depends
@@ -91,13 +95,12 @@ bitcoin-tx,bitcoin-util,bitcoin-wallet}`, `libexec/{bitcoin-gui,
 bitcoin-node,test_bitcoin}`) and the `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
 archive.
 
-For x86_64, the separate `bitcoin-31.0-x86_64-linux-gnu-debug.tar.gz` is
-**also reproduced** (`nix build .#debugTarball` → `96e35061…`): all ten
-`.dbg` debug files are byte-identical to upstream's, so no byte patching
-of any kind remains in the x86_64 pipeline (the historical
-`.gnu_debuglink` CRC patch is gone — the CRC now matches naturally).
-The aarch64 `.dbg` files are not yet byte-matched (their CRC patch
-remains); the runtime binaries and release archive reproduce as above.
+The separate debug-symbols archives are **also reproduced** for both
+targets (`nix build .#debugTarball` → `96e35061…`;
+`nix build .#debugTarballAarch64` → `91917647…`): all twenty `.dbg`
+debug files are byte-identical to upstream's, so no byte patching of any
+kind remains anywhere in the pipeline (the historical `.gnu_debuglink`
+CRC patches are gone — the CRCs now match naturally).
 
 ## Layout
 
@@ -115,9 +118,9 @@ remains); the runtime binaries and release archive reproduce as above.
   depends in cross-compile mode, matching GUIX either way).
 - `bitcoind.nix` / `bitcoind-aarch64.nix` — build all of Bitcoin Core via
   CMake with the prefixed cross compiler, then split-debug (cross binutils
-  2.41), `.comment` rewrite, `.gnu_debuglink` CRC patch, and assert all
-  ten binary hashes. The two differ in frame-pointer flags, ELF
-  interpreter, and the per-binary CRC/hash tables.
+  2.41) and `.comment` rewrite, and assert all twenty per-target hashes
+  (10 binaries + 10 `.dbg`). The two differ in the ELF interpreter and
+  the per-binary hash tables.
 - `tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
   byte-identical to upstream and asserts its hash (parameterized by `arch`).
 - `patches/` — patch files applied via the .nix derivations.

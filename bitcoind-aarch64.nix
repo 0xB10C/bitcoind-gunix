@@ -3,7 +3,7 @@
 # to the upstream GUIX release. The aarch64 analog of bitcoind.nix; kept as a
 # separate file because the cross build differs structurally (cross compiler
 # via CC export, aarch64 ELF interpreter, cross binutils for split-debug,
-# aarch64 frame-pointer handling, per-binary CRCs/hashes).
+# aarch64 frame-pointer handling, per-binary hashes).
 { gcc14Stdenv
 , fetchurl
 , pkg-config
@@ -13,21 +13,26 @@
 , sha256
 , depends # the aarch64 depends tree (Qt included)
 , crossInputs # aarch64 cross cc/bintools (provides aarch64-linux-gnu-gcc/-objcopy/…)
+, guixGcc # the unwrapped cross gcc (crossGuixGcc.cc) — for header prefix-maps
+, linuxHeaders # kernel headers — gcc canonicalizes the sys-include symlinks to this store path
 }:
 
 let
-  # aarch64 frame pointers: upstream uses bare -O2, which on aarch64 KEEPS
-  # the non-leaf frame pointer but OMITS the leaf one. nixpkgs' cross
-  # cc-wrapper forces `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer`
-  # (keep both). So we override only the leaf one back to omit — letting the
-  # wrapper's -fno-omit-frame-pointer keep the non-leaf FP, matching upstream.
-  # (On x86_64 the -O2 default omits both, hence bitcoind.nix uses
-  # -fomit-frame-pointer there; here we must NOT, or every non-leaf function
-  # loses its frame setup and the binary shrinks ~66 KB below upstream.)
-  cflags = "-O2 -g -momit-leaf-frame-pointer"
+  # Match GUIX's HOST_CFLAGS/HOST_CXXFLAGS: bare `-O2 -g` plus prefix maps,
+  # exactly like bitcoind.nix (see its comment for the full map reasoning).
+  # NO explicit frame-pointer flags: crossInputs is the NoFp wrapper
+  # variant, so the aarch64 -O2 default applies (keep the non-leaf frame
+  # pointer, omit the leaf one — what the previously explicit
+  # -momit-leaf-frame-pointer reproduced against the wrapper injection),
+  # and DW_AT_producer stays flag-free like upstream's.
+  cflags = "-O2 -g"
     + " -ffile-prefix-map=${depends}=/bitcoin/depends/aarch64-linux-gnu"
-    + " -ffile-prefix-map=/build/bitcoin-${version}=/bitcoin"
-    + " -ffile-prefix-map=/build/bitcoin-${version}/src=.";
+    + " -ffile-prefix-map=${guixGcc}/include/c++/14.3.0=/usr/include/c++"
+    + " -ffile-prefix-map=${guixGcc}/aarch64-linux-gnu/sys-include=/usr/include"
+    + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"
+    + " -ffile-prefix-map=${linuxHeaders}/include=/usr/include"
+    + " -fdebug-prefix-map=/build/bitcoin-${version}=/distsrc-base/distsrc-${version}-aarch64-linux-gnu"
+    + " -fdebug-prefix-map=/build/bitcoin-${version}/src=.";
 in
 gcc14Stdenv.mkDerivation {
   pname = "bitcoind-aarch64";
@@ -42,6 +47,10 @@ gcc14Stdenv.mkDerivation {
   # depends toolchain.cmake auto-enables BUILD_GUI + WITH_QRENCODE because the
   # Qt depends are present, so bitcoin-qt / libexec/bitcoin-gui build too.
   cmakeBuildDir = "build";
+  # GUIX doesn't pass a build type, so bitcoin's CMakeLists defaults to
+  # RelWithDebInfo; nixpkgs' cmake hook would force Release. Visible in
+  # DW_AT_producer (see bitcoind.nix); same effective codegen (-O2).
+  cmakeBuildType = "RelWithDebInfo";
   cmakeFlags = [
     "--toolchain=${depends}/toolchain.cmake"
     "-DBUILD_GUI_TESTS=OFF"
@@ -59,6 +68,11 @@ gcc14Stdenv.mkDerivation {
     # otherwise leave CC=gcc → native x86_64).
     export CC=aarch64-linux-gnu-gcc
     export CXX=aarch64-linux-gnu-g++
+
+    # Drop the -frandom-seed=<out-hash> appended by nixpkgs'
+    # reproducible-builds hook — recorded in DW_AT_producer (see
+    # bitcoind.nix).
+    export NIX_CFLAGS_COMPILE=$(echo "$NIX_CFLAGS_COMPILE" | sed 's/-frandom-seed=[^ ]*//')
 
     mkdir -p depends
     # mpgen's baked capnp_PREFIX is .../depends/aarch64-linux-gnu.
@@ -86,12 +100,18 @@ gcc14Stdenv.mkDerivation {
     "strictflexarrays1" "libcxxhardeningfast"
   ];
 
-  # Mirror GUIX build.sh's split-debug + .gnu_debuglink handling (same as
+  # Mirror GUIX build.sh's split-debug + .comment handling (same as
   # x86_64 bitcoind.nix). Use the CROSS binutils 2.41 (aarch64-linux-gnu-*
-  # from crossInputs) — not nixpkgs' native 2.44 — so strip/objcopy behave
-  # like upstream's. The .gnu_debuglink CRC is CRC32 of each .dbg, which
-  # isn't byte-reproducible (DWARF path/triple divergence, see CLAUDE.md
-  # Task #2), so we overwrite it with upstream's per-binary value.
+  # from crossInputs) — not nixpkgs' native one — so strip/objcopy behave
+  # like upstream's.
+  #
+  # NOTE: the historical .gnu_debuglink CRC32 byte-patch is GONE
+  # (2026-06-11, same day as x86_64's): the aarch64 .dbg files are now
+  # byte-identical to upstream's (same recipe as x86_64 — see CLAUDE.md —
+  # plus the aarch64-only --with-arch=armv8-a removal and the
+  # kernel-header map for libgcc's unwind-dw2.c), so objcopy
+  # --add-gnu-debuglink computes upstream's CRC naturally. The postFixup
+  # gate asserts the .dbg hashes too.
   postInstall = ''
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
     for rel in \
@@ -105,29 +125,12 @@ gcc14Stdenv.mkDerivation {
       aarch64-linux-gnu-strip --enable-deterministic-archives -p -s "$f"
       aarch64-linux-gnu-objcopy --enable-deterministic-archives -p --add-gnu-debuglink="$f.dbg" "$f"
       aarch64-linux-gnu-objcopy --update-section .comment=comment.bin "$f"
-      case "$(basename "$f")" in
-        bitcoin)        crc='\x95\x2c\x9d\xa9' ;;  # 0xa99d2c95
-        bitcoin-cli)    crc='\x6b\x5e\xd3\x3e' ;;  # 0x3ed35e6b
-        bitcoind)       crc='\x89\xe2\xe5\xe8' ;;  # 0xe8e5e289
-        bitcoin-tx)     crc='\x7f\x25\x4b\xa5' ;;  # 0xa54b257f
-        bitcoin-util)   crc='\x14\xdd\xda\xf5' ;;  # 0xf5dadd14
-        bitcoin-wallet) crc='\x01\xe9\x5e\x3f' ;;  # 0x3f5ee901
-        bitcoin-qt)     crc='\x64\xb1\xde\xe1' ;;  # 0xe1deb164
-        bitcoin-node)   crc='\x13\x70\xf1\x8b' ;;  # 0x8bf17013
-        bitcoin-gui)    crc='\xcf\x6b\xf1\xb3' ;;  # 0xb3f16bcf
-        test_bitcoin)   crc='\x2c\x63\x14\xe1' ;;  # 0xe114632c
-        *)              crc="" ;;
-      esac
-      if [ -n "$crc" ]; then
-        read -r doff dsize < <(aarch64-linux-gnu-readelf -SW "$f" | sed 's/\[[ 0-9]*\]//' \
-          | awk '/\.gnu_debuglink/{print strtonum("0x"$4), strtonum("0x"$5)}')
-        printf "$crc" | dd of="$f" bs=1 seek=$((doff + dsize - 4)) count=4 conv=notrunc status=none
-      fi
     done
   '';
 
-  # Reproducibility gate: assert every shipped binary byte-matches the
-  # upstream GUIX v31.0 aarch64-linux-gnu release.
+  # Reproducibility gate: assert every shipped binary AND every .dbg debug
+  # file byte-matches the upstream GUIX v31.0 aarch64-linux-gnu release
+  # (the .dbg are what ship in the separate -debug.tar.gz).
   postFixup = ''
     declare -A expected=(
       [bin/bitcoin]=c793384c78c11b2125d0b68cc62b05fab7a96d6438f005f9e375f7d4a41bfe4c
@@ -140,6 +143,16 @@ gcc14Stdenv.mkDerivation {
       [libexec/bitcoin-node]=f213271f7cec156be3d155c3c1012f4c226e2b9216a40215355a190105d1fad5
       [libexec/bitcoin-gui]=f85193a8b7f4323f612b92a5b7e19cda977f90bb9c26543d3f5277bf10c59291
       [libexec/test_bitcoin]=940fd792624130b36c1aef4fb4fc61723e622635478e7301bf37827caac9f1c5
+      [bin/bitcoin.dbg]=a8e722fcb8e30edb417d354aa7dab72b0d61fb4d31e3b735226d2c627b13e3f7
+      [bin/bitcoin-cli.dbg]=008409b760e5478e852ba0497fd9ea46b13b54a91dd095b39e64775c520243f9
+      [bin/bitcoind.dbg]=c9874604dc0c1f064a06c4bd9205b0ba0ec003e1e33c3aae319fc9640f535317
+      [bin/bitcoin-tx.dbg]=550ff80b5930b557f094a9f72ea2043ffd348cf02fa5374458c78bd80e4630f6
+      [bin/bitcoin-util.dbg]=c45b2b672038b9b005c8243adee79dc6239fc16b056a619a2dd5e7ca2c0ce08e
+      [bin/bitcoin-wallet.dbg]=ec150d2d38aab542e7ea1eb824adb16924c93924e78d82d23c1673c108523890
+      [bin/bitcoin-qt.dbg]=2c846fa6508cd70709fc1bd962331a6c7df9664a5a8195b71e0ebaf39f03188c
+      [libexec/bitcoin-node.dbg]=c17dcda063ccab62a1fb217899ad3f25c35496be38010ad0714fa894a76aa64c
+      [libexec/bitcoin-gui.dbg]=e516b319336cf01cbc897681df6cac81576f92210d5db644208c6b2b55485456
+      [libexec/test_bitcoin.dbg]=ae4076dcaecb75f0ba1164828c602b57823570eef6b5f4976841e5c5fb35afeb
     )
     fail=0
     for rel in "''${!expected[@]}"; do
@@ -153,8 +166,8 @@ gcc14Stdenv.mkDerivation {
         fail=1
       fi
     done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more aarch64 binaries diverged from upstream GUIX v31.0"; exit 1; }
-    echo "OK: all 10 aarch64 binaries match upstream GUIX v31.0"
+    [ "$fail" = "0" ] || { echo "FAIL: one or more aarch64 binaries/.dbg diverged from upstream GUIX v31.0"; exit 1; }
+    echo "OK: all 10 aarch64 binaries and all 10 .dbg files match upstream GUIX v31.0"
   '';
 
   dontStrip = true;
