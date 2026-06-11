@@ -2,12 +2,12 @@
 
 A Nix flake that reproduces the official Bitcoin Core GUIX release with
 **byte-identical sha256** — all ten binaries **and** the full release
-archive — for both `x86_64-linux-gnu` and `aarch64-linux-gnu`. Both
-targets are built the way GUIX builds them: through a **cross toolchain
-for the vendor-less target triple** — a "cross-to-self"
-`x86_64-linux-gnu` toolchain for the x86_64 release, and an aarch64 cross
-toolchain for the aarch64 release (**cross-compiled on an x86_64 host**,
-no qemu).
+archive — for `x86_64-linux-gnu`, `aarch64-linux-gnu` and
+`riscv64-linux-gnu`. All targets are built the way GUIX builds them:
+through a **cross toolchain for the vendor-less target triple** — a
+"cross-to-self" `x86_64-linux-gnu` toolchain for the x86_64 release, and
+aarch64/riscv64 cross toolchains for the other two
+(**cross-compiled on an x86_64 host**, no qemu).
 
 ## Status
 
@@ -36,6 +36,18 @@ c793384c…  bin/bitcoin            b4128423…  bin/bitcoin-tx
 f85193a8…  libexec/bitcoin-gui    940fd792…  libexec/test_bitcoin
 
 4de1d568…  bitcoin-31.0-aarch64-linux-gnu.tar.gz
+```
+
+And for the `riscv64-linux-gnu` release, also cross-compiled on x86_64:
+
+```
+d28d634c…  bin/bitcoin            e4d682e5…  bin/bitcoin-tx
+bb5ecc78…  bin/bitcoin-cli        a33638e2…  bin/bitcoin-util
+2c868a6a…  bin/bitcoind           22d3c591…  bin/bitcoin-wallet
+b348aa9d…  bin/bitcoin-qt         2d28a094…  libexec/bitcoin-node
+213838af…  libexec/bitcoin-gui    6086d424…  libexec/test_bitcoin
+
+7ece4ea3…  bitcoin-31.0-riscv64-linux-gnu.tar.gz
 ```
 
 Each derivation's `postFixup` asserts these hashes and fails the build on
@@ -77,6 +89,15 @@ sha256sum result        # -> 4de1d568…
 nix build .#debugTarballAarch64 --print-build-logs
 sha256sum result        # -> 91917647…
 
+# The riscv64 release, cross-compiled on x86_64 (10 binaries + tarball):
+nix build .#bitcoindRiscv64 --print-build-logs
+nix build .#tarballRiscv64 --print-build-logs
+sha256sum result        # -> 7ece4ea3…
+
+# The riscv64 debug-symbols archive:
+nix build .#debugTarballRiscv64 --print-build-logs
+sha256sum result        # -> acd0e38f…
+
 # Just the depends tree:
 nix build .#depends
 ```
@@ -95,32 +116,34 @@ bitcoin-tx,bitcoin-util,bitcoin-wallet}`, `libexec/{bitcoin-gui,
 bitcoin-node,test_bitcoin}`) and the `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
 archive.
 
-The separate debug-symbols archives are **also reproduced** for both
-targets (`nix build .#debugTarball` → `96e35061…`;
-`nix build .#debugTarballAarch64` → `91917647…`): all twenty `.dbg`
-debug files are byte-identical to upstream's, so no byte patching of any
-kind remains anywhere in the pipeline (the historical `.gnu_debuglink`
-CRC patches are gone — the CRCs now match naturally).
+The separate debug-symbols archives are **also reproduced** for all
+three targets (`nix build .#debugTarball` → `96e35061…`;
+`.#debugTarballAarch64` → `91917647…`; `.#debugTarballRiscv64` →
+`acd0e38f…`): all thirty `.dbg` debug files are byte-identical to
+upstream's, so no byte patching of any kind remains anywhere in the
+pipeline (the historical `.gnu_debuglink` CRC patches are gone — the
+CRCs now match naturally).
 
 ## Layout
 
 - `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` and exposes
   the outputs per build host (`packages.{x86_64,aarch64}-linux`); all
   toolchain construction lives in `default.nix`.
-- `default.nix` — assembles the two GUIX-exact **cross toolchains**
+- `default.nix` — assembles the three GUIX-exact **cross toolchains**
   (binutils 2.41, glibc 2.31 from GUIX's git source, gcc 14.3.0 with the
   `gcc-ssa-generation` patch and GUIX's `linux-base-gcc` flags, rebuilt
   against glibc 2.31 via `libcCross`): cross-to-self `x86_64-linux-gnu`
-  and cross `aarch64-linux-gnu`. Exposes both targets' outputs.
+  and cross `aarch64-linux-gnu` / `riscv64-linux-gnu`. Exposes all
+  targets' outputs.
 - `depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the full
-  Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves both
-  `x86_64-linux-gnu` and the `aarch64-linux-gnu` cross build (`HOST=` puts
-  depends in cross-compile mode, matching GUIX either way).
-- `bitcoind.nix` / `bitcoind-aarch64.nix` — build all of Bitcoin Core via
-  CMake with the prefixed cross compiler, then split-debug (cross binutils
-  2.41) and `.comment` rewrite, and assert all twenty per-target hashes
-  (10 binaries + 10 `.dbg`). The two differ in the ELF interpreter and
-  the per-binary hash tables.
+  Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves
+  every target (`HOST=` puts depends in cross-compile mode, matching
+  GUIX either way).
+- `bitcoind.nix` / `bitcoind-aarch64.nix` / `bitcoind-riscv64.nix` —
+  build all of Bitcoin Core via CMake with the prefixed cross compiler,
+  then split-debug (cross binutils 2.41) and `.comment` rewrite, and
+  assert all twenty per-target hashes (10 binaries + 10 `.dbg`). They
+  differ in the ELF interpreter and the per-binary hash tables.
 - `tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
   byte-identical to upstream and asserts its hash (parameterized by `arch`).
 - `patches/` — patch files applied via the .nix derivations.

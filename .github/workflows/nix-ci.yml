@@ -136,6 +136,59 @@ jobs:
           echo "actual:   $actual"
           [ "$actual" = "$expected" ]
 
+  # The riscv64 release, cross-compiled on the same x86_64 runner — the
+  # exact analog of build-aarch64 (its own riscv64 cross toolchain +
+  # cross depends; bitcoind-riscv64.nix gates all 20 artifacts, the
+  # tarball drvs gate both archive sha256s).
+  build-riscv64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#bitcoindRiscv64 -o result-bitcoind --print-build-logs
+      - run: nix build .#tarballRiscv64 -o result-tarball --print-build-logs
+      - name: Verify all 10 riscv64 binaries match upstream GUIX v31.0
+        run: |
+          declare -A expected=(
+            [bin/bitcoin]=d28d634c82878263fc4878072fa132b1b518381e768081d7639da664b1b5da07
+            [bin/bitcoin-cli]=bb5ecc78581cd0f2361f25884520af76c40cde505444a8670f933d3492ea811e
+            [bin/bitcoind]=2c868a6a4d401269432a92f542bf833ce3622cd5caf7828016a7b61de64d0cc3
+            [bin/bitcoin-tx]=e4d682e57827e1299e52a104341c66484adbd16fc5600c26a5aa3e8a562385e7
+            [bin/bitcoin-util]=a33638e29496f0aec56aa53f930687919c24c87d1e49378d23512c14c125d9b1
+            [bin/bitcoin-wallet]=22d3c59167c3686a011b6ec5a9c85a0fd0515b6db3e570beee8141437f83dfd3
+            [bin/bitcoin-qt]=b348aa9d4fb2ccc5c0271a9ef072d196b85721de252e1cf65af6aca4f1eaaaec
+            [libexec/bitcoin-node]=2d28a094263960c361cf901e1a43cf44d26ec99c0ea6f9005ef88137591c79fd
+            [libexec/bitcoin-gui]=213838af6f99da64c635219505a635fbeac616c24691f64190457bfc97fa74c8
+            [libexec/test_bitcoin]=6086d424a21967d8e8bf6e2e5f9f74de4b9c5495cbf3d5f0c6d80c42ae1f83bf
+          )
+          rc=0
+          for rel in "${!expected[@]}"; do
+            actual=$(sha256sum "result-bitcoind/$rel" | cut -d' ' -f1)
+            if [ "$actual" = "${expected[$rel]}" ]; then
+              echo "OK:   $rel"
+            else
+              echo "FAIL: $rel  expected ${expected[$rel]}  actual $actual"; rc=1
+            fi
+          done
+          exit $rc
+      - name: Verify bitcoin-31.0-riscv64-linux-gnu.tar.gz matches upstream GUIX v31.0
+        run: |
+          expected=7ece4ea365bba9b2008b27f0717ef6a518598a572edaa2815e775faadc53c136
+          actual=$(sha256sum result-tarball | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]
+
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
   # TARGET), so on this arm runner `.#tarballAarch64` is an aarch64
