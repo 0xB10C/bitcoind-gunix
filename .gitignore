@@ -10,3 +10,7 @@
 /.claude/
 /depends-staging.tar.gz
 /guix-staging/
+/tmpdiff/
+/nixpkgs/
+/job-logs.txt
+/wget-log

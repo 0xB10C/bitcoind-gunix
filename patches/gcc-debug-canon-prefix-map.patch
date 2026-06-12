@@ -1,0 +1,98 @@
+v4: canon results are XNEWVEC (plain malloc, intentionally unbounded —
+cc1 lifetime) rather than ggc_alloc_atomic: the rewrite must not perturb
+the GGC allocation stream, because gcc's var-tracking output
+(.debug_loclists representative choice among equivalent location
+expressions) is sensitive to GGC allocation order — the ggc-allocating
+v3 of this patch flipped location-list entries in previously
+byte-matching CUs.
+
+--- a/gcc/file-prefix-map.cc
++++ b/gcc/file-prefix-map.cc
+@@ -166,12 +166,62 @@
+   return remap_filename (macro_prefix_maps, filename);
+ }
+ 
++/* bitcoind-gunix: optional CANONICAL rewrite applied before the debug
++   prefix maps, configured via the NIX_DEBUG_CANON_PREFIX_MAP
++   environment variable ("OLD=NEW").  Unlike -fdebug-prefix-map this
++   rewrite is also applied to the DWARF file table's lookup keys
++   (lookup_filename), making it transparent to the table's dedupe
++   logic — the compilation behaves exactly as if it had actually run
++   under NEW.  Needed to byte-reproduce builds whose reference
++   environment compiles at a path (NEW) the sandbox cannot provide: a
++   plain -fdebug-prefix-map=OLD=NEW changes how many file table entries
++   the MAIN file gets (a remapped main file enters the table under two
++   different keys), which shifts the gas-generated DWARF line tables
++   relative to the reference.  Read once; no effect when unset.  */
++
++static const char *canon_old_prefix;
++static const char *canon_new_prefix;
++static size_t canon_old_len;
++static size_t canon_new_len;
++static bool canon_parsed;
++
++const char *
++canon_debug_filename (const char *filename)
++{
++  if (!canon_parsed)
++    {
++      canon_parsed = true;
++      const char *spec = getenv ("NIX_DEBUG_CANON_PREFIX_MAP");
++      if (spec)
++	{
++	  const char *sep = strchr (spec, '=');
++	  if (sep && sep != spec)
++	    {
++	      canon_old_prefix = xstrndup (spec, sep - spec);
++	      canon_old_len = sep - spec;
++	      canon_new_prefix = xstrdup (sep + 1);
++	      canon_new_len = strlen (canon_new_prefix);
++	    }
++	}
++    }
++  if (!canon_old_prefix || !filename
++      || filename_ncmp (filename, canon_old_prefix, canon_old_len) != 0)
++    return filename;
++
++  const char *name = filename + canon_old_len;
++  size_t name_len = strlen (name) + 1;
++  char *s = XNEWVEC (char, name_len + canon_new_len);
++  memcpy (s, canon_new_prefix, canon_new_len);
++  memcpy (s + canon_new_len, name, name_len);
++  return s;
++}
++
+ /* Remap using -fdebug-prefix-map.  Return the GC-allocated new name
+    corresponding to FILENAME or FILENAME if no remapping was performed.  */
+ const char *
+ remap_debug_filename (const char *filename)
+ {
+-  return remap_filename (debug_prefix_maps, filename);
++  return remap_filename (debug_prefix_maps, canon_debug_filename (filename));
+ }
+ 
+ /* Remap using -fprofile-prefix-map.  Return the GC-allocated new name
+--- a/gcc/file-prefix-map.h
++++ b/gcc/file-prefix-map.h
+@@ -24,6 +24,7 @@
+ void add_profile_prefix_map (const char *);
+ extern bool flag_canon_prefix_map;
+ 
++const char *canon_debug_filename (const char *);
+ const char *remap_macro_filename (const char *);
+ const char *remap_debug_filename (const char *);
+ const char *remap_profile_filename (const char *);
+--- a/gcc/dwarf2out.cc
++++ b/gcc/dwarf2out.cc
+@@ -27818,6 +27818,11 @@
+   if (!file_name[0])
+     file_name = "<stdin>";
+ 
++
++  /* bitcoind-gunix: canonical rewrite (see canon_debug_filename) applied
++     to the lookup KEY, so both spellings of a path under the canon
++     prefix land on one entry.  No-op when the env var is unset.  */
++  file_name = canon_debug_filename (file_name);
+   dwarf_file_data **slot
+     = file_table->find_slot_with_hash (file_name, htab_hash_string (file_name),
+ 				       INSERT);

@@ -29,6 +29,9 @@
         in {
           inherit (drvs) depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
             debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
+            dependsArmhf bitcoindArmhf tarballArmhf
+            dependsPpc64 bitcoindPpc64 tarballPpc64
+            riscv64Cross armhfCross ppc64Cross
             crossGlibc231 crossGlibc231X86 crossGuixGccX86;
           default = drvs.bitcoind;
         });
