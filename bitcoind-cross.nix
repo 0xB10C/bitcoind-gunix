@@ -22,8 +22,10 @@
 , dynamicLinker # the target's ELF interpreter (build.sh's glibc_dynamic_linker)
 , extraCXXFLAGS ? "" # build.sh per-host extras (e.g. armhf -Wno-psabi)
 , debugCanonMap ? false # gcc has the canon patch: rewrite /build→DISTSRC via env, use GUIX's literal maps
-, expectedHashes # rel path -> upstream sha256 for every asserted artifact (binaries + byte-matching .dbg)
-, debuglinkCrcs ? { } # rel path -> upstream's 4 .gnu_debuglink CRC bytes (hex, file order) for binaries whose .dbg diverges
+, canonDepends ? false # rewrite depends→/bitcoin via the canon env var instead of -ffile-prefix-map
+                       # (an argv map that FIRES ggc-allocates each rewrite and flips var-tracking
+                       # loclists in big CUs — GUIX fires no map on its real-/bitcoin depends)
+, expectedHashes # rel path -> upstream sha256 for every asserted artifact (all 10 binaries + all 10 .dbg)
 , pname # e.g. "bitcoind-riscv64"
 }:
 
@@ -42,7 +44,8 @@ let
   # post-canon path. Without it, both are ordinary maps from /build.
   distsrc = "/distsrc-base/distsrc-${version}-${hostTriple}";
   cflags = "-O2 -g"
-    + " -ffile-prefix-map=${depends}=/bitcoin/depends/${hostTriple}"
+    + lib.optionalString (!canonDepends)
+        " -ffile-prefix-map=${depends}=/bitcoin/depends/${hostTriple}"
     + " -ffile-prefix-map=${guixGcc}/include/c++/14.3.0=/usr/include/c++"
     + " -ffile-prefix-map=${guixGcc}/${hostTriple}/sys-include=/usr/include"
     + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"
@@ -57,6 +60,13 @@ let
     "bin/bitcoin-util" "bin/bitcoin-wallet" "bin/bitcoin-qt"
     "libexec/bitcoin-node" "libexec/bitcoin-gui" "libexec/test_bitcoin"
   ];
+
+  # canon env pairs (first match wins; the prefixes are disjoint). The
+  # /build pair must stay FIRST so ppc64's pre-canonDepends single-pair
+  # behavior is unchanged.
+  canonPairs =
+    lib.optional debugCanonMap "/build/bitcoin-${version}=${distsrc}"
+    ++ lib.optional canonDepends "${depends}=/bitcoin/depends/${hostTriple}";
 in
 gcc14Stdenv.mkDerivation {
   inherit pname;
@@ -114,8 +124,8 @@ gcc14Stdenv.mkDerivation {
     CXXFLAGS = cflags + lib.optionalString (extraCXXFLAGS != "") " ${extraCXXFLAGS}";
     NIX_DONT_SET_RPATH = "1";
     NIX_NO_SELF_RPATH = "1";
-  } // lib.optionalAttrs debugCanonMap {
-    NIX_DEBUG_CANON_PREFIX_MAP = "/build/bitcoin-${version}=${distsrc}";
+  } // lib.optionalAttrs (canonPairs != [ ]) {
+    NIX_DEBUG_CANON_PREFIX_MAP = lib.concatStringsSep ":" canonPairs;
   };
 
   hardeningDisable = [
@@ -129,12 +139,9 @@ gcc14Stdenv.mkDerivation {
   # Mirror GUIX build.sh's split-debug + .comment handling (same as
   # bitcoind.nix). Use the CROSS binutils 2.41 (<hostTriple>-* from
   # crossInputs) — not nixpkgs' native one — so strip/objcopy behave like
-  # upstream's. Where the .dbg files are byte-identical (gated below),
-  # objcopy --add-gnu-debuglink computes upstream's CRC naturally; for
-  # the binaries listed in debuglinkCrcs (their .dbg differ from
-  # upstream's in .debug_loclists — see CLAUDE.md's loclists status),
-  # the 4 CRC bytes at the end of .gnu_debuglink are overwritten with
-  # upstream's so the RUNTIME binary still byte-matches.
+  # upstream's. All .dbg are byte-identical to upstream's (gated below),
+  # so objcopy --add-gnu-debuglink computes upstream's CRC naturally —
+  # no byte patches anywhere.
   postInstall = ''
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
     for rel in ${toString binaries}; do
@@ -145,18 +152,6 @@ gcc14Stdenv.mkDerivation {
       ${hostTriple}-strip --enable-deterministic-archives -p -s "$f"
       ${hostTriple}-objcopy --enable-deterministic-archives -p --add-gnu-debuglink="$f.dbg" "$f"
       ${hostTriple}-objcopy --update-section .comment=comment.bin "$f"
-    done
-  '' + lib.optionalString (debuglinkCrcs != { }) ''
-
-    declare -A crcs=(
-${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: v: "      [${rel}]=${v}") debuglinkCrcs)}
-    )
-    for rel in "''${!crcs[@]}"; do
-      f="$out/$rel"
-      off=$(${hostTriple}-readelf -SW "$f" | awk '$2==".gnu_debuglink" {print strtonum("0x"$5) + strtonum("0x"$6) - 4}')
-      [ -n "$off" ] || { echo "FAIL: no .gnu_debuglink in $rel"; exit 1; }
-      printf "%b" "$(echo "''${crcs[$rel]}" | sed 's/../\\x&/g')" | dd of="$f" bs=1 seek=$off count=4 conv=notrunc status=none
-      echo "patched debuglink CRC of $rel at offset $off to ''${crcs[$rel]}"
     done
   '';
 

@@ -189,10 +189,9 @@ jobs:
           echo "actual:   $actual"
           [ "$actual" = "$expected" ]
 
-  # The armhf and powerpc64 releases (release archives only — their
-  # -debug.tar.gz is not byte-reproducible yet, see CLAUDE.md). The
-  # bitcoind drv gates assert all 10 binaries + the byte-matching .dbg
-  # internally; these jobs re-assert the archive sha256 externally.
+  # The armhf and powerpc64 releases. The bitcoind drv gates assert all
+  # 20 artifacts (10 binaries + 10 .dbg) internally; these jobs re-assert
+  # both archive sha256s externally.
   build-armhf:
     runs-on: ubuntu-latest
 
@@ -209,12 +208,18 @@ jobs:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballArmhf -o result-tarball --print-build-logs
-      - name: Verify bitcoin-31.0-arm-linux-gnueabihf.tar.gz matches upstream GUIX v31.0
+      - run: nix build .#debugTarballArmhf -o result-debug-tarball --print-build-logs
+      - name: Verify bitcoin-31.0-arm-linux-gnueabihf{,-debug}.tar.gz match upstream GUIX v31.0
         run: |
           expected=8c19d007bfc73502625095ea4073af3a98ceb722d500556ab173bac5bcadd0d6
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
-          echo "expected: $expected"
-          echo "actual:   $actual"
+          echo "release expected: $expected"
+          echo "release actual:   $actual"
+          [ "$actual" = "$expected" ]
+          expected=fc17562b66707d0c8d1863af0cd40d7c6818a8d7d7b360b8d43276b1593924d9
+          actual=$(sha256sum result-debug-tarball | cut -d' ' -f1)
+          echo "debug expected: $expected"
+          echo "debug actual:   $actual"
           [ "$actual" = "$expected" ]
 
   build-ppc64:
@@ -233,12 +238,18 @@ jobs:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballPpc64 -o result-tarball --print-build-logs
-      - name: Verify bitcoin-31.0-powerpc64-linux-gnu.tar.gz matches upstream GUIX v31.0
+      - run: nix build .#debugTarballPpc64 -o result-debug-tarball --print-build-logs
+      - name: Verify bitcoin-31.0-powerpc64-linux-gnu{,-debug}.tar.gz match upstream GUIX v31.0
         run: |
           expected=1d9c865aa0ccf675fc068e79d9fa57a5a70b59132fca38bb322a7d44ce2f0ff2
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
-          echo "expected: $expected"
-          echo "actual:   $actual"
+          echo "release expected: $expected"
+          echo "release actual:   $actual"
+          [ "$actual" = "$expected" ]
+          expected=efe3e7d0383d54e5d79ac47911be0100b99872fa5205510a2a22d1194a0212d8
+          actual=$(sha256sum result-debug-tarball | cut -d' ' -f1)
+          echo "debug expected: $expected"
+          echo "debug actual:   $actual"
           [ "$actual" = "$expected" ]
 
   # "Cross everywhere" verification on an AARCH64 build host. The flake
