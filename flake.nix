@@ -32,7 +32,8 @@
             dependsArmhf bitcoindArmhf tarballArmhf debugTarballArmhf
             dependsPpc64 bitcoindPpc64 tarballPpc64 debugTarballPpc64
             riscv64Cross armhfCross ppc64Cross
-            crossGlibc231 crossGlibc231X86 crossGuixGccX86;
+            crossGlibc231 crossGlibc231X86 crossGuixGccX86
+            clangDarwin lldDarwin llvmDarwin;
           default = drvs.bitcoind;
         });
     };

@@ -6,6 +6,76 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-12, evening): macOS started — clang/lld 19.1.4 toolchain pinned, SDK staged, plan laid out
+
+The macOS targets (arm64-/x86_64-apple-darwin, the next issue-#6 items)
+are underway. 10 upstream artifacts to reproduce (5 per host):
+`-unsigned.tar.gz` (48d34a14… arm64 / d1d0174f… x86_64), `-unsigned.zip`
+(b639946d… / b8d9b991…), `-codesigning.tar.gz` (955563c7… / fccf54f3…),
+and the SIGNED `.tar.gz` (a2d7a13b… / 56824dd7…) + `.zip` (fc119a34… /
+8e230f36…) — the signed ones are reproducible too: codesign.sh applies
+detached signatures (bitcoin-core/bitcoin-detached-sigs) with signapple
+(pure python, pinned in manifest.scm), then re-tars/zips deterministically.
+
+Structural differences vs the Linux targets (all verified in
+manifest.scm/build.sh/darwin.mk):
+- GUIX's darwin toolchain is just **clang-toolchain-19 + lld-19 (as ld)
+  + zip + signapple** — no cross-gcc/glibc/binutils at all. depends/
+  hosts/darwin.mk passes every cross flag explicitly (--target,
+  -isysroot SDK, -nostdlibinc, -iwithsysroot, -mmacos-version-min=14.0,
+  -mlinker-version=711, -Wl,-platform_version,macos,14.0,14.0,
+  -Wl,-no_adhoc_codesign -fuse-ld=lld) against a bare `clang` from PATH.
+- build.sh **unsets HOST_CFLAGS for darwin** → no `-g` anywhere, no
+  DWARF, no .dbg/debug-tarball, no split-debug; install is
+  `cmake --install --strip` (llvm-strip). Mach-O has no .comment and no
+  DW_AT_producer ⇒ compile flags are never recorded — prefix-map flags
+  may be added freely if `__FILE__` paths leak.
+- depends darwin set: boost libevent qrencode qt sqlite zeromq capnp +
+  native_{capnp,libmultiprocess,qt} — NO X11 stack.
+- App zip: `cmake --build build -t deploy` → macdeployqtplus builds
+  dist/Bitcoin-Qt.app, cmake/script/macos_zip.sh zips it (SOURCE_DATE_
+  EPOCH touch + find|sort|zip -X@).
+
+Done so far (committed in this change):
+- **macOS SDK staged**: `Xcode-26.1.1-17B100-extracted-SDK-with-libcxx-
+  headers` lives on the public mirror at https://bitcoincore.org/
+  depends-sources/sdks/ (filename from darwin.mk, `.tar`, sha256
+  9600fa93… = the hash in contrib/macdeploy/README.md). Downloaded +
+  extracted into `bitcoin/depends/SDKs/` (gitignored; NEVER commit), and
+  the future depends wiring can plain-`fetchurl` it like other sources.
+- **LLVM/clang/lld pinned to GUIX's 19.1.4** (nixpkgs-26.05 ships
+  19.1.7): `pkgsLlvm1914` in default.nix — an OVERLAY-based nixpkgs
+  import (not a bare `llvmPackages_19.override`: LLVM_TABLEGEN comes
+  from buildPackages via the splice machinery, which a local override
+  doesn't reach — it would have run a 19.1.7 tblgen over 19.1.4 .td
+  files; the overlay makes the splice self-consistent, tblgen = 19.1.4).
+- **`clangDarwin` reunites the resource dir**: nixpkgs puts clang's
+  builtin headers (stdarg.h…) in the separate `lib` output and reglues
+  them via the cc-wrapper, which we deliberately DON'T use (GUIX uses
+  bare clang; no wrapper = no injected-flag battles). clang realpaths
+  its executable to find the resource dir, so symlinks don't work —
+  `clangDarwin` is a copy-join of bin/ + complete lib/clang/19.
+- **Smoke test passed**: C++/libc++ hello compiled + linked for BOTH
+  darwin targets with exactly darwin.mk's flags → valid Mach-O 64-bit
+  PIE executables (llvm-objdump verified). Linking needs NO darwin
+  compiler-rt (GUIX's clang-runtime is linux-only as well).
+- **Patch parity pre-verified**: GUIX clang-19 = pristine source (only
+  driver search-path substitutions, neutralized by -nostdlibinc);
+  nixpkgs' llvm/clang/lld 19 patches are install-dir/test/driver-path
+  only — no codegen-relevant deltas.
+- Upstream unsigned tarballs downloaded + hash-verified as diff
+  references in `tmpdiff/upstream-darwin/`.
+
+Next: depends for darwin (SDK fetchurl + SDK_PATH, darwin package set,
+LIBRARY_PATH=$NATIVE_GCC/lib for native packages, /bitcoin/depends/
+<triple> prefix-baking) starting with x86_64-apple-darwin; then bitcoind
+(no CFLAGS env, cmake_install.cmake `-u -r` sed + --install --strip,
+deploy target for the app zip, SOURCE_DATE_EPOCH=1776286524); then the
+unsigned artifact assembly + gates; then signapple + detached-sigs for
+the signed artifacts. Risk #1 is Qt 6.8.3-darwin cross in the Nix
+sandbox (expect posix_shm-style feature-check divergences). NOTE: the
+SDK (and anything embedding it) must not be pushed to public Cachix.
+
 ## Status (2026-06-12, later): armhf + ppc64 .dbg loclists residue SOLVED — all 7 .dbg byte-identical, CRC patches GONE again, debug tarballs wired
 
 The "loclists residue" (next section) is fixed: all 20 armhf and all 20

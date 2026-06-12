@@ -1311,11 +1311,66 @@ let
     debug = true;
     expectedSha256 = "96e3506195c5cc2ea9ca72fb2ddcbcf5246dd0db0d21d726f3c98eaf0c6b9078";
   };
+  #
+  # ───────────────────── macOS (darwin) toolchain ──────────────────────
+  #
+  # GUIX builds the two darwin releases (arm64-/x86_64-apple-darwin) with
+  # plain clang-toolchain-19 + lld-19 (symlinked as `ld`) from its
+  # llvm.scm — LLVM/clang/lld 19.1.4 — against the extracted Xcode SDK;
+  # there is NO custom gcc/glibc cross toolchain for darwin at all
+  # (manifest.scm, darwin branch). nixpkgs-26.05's llvmPackages_19 is
+  # 19.1.7, so re-pin the whole LLVM set to GUIX's exact 19.1.4 (clang
+  # point releases contain codegen fixes — the version must match).
+  #
+  # The toolchain is used UNWRAPPED — bare clang/clang++/ld.lld/llvm-* on
+  # PATH, like the binaries in GUIX's profile: depends/hosts/darwin.mk
+  # passes all the cross flags explicitly (--target, -isysroot,
+  # -nostdlibinc, -iwithsysroot, -mlinker-version=711), and skipping the
+  # nixpkgs cc-wrapper means none of its injected flags (hardening,
+  # frame pointers, -march) exist in the first place. Note darwin release
+  # builds carry no -g and Mach-O has no .comment, so compile flags are
+  # never recorded in the artifacts.
+  # The pin is done via an OVERLAY (own nixpkgs import, like the cross
+  # package sets) rather than a plain llvmPackages_19.override: the llvm
+  # build takes LLVM_TABLEGEN from buildPackages.llvmPackages_19.tblgen
+  # through the splice machinery, which a local .override doesn't reach —
+  # it would TableGen 19.1.4's .td files with a 19.1.7 tblgen. The overlay
+  # makes the spliced set the pinned one, so tblgen is 19.1.4 as well
+  # (GUIX builds tblgen in-tree from the same source).
+  pkgsLlvm1914 = import pkgs.path {
+    localSystem = { system = buildSystem; };
+    overlays = [
+      (final: prev: {
+        llvmPackages_19 = prev.llvmPackages_19.override {
+          version = "19.1.4";
+          officialRelease = {
+            sha256 = "sha256-qi1a/AWxF5j+4O38VQ2R/tvnToVAlMjgv9SP0PNWs3g=";
+          };
+        };
+      })
+    ];
+  };
+  llvmPackages1914 = pkgsLlvm1914.llvmPackages_19;
+  # nixpkgs moves clang's builtin headers (stdarg.h etc.) into the
+  # separate `lib` output and normally reglues them via the cc-wrapper's
+  # -resource-dir — which we don't use. clang locates its resource dir
+  # relative to the REALPATH of the executable, so symlinking the
+  # binaries wouldn't work either: reunite real copies of bin/ with a
+  # complete lib/clang/19 in one GUIX-shaped store path.
+  clangDarwin = pkgs.runCommand "clang-guix-19.1.4" {} ''
+    mkdir -p $out/lib/clang/19
+    cp -a ${llvmPackages1914.clang-unwrapped}/bin $out/bin
+    cp -a ${llvmPackages1914.clang-unwrapped.lib}/lib/clang/19/include \
+      $out/lib/clang/19/include
+  '';
+  lldDarwin = llvmPackages1914.lld;
+  llvmDarwin = llvmPackages1914.llvm;
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
     debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
     dependsArmhf bitcoindArmhf tarballArmhf debugTarballArmhf
     dependsPpc64 bitcoindPpc64 tarballPpc64 debugTarballPpc64
     riscv64Cross armhfCross ppc64Cross
-    crossGlibc231 crossGlibc231X86 crossGuixGccX86;
+    crossGlibc231 crossGlibc231X86 crossGuixGccX86
+    llvmPackages1914 clangDarwin lldDarwin llvmDarwin;
 }
