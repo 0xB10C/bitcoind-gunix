@@ -2,12 +2,13 @@
 
 A Nix flake that reproduces the official Bitcoin Core GUIX release with
 **byte-identical sha256** — all ten binaries **and** the full release
-archive — for `x86_64-linux-gnu`, `aarch64-linux-gnu` and
-`riscv64-linux-gnu`. All targets are built the way GUIX builds them:
-through a **cross toolchain for the vendor-less target triple** — a
-"cross-to-self" `x86_64-linux-gnu` toolchain for the x86_64 release, and
-aarch64/riscv64 cross toolchains for the other two
-(**cross-compiled on an x86_64 host**, no qemu).
+archive — for `x86_64-linux-gnu`, `aarch64-linux-gnu`,
+`riscv64-linux-gnu`, `arm-linux-gnueabihf` and `powerpc64-linux-gnu`.
+All targets are built the way GUIX builds them: through a **cross
+toolchain for the vendor-less target triple** — a "cross-to-self"
+`x86_64-linux-gnu` toolchain for the x86_64 release, and per-target
+cross toolchains for the others (**cross-compiled on an x86_64 host**,
+no qemu).
 
 ## Status
 
@@ -49,6 +50,21 @@ b348aa9d…  bin/bitcoin-qt         2d28a094…  libexec/bitcoin-node
 
 7ece4ea3…  bitcoin-31.0-riscv64-linux-gnu.tar.gz
 ```
+
+And the `arm-linux-gnueabihf` and `powerpc64-linux-gnu` **release
+archives** also reproduce (all 10 runtime binaries of each byte-match):
+
+```
+8c19d007…  bitcoin-31.0-arm-linux-gnueabihf.tar.gz
+1d9c865a…  bitcoin-31.0-powerpc64-linux-gnu.tar.gz
+```
+
+(For these two targets the separate `-debug.tar.gz` does NOT reproduce
+yet: 5 armhf / 2 powerpc64 `.dbg` files differ from upstream's in a
+single `.debug_loclists` entry each — a gcc var-tracking
+allocation-order sensitivity, see CLAUDE.md — so those binaries'
+`.gnu_debuglink` CRCs are byte-patched to upstream's values. The other
+13 `.dbg` of the two targets are byte-identical and asserted.)
 
 Each derivation's `postFixup` asserts these hashes and fails the build on
 mismatch — so a successful build *is* the reproducibility test. The build
@@ -98,6 +114,10 @@ sha256sum result        # -> 7ece4ea3…
 nix build .#debugTarballRiscv64 --print-build-logs
 sha256sum result        # -> acd0e38f…
 
+# The armhf and powerpc64 releases (release archives only — see above):
+nix build .#tarballArmhf --print-build-logs   # -> 8c19d007…
+nix build .#tarballPpc64 --print-build-logs   # -> 1d9c865a…
+
 # Just the depends tree:
 nix build .#depends
 ```
@@ -116,13 +136,14 @@ bitcoin-tx,bitcoin-util,bitcoin-wallet}`, `libexec/{bitcoin-gui,
 bitcoin-node,test_bitcoin}`) and the `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
 archive.
 
-The separate debug-symbols archives are **also reproduced** for all
-three targets (`nix build .#debugTarball` → `96e35061…`;
-`.#debugTarballAarch64` → `91917647…`; `.#debugTarballRiscv64` →
-`acd0e38f…`): all thirty `.dbg` debug files are byte-identical to
-upstream's, so no byte patching of any kind remains anywhere in the
-pipeline (the historical `.gnu_debuglink` CRC patches are gone — the
-CRCs now match naturally).
+The separate debug-symbols archives are **also reproduced** for the
+x86_64/aarch64/riscv64 targets (`nix build .#debugTarball` →
+`96e35061…`; `.#debugTarballAarch64` → `91917647…`;
+`.#debugTarballRiscv64` → `acd0e38f…`): all thirty of their `.dbg`
+debug files are byte-identical to upstream's with no byte patching.
+For armhf/powerpc64 the debug archives do not reproduce yet (7 of 20
+`.dbg` differ in one `.debug_loclists` entry each; those binaries'
+`.gnu_debuglink` CRCs are patched to upstream's — see CLAUDE.md).
 
 ## Layout
 

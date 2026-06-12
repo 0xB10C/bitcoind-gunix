@@ -1,0 +1,31 @@
+Drop nixpkgs' "ambiguous ABI" assertion for the `gnu` ABI on big-endian
+64-bit PowerPC, so `crossSystem.config = "powerpc64-linux-gnu"` — GUIX's
+exact target triple for the powerpc64 Bitcoin Core release — elaborates.
+
+With the plain `gnu` ABI, nixpkgs' platform-flags pass NO
+--with-abi/--with-cpu/--with-long-double-* to the cross gcc (abis.gnu
+carries no attrs), which is exactly GUIX's bare gcc configure; gcc's own
+built-in default for powerpc64-linux-gnu is ELFv1, matching the upstream
+release binaries (e_flags 0x1 "abiv1", interpreter /lib64/ld64.so.1).
+nixpkgs' own parse default for ABI-less BE-ppc64 triples is gnuabielfv1
+for the same reason — the assertion only rejects the EXPLICIT "gnu"
+spelling, which is the spelling the GUIX triple needs.
+
+Applied via pkgs.applyPatches to the pinned nixpkgs in default.nix; only
+the powerpc64 package set uses the patched copy.
+
+--- a/lib/systems/parse.nix
++++ b/lib/systems/parse.nix
+@@ -703,12 +703,6 @@
+             The "gnu" ABI is ambiguous on 32-bit ARM. Use "gnueabi" or "gnueabihf" instead.
+           '';
+         }
+-        {
+-          assertion = platform: !(platform.isPower64 && platform.isBigEndian);
+-          message = ''
+-            The "gnu" ABI is ambiguous on big-endian 64-bit PowerPC. Use "gnuabielfv2" or "gnuabielfv1" instead.
+-          '';
+-        }
+       ];
+     };
+     gnuabi64 = {

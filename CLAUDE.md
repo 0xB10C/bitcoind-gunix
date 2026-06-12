@@ -6,6 +6,81 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-12): armhf + powerpc64 RELEASE tarballs reproduce — .dbg loclists residue documented
+
+The 4th and 5th targets. `nix build .#tarballArmhf` (`8c19d007…`) and
+`.#tarballPpc64` (`1d9c865a…`) byte-match the upstream release archives;
+all 10 runtime binaries of each release byte-match (gated). The
+`-debug.tar.gz` of these two targets is NOT byte-reproducible yet:
+armhf has 5 diverging `.dbg` (bitcoind, bitcoin-qt, bitcoin-gui,
+bitcoin-node, test_bitcoin), ppc64 has 2 (bitcoin-qt, bitcoin-gui) —
+each differing from upstream's ONLY in `.debug_loclists` (+14…+36 bytes,
+ONE list per file). Those binaries' `.gnu_debuglink` CRCs are
+byte-patched to upstream's values (the CRC-patch mechanism returns,
+gated to exactly these 7 binaries via `debuglinkCrcs` in
+bitcoind-cross.nix); the 13 byte-identical `.dbg` of the two targets ARE
+asserted. Pipeline: mkLinuxCrossTarget (default.nix) — the
+riscv64/aarch64 recipe generalized — + bitcoind-cross.nix (riscv64 also
+migrated onto both; its 22 artifacts still gate green).
+
+Three root causes were found and fixed on the way (each verified at the
+object/byte level before rebuilds):
+
+- **armhf: awk hash-iteration order in gcc's own build.**
+  gcc/config/arm/parsecpu.awk generates the arm ISA tables
+  (all_implied_fbits etc.) with `for (x in array)` — unordered. nixpkgs'
+  gawk 5.4.0 orders it differently than GUIX's 5.3.0, and the table is
+  baked through the arm tm.h headers into crtstuff.c → crtbegin/crtend →
+  EVERY binary's .rodata (the whole-release divergence, 72 B in
+  bitcoin-cli). Fix: `gawk530` pinned into the armhf gcc build
+  (gccNativeInputs; needs ac_cv_prog_cc_c23=no + -std=gnu17 — autoconf
+  2.72/gcc 15 default to C23 which gawk 5.3.0 doesn't compile as).
+- **ppc64: duplicate DWARF file-table entries under prefix maps.**
+  gcc keys its file table on the path AS PASSED IN but emits the
+  REMAPPED name: a main file whose path matches a -fdebug-prefix-map
+  enters the table under two spellings (the second via the synthesized
+  static-init function's end-of-parsing location) → duplicate `.file`
+  → +1 entry in the gas-built DWARF-v3 line tables (ppc64 is the only
+  target whose C++ line tables come out as v3; the v5 targets show the
+  doubled entry on BOTH sides). Upstream HAS the duplicates for src/
+  CUs (their own $DISTSRC/src=. map) but NOT for cmake-build-dir
+  (mpgen-generated) CUs — they build at the REAL /distsrc-base path and
+  never remap those, while our /build tree map did. Unconditional
+  dedup therefore REGRESSES matching CUs (tried, reverted). Fix:
+  patches/gcc-debug-canon-prefix-map.patch — a TRANSPARENT canonical
+  rewrite (env NIX_DEBUG_CANON_PREFIX_MAP=/build/bitcoin-31.0=$DISTSRC,
+  applied before the maps AND to the file-table keys) makes the compile
+  behave byte-for-byte as if it ran at GUIX's real path, and
+  bitcoind-cross.nix (debugCanonMap) then uses GUIX's literal map set
+  (-fdebug-prefix-map=$DISTSRC/src=.). ppc64-only.
+- **gcc's .debug_loclists are GGC-allocation-order sensitive** (the
+  big lesson, and the cause of the remaining residue). Var-tracking
+  picks ONE representative among equivalent location expressions (e.g.
+  `r6-56` vs `r5-16`, same value), and the choice flips with GGC arena
+  layout: the first canon patch allocated its rewritten strings with
+  ggc_alloc_atomic and that ALONE flipped loclists entries in
+  previously-byte-identical CUs; reallocating with plain malloc
+  (XNEWVEC) un-flipped them all. The 7 still-diverging .dbg are single
+  flips of this kind in each target's biggest CUs (armhf: variable `it`
+  in net_processing.cpp — shared by exactly the 5 failing binaries;
+  ppc64: inlined QScopedPointerDeleter<QDataStreamPrivate> in a qt/*.cpp
+  CU), stable across our builds, with identical producers and identical
+  .text — caused by some residual allocation-stream difference vs
+  GUIX's compile environment (path string lengths/content in early
+  allocations are the chief suspects; ggc params are equal — both
+  machines cap at ggc-min-expand=100/heapsize=128M). Follow-up options:
+  length/shape-matched build paths, or a determinism fix in
+  var-tracking/cselib itself (upstreamable).
+
+Methodology additions for the playbook: per-table walks of
+.debug_line/.debug_loclists headers localize a divergence to ONE CU
+cheaply; `nix develop` + a binary-patched mpgen (equal-length store
+path baked over /build) replays single-CU compiles outside the sandbox
+in seconds; validating a gcc patch needs BOTH directions — the
+trigger case fixed AND a non-trigger compile byte-identical against the
+unpatched compiler (with the SAME wrapper flavor — NoFp vs regular
+wrappers differ by injected flags).
+
 ## Status (2026-06-11, evening): riscv64 release reproduced — ROUND 1, all 22 artifacts
 
 The third target. `nix build .#bitcoindRiscv64` byte-matches all 10

@@ -415,239 +415,506 @@ let
     expectedSha256 = "91917647aaf50965fc834e048256fce17e8f5590658c7e8de2879fb66cdc9a73";
   };
 
+  # --- generic linux-gnu cross target generator ---
+  # The aarch64/riscv64 recipe parameterized over the target triple: cross
+  # binutils 2.41 (compressed-debug-sections, bundled zlib), GUIX's glibc
+  # 2.31 (forced default-PIE gcc-14 CC, --disable-static-pie, drv-0
+  # debug-prefix-map, pic-hardening-off, unsplit static libs), gcc 14.3.0
+  # with GUIX's linux-base-gcc flags + the ssa patch (libgcc -g
+  # multiplicity, GUIX maps, libstdc++ strip-debug), NoFp wrapper
+  # variants, kernel headers 6.1.119, then depends/bitcoind/tarballs with
+  # 20-artifact + 2-archive gates. See the aarch64 section above for the
+  # full reasoning on every piece (that section predates this generator
+  # and keeps its bespoke definitions: it additionally FILTERS
+  # --with-arch=armv8-a, bakes --enable-standard-branch-protection and
+  # strips a wrapper -march injection; x86_64 below likewise has CET and
+  # gas-specific handling).
+  #
+  # Per-target knobs:
+  # - nixpkgsPath: nixpkgs source to instantiate the cross package set
+  #   from (powerpc64 needs a one-line-patched copy — see its
+  #   instantiation).
+  # - gccArchFlags: GUIX's gcc-configure-flags-for-triplet extras (guix
+  #   gnu/packages/gcc.scm translates "extended" triples into gcc
+  #   configure flags: armhf gets --with-arch=armv7-a/--with-mode=thumb/
+  #   --with-fpu=neon; riscv64/powerpc64 get NONE — gcc's own config.gcc
+  #   seeding for the triple supplies the defaults, identically for
+  #   nixpkgs' and GUIX's gcc, so the driver-injected -m flags recorded in
+  #   every DW_AT_producer match automatically).
+  # - glibcPatches: GUIX glibc-2.31 origin patches that matter for the
+  #   target (riscv64: glibc-riscv-jumptarget.patch).
+  # - dynamicLinker/extraCXXFLAGS: build.sh's per-host values.
+  # The NoFp wrappers strip exactly "-fno-omit-frame-pointer" — on these
+  # targets the cc-wrapper injects no leaf-FP variant (x86_64/aarch64-only
+  # for gcc 14) and no -march (no gcc.arch platform attrs).
+  mkLinuxCrossTarget =
+    { triple
+    , nixpkgsPath ? pkgs.path
+    , gccArchFlags ? [ ]
+    , gccExtraPatches ? [ ] # extra patches for the final cross gcc only (not the glibc CC)
+    , gccNativeInputs ? [ ] # prepended to the cross gcc's build env (e.g. armhf's pinned gawk)
+    , glibcPatches ? [ ]
+    , debugCanonMap ? false # route the /build→DISTSRC rewrite through the gcc canon env var (ppc64)
+    , dynamicLinker
+    , extraCXXFLAGS ? ""
+    , pnameSuffix
+    , expectedHashes
+    , debuglinkCrcs ? { } # upstream CRC bytes for binaries whose .dbg diverges (see bitcoind-cross.nix)
+    , tarballSha256
+    , debugTarballSha256 ? null # null = the -debug.tar.gz is not byte-reproducible (yet); no attr
+    }:
+    let
+      pkgsCross = import nixpkgsPath {
+        localSystem = buildSystem;
+        crossSystem = { config = triple; };
+        # The GUIX triples parse to generic cpus nixpkgs' meta.platforms
+        # lists don't enumerate (e.g. "arm-linux" — the armv5tel/armv7l/…
+        # doubles are listed, the unversioned one isn't). Eval-level only;
+        # no derivation changes (verified drv-identical for riscv64).
+        config.allowUnsupportedSystem = true;
+      };
+
+      linuxHeaders61' = pkgsCross.linuxHeaders.overrideAttrs (o: {
+        version = "6.1.119";
+        src = pkgs.fetchurl {
+          url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
+          hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
+        };
+      });
+
+      # Stock cross gcc14 wrapper used as the glibc's forced CC — see
+      # gcc14X86NoFp/gcc14Aarch64NoFpCC. Only default-PIE is baked (GUIX's
+      # linux-base-gcc); no branch-protection/CET analog on these targets.
+      gcc14NoFpCC = pkgsCross.buildPackages.gcc14.cc.overrideAttrs (o: {
+        configureFlags = (o.configureFlags or [ ]) ++ [
+          "--enable-default-pie=yes"
+          "--with-as=${crossBinutils241'}/bin/${triple}-as"
+          "--with-ld=${crossBinutils241'}/bin/${triple}-ld"
+        ] ++ gccArchFlags;
+      });
+      gcc14NoFp = (pkgsCross.buildPackages.gcc14.override {
+        cc = gcc14NoFpCC;
+      }).overrideAttrs (old: {
+        postFixup = (old.postFixup or "") + ''
+          substituteInPlace $out/nix-support/cc-cflags-before \
+            --replace-fail "-fno-omit-frame-pointer" ""
+        '';
+      });
+
+      # Cross glibc 2.31 — same override set as crossGlibc231 (aarch64).
+      crossGlibc231' = (pkgsCross.glibc.override {
+        stdenv = pkgsCross.gcc14Stdenv;
+        linuxHeaders = linuxHeaders61';
+      }).overrideAttrs (old: {
+        version = "2.31";
+        src = pkgs.fetchgit {
+          name = "glibc-2.31";
+          url = "https://sourceware.org/git/glibc.git";
+          rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
+          hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+        };
+        patches = glibcPatches;
+        configureFlags =
+          (builtins.filter
+            (f: !(pkgs.lib.hasPrefix "--enable-kernel" f
+              || f == "--enable-stack-protector=strong"
+              || f == "--enable-cet=permissive"
+              || f == "--enable-fortify-source"))
+            (old.configureFlags or [ ]))
+          ++ [
+            "--enable-stack-protector=all"
+            "--enable-bind-now"
+            "--disable-werror"
+            "--disable-timezone-tools"
+            "--disable-profile"
+            "--disable-static-pie"
+          ];
+        env = (old.env or { }) // {
+          NIX_CFLAGS_COMPILE = "-fdebug-prefix-map=/build/glibc-2.31=/tmp/guix-build-glibc-cross-${triple}-2.31.drv-0/source"
+            + " -ffile-prefix-map=${gcc14NoFpCC}/lib/gcc=/usr/lib/gcc"
+            + " -ffile-prefix-map=${linuxHeaders61'}/include=/usr/include";
+          libc_cv_cxx_link_ok = "no";
+        };
+        separateDebugInfo = false;
+        dontStrip = true;
+        preConfigure = (old.preConfigure or "") + ''
+          export CC=${gcc14NoFp}/bin/${triple}-gcc
+          export NIX_CFLAGS_COMPILE=$(echo "$NIX_CFLAGS_COMPILE" | sed 's/-frandom-seed=[^ ]*//')
+        '';
+        makeFlags = (old.makeFlags or [ ]) ++ [
+          "CC=${gcc14NoFp}/bin/${triple}-gcc"
+        ];
+        hardeningDisable = [
+          "zerocallusedregs" "strictoverflow" "stackprotector"
+          "stackclashprotection" "fortify" "fortify3"
+          "strictflexarrays1" "libcxxhardeningfast"
+          "pic"
+        ];
+        postPatch = ''
+          sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
+          echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
+        '';
+        postInstall = ''
+          moveToOutput bin/getent $getent
+          test -f $out/etc/ld.so.cache && rm $out/etc/ld.so.cache
+          if test -n "$linuxHeaders"; then
+              (cd $dev/include && \
+               ln -sv $(ls -d $linuxHeaders/include/* | grep -v scsi\$) .)
+          fi
+          if test -n "$is64bit"; then
+              ln -s lib $out/lib64
+          fi
+          rm -rf $out/var $bin/bin/sln
+          ln -sf $out/lib/libpthread.so.0 $out/lib/libpthread.so
+          ln -sf $out/lib/librt.so.1 $out/lib/librt.so
+          ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
+          test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
+          touch $out/lib/libpthread.a
+          mkdir -p $static/lib
+          cp $bin/bin/getconf $bin/bin/getconf_
+          mv $bin/bin/getconf_ $bin/bin/getconf
+        '';
+      });
+
+      crossBinutils241' = pkgsCross.stdenv.cc.bintools.bintools.overrideAttrs (old: {
+        version = "2.41";
+        src = pkgs.fetchurl {
+          url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+          sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+        };
+        patches = [ ];
+        configureFlags =
+          (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
+          ++ [ "--enable-compressed-debug-sections=all" ];
+      });
+      crossBintools241' = pkgsCross.stdenv.cc.bintools.override {
+        bintools = crossBinutils241';
+        libc = crossGlibc231';
+      };
+
+      # Cross gcc 14.3.0 with GUIX's linux-base-gcc flags — see
+      # crossGuixGcc (aarch64). No --enable-standard-branch-protection
+      # (aarch64-only), no --enable-cet (x86-only), no
+      # -Wa,-mrelax-relocations (GOTPCRELX is x86-only).
+      crossGuixGcc' = pkgsCross.stdenv.cc.override {
+        bintools = crossBintools241';
+        libc = crossGlibc231';
+        cc = (pkgsCross.buildPackages.gcc14.cc.override {
+          libcCross = crossGlibc231';
+        }).overrideAttrs (old: {
+          configureFlags = (old.configureFlags or [ ]) ++ [
+            "--enable-default-pie=yes"
+            "--enable-default-ssp=yes"
+            "--enable-initfini-array=yes"
+            "--enable-host-bind-now=yes"
+            "--enable-gprofng=no"
+            "--disable-gcov"
+            "--disable-libgomp"
+            "--disable-libquadmath"
+            "--disable-libsanitizer"
+            "--disable-nls"
+            "--with-as=${crossBinutils241'}/bin/${triple}-as"
+            "--with-ld=${crossBinutils241'}/bin/${triple}-ld"
+          ] ++ gccArchFlags;
+          patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ] ++ gccExtraPatches;
+          nativeBuildInputs = gccNativeInputs ++ (old.nativeBuildInputs or [ ]);
+          preBuild = (old.preBuild or "") + ''
+            EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"
+            GUIXMAPS="-fdebug-prefix-map=/build/build=/tmp/guix-build-gcc-cross-${triple}-14.3.0.drv-0/build -ffile-prefix-map=${pkgs.lib.getDev crossGlibc231'}/include=/usr/include -ffile-prefix-map=${linuxHeaders61'}/include=/usr/include"
+            makeFlagsArray+=(
+              "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS -g"
+              "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+              "FLAGS_FOR_TARGET=$EXTRA_SANS_O2 $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+            )
+          '';
+          dontStrip = true;
+          postFixup = (old.postFixup or "") + ''
+            find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
+              ${crossBinutils241'}/bin/${triple}-objcopy \
+                --enable-deterministic-archives --strip-debug "$f"
+            done
+          '';
+        });
+      };
+
+      crossInputs' = [
+        crossGuixGcc'
+        crossGuixGcc'.bintools
+      ];
+
+      crossGuixGccNoFp' = crossGuixGcc'.overrideAttrs (old: {
+        postFixup = (old.postFixup or "") + ''
+          substituteInPlace $out/nix-support/cc-cflags-before \
+            --replace-fail "-fno-omit-frame-pointer" ""
+        '';
+      });
+      crossInputsNoFp' = [
+        crossGuixGccNoFp'
+        crossGuixGccNoFp'.bintools
+      ];
+
+      depends' = pkgs.callPackage ./depends.nix {
+        inherit version url sha256;
+        inherit (pkgs) gcc14Stdenv;
+        hostTriple = triple;
+        buildQt = true;
+        crossInputs = crossInputs';
+      };
+      bitcoind' = pkgs.callPackage ./bitcoind-cross.nix {
+        inherit version url sha256;
+        inherit (pkgs) gcc14Stdenv;
+        inherit dynamicLinker extraCXXFLAGS expectedHashes debuglinkCrcs debugCanonMap;
+        hostTriple = triple;
+        pname = "bitcoind-${pnameSuffix}";
+        depends = depends';
+        crossInputs = crossInputsNoFp';
+        guixGcc = crossGuixGcc'.cc;
+        linuxHeaders = linuxHeaders61';
+      };
+      tarball' = pkgs.callPackage ./tarball.nix {
+        inherit version url sha256;
+        bitcoind = bitcoind';
+        arch = triple;
+        expectedSha256 = tarballSha256;
+      };
+      debugTarball' = if debugTarballSha256 == null then null else pkgs.callPackage ./tarball.nix {
+        inherit version url sha256;
+        bitcoind = bitcoind';
+        arch = triple;
+        debug = true;
+        expectedSha256 = debugTarballSha256;
+      };
+    in {
+      depends = depends';
+      bitcoind = bitcoind';
+      tarball = tarball';
+      debugTarball = debugTarball';
+      crossGlibc231 = crossGlibc231';
+      crossGuixGcc = crossGuixGcc';
+    };
+
   # --- riscv64 cross-compile ---
-  # The riscv64-linux-gnu release, mirroring the aarch64 cross pipeline
-  # above 1:1 (see the aarch64 comments for the full reasoning on each
-  # piece). riscv64-specific deltas, all verified against the upstream
-  # riscv64 .dbg/binaries before this was written:
+  # The riscv64-linux-gnu release. riscv64-specific notes, all verified
+  # against the upstream riscv64 .dbg/binaries before building (round-1
+  # byte-match):
   # - NO --with-arch/-march handling anywhere: nixpkgs passes no
   #   --with-arch for riscv (riscv-multiplatform defines no gcc.arch), and
   #   gcc's own config.gcc default (rv64gc/lp64d) is what GUIX's gcc gets
   #   too — the driver-injected `-mabi=lp64d -misa-spec=20191213
   #   -mtls-dialect=trad -march=rv64imafdc_zicsr_zifencei` recorded in
   #   every upstream CU's DW_AT_producer comes from those shared defaults.
-  # - NO --enable-standard-branch-protection (aarch64-only) and NO
-  #   --enable-cet (x86-only).
   # - glibc needs GUIX's glibc-riscv-jumptarget.patch (riscv sysdeps asm:
   #   HIDDEN_JUMPTARGET fixes; part of GUIX's glibc-2.31 source).
   # - frame pointers: riscv gcc at -O2 omits the frame pointer (like
   #   x86_64, no leaf/non-leaf split — -momit-leaf-frame-pointer does not
-  #   exist on riscv). The cc-wrapper injects only -fno-omit-frame-pointer
-  #   here (the leaf variant is gcc>=15.1 on riscv), so the NoFp variants
-  #   strip just that one flag.
-  pkgsCrossRiscv64 = import pkgs.path {
-    localSystem = buildSystem;
-    crossSystem = { config = "riscv64-linux-gnu"; };
+  #   exist on riscv).
+  riscv64Cross = mkLinuxCrossTarget {
+    triple = "riscv64-linux-gnu";
+    glibcPatches = [ ./patches/glibc-riscv-jumptarget.patch ];
+    dynamicLinker = "/lib/ld-linux-riscv64-lp64d.so.1";
+    pnameSuffix = "riscv64";
+    expectedHashes = {
+      "bin/bitcoin" = "d28d634c82878263fc4878072fa132b1b518381e768081d7639da664b1b5da07";
+      "bin/bitcoin-cli" = "bb5ecc78581cd0f2361f25884520af76c40cde505444a8670f933d3492ea811e";
+      "bin/bitcoind" = "2c868a6a4d401269432a92f542bf833ce3622cd5caf7828016a7b61de64d0cc3";
+      "bin/bitcoin-tx" = "e4d682e57827e1299e52a104341c66484adbd16fc5600c26a5aa3e8a562385e7";
+      "bin/bitcoin-util" = "a33638e29496f0aec56aa53f930687919c24c87d1e49378d23512c14c125d9b1";
+      "bin/bitcoin-wallet" = "22d3c59167c3686a011b6ec5a9c85a0fd0515b6db3e570beee8141437f83dfd3";
+      "bin/bitcoin-qt" = "b348aa9d4fb2ccc5c0271a9ef072d196b85721de252e1cf65af6aca4f1eaaaec";
+      "libexec/bitcoin-node" = "2d28a094263960c361cf901e1a43cf44d26ec99c0ea6f9005ef88137591c79fd";
+      "libexec/bitcoin-gui" = "213838af6f99da64c635219505a635fbeac616c24691f64190457bfc97fa74c8";
+      "libexec/test_bitcoin" = "6086d424a21967d8e8bf6e2e5f9f74de4b9c5495cbf3d5f0c6d80c42ae1f83bf";
+      "bin/bitcoin.dbg" = "cfd2e64494d370734862c640d5358fc6aed812dc8466ed930cd0603d90edc14d";
+      "bin/bitcoin-cli.dbg" = "66ad80b9584dc926cf3872d487085011e0dd1a3dc4c927376fb9d2ec7d34d6cd";
+      "bin/bitcoind.dbg" = "881245c2c5f46c7834c99b9a06b03296fcc7349f5a261480cc426590ff650895";
+      "bin/bitcoin-tx.dbg" = "5f853f178c6ce45a3b3cfd1564aeb7fb461cd22c1b2b09cf4d04d2b0a0c4b2bc";
+      "bin/bitcoin-util.dbg" = "fa52baceb687b465846ac6dddefdb5ca852fa806b05890d053e43b727d195dbc";
+      "bin/bitcoin-wallet.dbg" = "096273e898d962939ce359968d08b847d950abdc9bcdeca3825a5c426cbbd621";
+      "bin/bitcoin-qt.dbg" = "ceb874159d794b01f016c5c72891d34b81a49d7b4f3d69fbbc3e6828656deeb3";
+      "libexec/bitcoin-node.dbg" = "e120294b37da3ee878e6765609a1ca87a17b9d74b6749f5344e6683dbf33c13d";
+      "libexec/bitcoin-gui.dbg" = "aa2f11addf9ff938e03939281f70dc0b340e05b629d68cf6cdb37c3b0d17021e";
+      "libexec/test_bitcoin.dbg" = "d01cd44763909a640db92b491f03218609c16ec34eef189506bc225348833288";
+    };
+    tarballSha256 = "7ece4ea365bba9b2008b27f0717ef6a518598a572edaa2815e775faadc53c136";
+    debugTarballSha256 = "acd0e38f4bb99c7c3024e494ca218d3ae67ec4a8b3b7ae556a8292353fe308b5";
   };
+  dependsRiscv64 = riscv64Cross.depends;
+  bitcoindRiscv64 = riscv64Cross.bitcoind;
+  tarballRiscv64 = riscv64Cross.tarball;
+  debugTarballRiscv64 = riscv64Cross.debugTarball;
 
-  linuxHeaders61Riscv64 = pkgsCrossRiscv64.linuxHeaders.overrideAttrs (o: {
-    version = "6.1.119";
+  # --- armhf (arm-linux-gnueabihf) cross-compile ---
+  # The arm-linux-gnueabihf release. armhf-specific notes (verified
+  # against the upstream .dbg/binaries):
+  # - gccArchFlags = GUIX's gcc-configure-flags-for-triplet translation of
+  #   the gnueabihf "extended triple" (guix gnu/packages/gcc.scm):
+  #   --with-arch=armv7-a --with-float=hard --with-mode=thumb
+  #   --with-fpu=neon. nixpkgs already passes --with-float=hard (from
+  #   parsed.abi.float), so only the other three are added here. The gcc
+  #   driver then self-injects the RECORDED `-mfloat-abi=hard -mfpu=neon
+  #   -mtls-dialect=gnu -mthumb -march=armv7-a+simd` into every CU's
+  #   DW_AT_producer — exactly upstream's producer prefix (this is the
+  #   aarch64 --with-arch effect, except here upstream's gcc HAS the
+  #   configured defaults, so we add rather than filter).
+  # - build.sh adds -Wno-psabi to HOST_CXXFLAGS for this host only
+  #   (warning flag, not recorded in DW_AT_producer; mirrored for compile
+  #   parity).
+  # - ELF32; interpreter /lib/ld-linux-armhf.so.3.
+  # gawk pinned to GUIX's 5.3.0 for the armhf gcc build: gcc's
+  # config/arm/parsecpu.awk generates the arm-cpu-data tables with awk's
+  # UNORDERED `for (x in array)` iteration — the entry ORDER of (e.g.)
+  # `all_implied_fbits` depends on the awk version's hash internals.
+  # nixpkgs' gawk 5.4.0 orders it differently than GUIX's 5.3.0, and the
+  # table is baked into crtbegin/crtend (crtstuff.c includes the arm tm
+  # headers) — i.e. into EVERY linked binary's .rodata. This was the
+  # whole-release armhf divergence (72 bytes in bitcoin-cli, all in this
+  # one table). arm-only: no other target has awk-generated unordered
+  # tables, so the pin is armhf-gated.
+  # (C23 disabled via the autoconf cache var: nixpkgs' gawk runs
+  # autoreconfHook, and autoconf 2.72's AC_PROG_CC auto-selects the
+  # NEWEST C standard the compiler supports — 5.3.0's io.c K&R-style
+  # casts don't compile as C23.)
+  gawk530 = pkgs.gawk.overrideAttrs (o: {
+    version = "5.3.0";
     src = pkgs.fetchurl {
-      url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
-      hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
+      url = "mirror://gnu/gawk/gawk-5.3.0.tar.xz";
+      sha256 = "02x97iyl9v84as4rkdrrkfk2j4vy4r3hpp3rkp3gh3qxs79id76a";
     };
+    configureFlags = (o.configureFlags or [ ]) ++ [ "ac_cv_prog_cc_c23=no" ];
+    # gcc 15 also DEFAULTS to gnu23, so pin the dialect explicitly too.
+    env = (o.env or { }) // { NIX_CFLAGS_COMPILE = "-std=gnu17"; };
   });
 
-  # Stock cross gcc14 wrapper used as crossGlibc231Riscv64's forced CC —
-  # see gcc14X86NoFp/gcc14Aarch64NoFpCC. Only default-PIE is baked (GUIX's
-  # linux-base-gcc); no branch-protection/CET analog on riscv.
-  gcc14Riscv64NoFpCC = pkgsCrossRiscv64.buildPackages.gcc14.cc.overrideAttrs (o: {
-    configureFlags = (o.configureFlags or [ ]) ++ [
-      "--enable-default-pie=yes"
-      "--with-as=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-as"
-      "--with-ld=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-ld"
-    ];
-  });
-  gcc14Riscv64NoFp = (pkgsCrossRiscv64.buildPackages.gcc14.override {
-    cc = gcc14Riscv64NoFpCC;
-  }).overrideAttrs (old: {
-    postFixup = (old.postFixup or "") + ''
-      substituteInPlace $out/nix-support/cc-cflags-before \
-        --replace-fail "-fno-omit-frame-pointer" ""
-    '';
-  });
-
-  # riscv64 cross glibc 2.31 — same override set as crossGlibc231 (aarch64)
-  # above, plus GUIX's riscv jumptarget patch.
-  crossGlibc231Riscv64 = (pkgsCrossRiscv64.glibc.override {
-    stdenv = pkgsCrossRiscv64.gcc14Stdenv;
-    linuxHeaders = linuxHeaders61Riscv64;
-  }).overrideAttrs (old: {
-    version = "2.31";
-    src = pkgs.fetchgit {
-      name = "glibc-2.31";
-      url = "https://sourceware.org/git/glibc.git";
-      rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
-      hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+  armhfCross = mkLinuxCrossTarget {
+    triple = "arm-linux-gnueabihf";
+    gccArchFlags = [ "--with-arch=armv7-a" "--with-mode=thumb" "--with-fpu=neon" ];
+    gccNativeInputs = [ gawk530 ];
+    dynamicLinker = "/lib/ld-linux-armhf.so.3";
+    extraCXXFLAGS = "-Wno-psabi";
+    pnameSuffix = "armhf";
+    expectedHashes = {
+      "bin/bitcoin" = "6fe2e29aeea99bafb1ad92333ecc2eaa52d3e16734b63ff743da37e2ec87688e";
+      "bin/bitcoin-cli" = "d135cb00ca315694aa5274a2f3065d82b9183b80881e634016f7504906e79b86";
+      "bin/bitcoind" = "d44c812afed46ca02d0a6ee494b738f92ef255a28afaa2530544cfc3784e7ae6";
+      "bin/bitcoin-tx" = "007e46104f7c74b6fbb24b6c9e9a8fd0cf0ee6fbbe6c9ccb22e66f5275bdfb7f";
+      "bin/bitcoin-util" = "046c67b8d6fcaa29aa02ad1c14ad6e1b9bedef9320335d7de427127da1b19a66";
+      "bin/bitcoin-wallet" = "effbb134e764fbf0dbabf999e8855367e83c2ba2dd25e8b25a28e2a679749b7d";
+      "bin/bitcoin-qt" = "dab13e05f54a04b7430cfe9ddc16069a6c93b059ff70e27e5d21140d8a9e9b4b";
+      "libexec/bitcoin-node" = "19fe6129533db79c622e5ca52b5a26af765e8114124a94a3548a2c4208f3c1ee";
+      "libexec/bitcoin-gui" = "6b50fb850eb42df3fc774b8137baa31eeb497aa259584c0ee5eb1f395dd76753";
+      "libexec/test_bitcoin" = "c6170cb1c5115034c7d2dc5697909bb921c93e07a186323eba43a50fc4b4460d";
+      # The five .dbg below are byte-identical to upstream's. The other
+      # five (bitcoind, bitcoin-qt, bitcoin-gui, bitcoin-node,
+      # test_bitcoin) diverge in ONE .debug_loclists entry each (gcc
+      # var-tracking picks a different-but-equivalent location
+      # expression; see CLAUDE.md "loclists residue") and are NOT
+      # asserted — their runtime binaries get upstream's debuglink CRC
+      # patched in (debuglinkCrcs below) so the release tarball still
+      # reproduces. The -debug.tar.gz is NOT byte-reproducible yet.
+      "bin/bitcoin.dbg" = "60d22fc62c48176d4d52e049fcd6c378aa8918e0ddbd81c4e515d68590654775";
+      "bin/bitcoin-cli.dbg" = "ffad56789f3b85f959f510472accbacb92e45e5db69f41de5ed5de7e2dba7239";
+      "bin/bitcoin-tx.dbg" = "3c2575828c75fde267800a2b2e6da8a44d79b5fd99810fed7a61b1e45ef3005b";
+      "bin/bitcoin-util.dbg" = "136fffa7961ea8f5bf686dadfe30b1bc8dcb2f2ce1bf4997a3273c519cbe7ee0";
+      "bin/bitcoin-wallet.dbg" = "5555299c4ab4388ddc3de83eb1a39a895940cde22cd258f3b75ceb9128c26d30";
     };
-    patches = [ ./patches/glibc-riscv-jumptarget.patch ];
-    configureFlags =
-      (builtins.filter
-        (f: !(pkgs.lib.hasPrefix "--enable-kernel" f
-          || f == "--enable-stack-protector=strong"
-          || f == "--enable-cet=permissive"
-          || f == "--enable-fortify-source"))
-        (old.configureFlags or [ ]))
-      ++ [
-        "--enable-stack-protector=all"
-        "--enable-bind-now"
-        "--disable-werror"
-        "--disable-timezone-tools"
-        "--disable-profile"
-        "--disable-static-pie"
-      ];
-    env = (old.env or { }) // {
-      NIX_CFLAGS_COMPILE = "-fdebug-prefix-map=/build/glibc-2.31=/tmp/guix-build-glibc-cross-riscv64-linux-gnu-2.31.drv-0/source"
-        + " -ffile-prefix-map=${gcc14Riscv64NoFpCC}/lib/gcc=/usr/lib/gcc"
-        + " -ffile-prefix-map=${linuxHeaders61Riscv64}/include=/usr/include";
-      libc_cv_cxx_link_ok = "no";
+    debuglinkCrcs = {
+      "bin/bitcoind" = "67313eda";
+      "bin/bitcoin-qt" = "3c461ac7";
+      "libexec/bitcoin-gui" = "218e2267";
+      "libexec/bitcoin-node" = "794cc595";
+      "libexec/test_bitcoin" = "68fc9b6b";
     };
-    separateDebugInfo = false;
-    dontStrip = true;
-    preConfigure = (old.preConfigure or "") + ''
-      export CC=${gcc14Riscv64NoFp}/bin/riscv64-linux-gnu-gcc
-      export NIX_CFLAGS_COMPILE=$(echo "$NIX_CFLAGS_COMPILE" | sed 's/-frandom-seed=[^ ]*//')
-    '';
-    makeFlags = (old.makeFlags or [ ]) ++ [
-      "CC=${gcc14Riscv64NoFp}/bin/riscv64-linux-gnu-gcc"
-    ];
-    hardeningDisable = [
-      "zerocallusedregs" "strictoverflow" "stackprotector"
-      "stackclashprotection" "fortify" "fortify3"
-      "strictflexarrays1" "libcxxhardeningfast"
-      "pic"
-    ];
-    postPatch = ''
-      sed -i 's/ot \$/ot:\n\ttouch $@\n$/' manual/Makefile
-      echo "LDFLAGS-nscd += -static-libgcc" >> nscd/Makefile
-    '';
-    postInstall = ''
-      moveToOutput bin/getent $getent
-      test -f $out/etc/ld.so.cache && rm $out/etc/ld.so.cache
-      if test -n "$linuxHeaders"; then
-          (cd $dev/include && \
-           ln -sv $(ls -d $linuxHeaders/include/* | grep -v scsi\$) .)
-      fi
-      if test -n "$is64bit"; then
-          ln -s lib $out/lib64
-      fi
-      rm -rf $out/var $bin/bin/sln
-      ln -sf $out/lib/libpthread.so.0 $out/lib/libpthread.so
-      ln -sf $out/lib/librt.so.1 $out/lib/librt.so
-      ln -sf $out/lib/libdl.so.2 $out/lib/libdl.so
-      test -f $out/lib/libutil.so.1 && ln -sf $out/lib/libutil.so.1 $out/lib/libutil.so
-      touch $out/lib/libpthread.a
-      mkdir -p $static/lib
-      cp $bin/bin/getconf $bin/bin/getconf_
-      mv $bin/bin/getconf_ $bin/bin/getconf
-    '';
-  });
+    tarballSha256 = "8c19d007bfc73502625095ea4073af3a98ceb722d500556ab173bac5bcadd0d6";
+    # No debugTarballSha256: bitcoin-31.0-arm-linux-gnueabihf-debug.tar.gz
+    # (fc17562b…) is NOT byte-reproducible yet — five .dbg diverge in one
+    # loclists entry each (see the expectedHashes note above).
+  };
+  dependsArmhf = armhfCross.depends;
+  bitcoindArmhf = armhfCross.bitcoind;
+  tarballArmhf = armhfCross.tarball;
 
-  crossBinutils241Riscv64 = pkgsCrossRiscv64.stdenv.cc.bintools.bintools.overrideAttrs (old: {
-    version = "2.41";
-    src = pkgs.fetchurl {
-      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
-      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+  # --- powerpc64 (big-endian) cross-compile ---
+  # The powerpc64-linux-gnu release. ppc64-specific notes (verified
+  # against the upstream .dbg/binaries):
+  # - nixpkgs cannot elaborate the triple as-is: lib/systems/parse.nix
+  #   rejects the explicit "gnu" ABI on big-endian ppc64 as ambiguous
+  #   (ELFv1 vs ELFv2). GUIX's triple IS powerpc64-linux-gnu, and gcc's
+  #   own default for it is ELFv1 (upstream e_flags 0x1 "abiv1"), so the
+  #   ppc64 package set is instantiated from a one-line-PATCHED nixpkgs
+  #   copy (patches/nixpkgs-ppc64-gnu-abi.patch drops the assertion).
+  #   With the plain "gnu" ABI, nixpkgs' gcc platform-flags pass NO
+  #   --with-abi/--with-cpu/--with-long-double-* — exactly GUIX's bare
+  #   gcc configure (guix's gcc-configure-flags-for-triplet matches
+  #   powerpc64le-/powerpc- but NOT powerpc64-, and cross-base adds
+  #   nothing), so gccArchFlags is empty and upstream's bitcoin CUs
+  #   record no -m flags at all. The -mlong-double-128/-mno-minimal-toc
+  #   in upstream's glibc/libgcc CUs come from those projects' OWN build
+  #   systems (same sources here).
+  # - ELF64 big-endian, ELFv1; interpreter /lib64/ld64.so.1.
+  nixpkgsPpc64 = pkgs.applyPatches {
+    name = "nixpkgs-ppc64-gnu-abi";
+    src = pkgs.path;
+    patches = [ ./patches/nixpkgs-ppc64-gnu-abi.patch ];
+  };
+  ppc64Cross = mkLinuxCrossTarget {
+    triple = "powerpc64-linux-gnu";
+    nixpkgsPath = nixpkgsPpc64;
+    # ppc64's line tables come out of gas (.loc, DWARF v3), where gcc's
+    # file-table behavior is path-spelling-sensitive: a main file whose
+    # path matches a -fdebug-prefix-map gets a DUPLICATE file entry, and
+    # whether that duplicate appears must match upstream's per-CU
+    # situation EXACTLY (their $DISTSRC/src=. map duplicates bitcoin's
+    # src/ CUs on both sides; our extra whole-tree /build=$DISTSRC map
+    # also duplicated the cmake-build-dir mpgen-generated CUs, which
+    # upstream — building at the REAL /distsrc-base path — does not
+    # remap). The patch adds a TRANSPARENT canonical rewrite (env var
+    # NIX_DEBUG_CANON_PREFIX_MAP, applied before the maps and to the
+    # file table keys), so the build behaves as if it ran at GUIX's real
+    # path and the remaining -fdebug-prefix-map set is spelled exactly
+    # like build.sh's. See the patch header; strict no-op when unset.
+    gccExtraPatches = [ ./patches/gcc-debug-canon-prefix-map.patch ];
+    # With the canon rewrite active, the source-tree map must be GUIX's
+    # literal one (on the POST-canon path), not /build-based.
+    debugCanonMap = true;
+    dynamicLinker = "/lib64/ld64.so.1";
+    pnameSuffix = "ppc64";
+    expectedHashes = {
+      "bin/bitcoin" = "ee88e8a924d08362b31e73b4c2610c2278d8fb742af22d16b999f4add7110cac";
+      "bin/bitcoin-cli" = "95864dd67ee83a937bad40e5d15e63a4b365aaad8d34cc7f5b10f8ba8106367b";
+      "bin/bitcoind" = "3eda7c9f2a31c6a78686b168b4931351ccac9d37c693c46433d78942f1f839a9";
+      "bin/bitcoin-tx" = "dfd214e1b619ba54c42128e4faf8a7f85fe75b6cc9d3cbd74ca642854acc80ba";
+      "bin/bitcoin-util" = "710149e3abdc485b1d82cc7a4471714670e71e049edc1393e1ee21f9c8e0ca58";
+      "bin/bitcoin-wallet" = "49d27d4d5e8f1a2a6a1bac26ba8b347e1a84742225d16d754fbda751f975bafd";
+      "bin/bitcoin-qt" = "9cf677bfc8820618a16f72a1e8979644579e6d350f6b6eb9eedef129f1f6d0e4";
+      "libexec/bitcoin-node" = "38dddbf084aaff10f087d9fb9a278a86e46dca7e26420d4235a5195ff89a010f";
+      "libexec/bitcoin-gui" = "2137efafde666e9b85fd3d74b33e23c3926e5df92be97b3ed8d6ff1c6eedcd0e";
+      "libexec/test_bitcoin" = "9788b37550bef213d6f12f7d39374b2c8c7085c6738e24ef43560e573385aebf";
+      # Eight .dbg are byte-identical to upstream's; bitcoin-qt.dbg and
+      # bitcoin-gui.dbg diverge in ONE .debug_loclists entry (the same
+      # gcc var-tracking equivalent-expression residue as armhf — see
+      # CLAUDE.md) and are NOT asserted; their runtime binaries get
+      # upstream's debuglink CRC (debuglinkCrcs) so the release tarball
+      # reproduces. The -debug.tar.gz is NOT byte-reproducible yet.
+      "bin/bitcoin.dbg" = "3636f2841bb165e195a00efbef8d7522965cd46a648d7a783b355202a68761dd";
+      "bin/bitcoin-cli.dbg" = "7bbed644bdc4594c26c2fe0341a2d142942dad75abbe18292492071c807d830a";
+      "bin/bitcoind.dbg" = "07136e7dc836568645af082105dbfbcf127cbd4efb758d4e17becfe1a113c5f6";
+      "bin/bitcoin-tx.dbg" = "e7ad77f0f4956c377f8bbe9d94b408d2bdf076ea3541a678771ff4c5fa58bca1";
+      "bin/bitcoin-util.dbg" = "8cd90dadc6c4b01db5a379735aaab3959e2ba45e471d236c0961739d0ff87b2b";
+      "bin/bitcoin-wallet.dbg" = "f13293d7934146e15f4852e86b7d9a0396cf3ade6aec51b8a83671243315c66f";
+      "libexec/bitcoin-node.dbg" = "6838aa0fb02260ac0ddb6a42de5fc3298195c59a320ac311e143fc79cdf8c87d";
+      "libexec/test_bitcoin.dbg" = "b1e24a9ad93ebfbe8cf0a6d2f4715d6582e4a2fcb260bdd2bc729328fe217a9a";
     };
-    patches = [ ];
-    configureFlags =
-      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
-      ++ [ "--enable-compressed-debug-sections=all" ];
-  });
-  crossBintools241Riscv64 = pkgsCrossRiscv64.stdenv.cc.bintools.override {
-    bintools = crossBinutils241Riscv64;
-    libc = crossGlibc231Riscv64;
+    debuglinkCrcs = {
+      "bin/bitcoin-qt" = "d63ab81b";
+      "libexec/bitcoin-gui" = "3b4b6613";
+    };
+    tarballSha256 = "1d9c865aa0ccf675fc068e79d9fa57a5a70b59132fca38bb322a7d44ce2f0ff2";
+    # No debugTarballSha256: bitcoin-31.0-powerpc64-linux-gnu-debug.tar.gz
+    # (efe3e7d0…) is NOT byte-reproducible yet (two diverging .dbg).
   };
-
-  # riscv64 cross gcc 14.3.0 with GUIX's linux-base-gcc flags — see
-  # crossGuixGcc (aarch64). riscv deltas: no --enable-standard-
-  # branch-protection (aarch64-only), no --enable-cet (x86-only), no
-  # --with-arch filtering / -march stripping (nixpkgs passes none for
-  # riscv), no -Wa,-mrelax-relocations (GOTPCRELX is x86-only).
-  crossGuixGccRiscv64 = pkgsCrossRiscv64.stdenv.cc.override {
-    bintools = crossBintools241Riscv64;
-    libc = crossGlibc231Riscv64;
-    cc = (pkgsCrossRiscv64.buildPackages.gcc14.cc.override {
-      libcCross = crossGlibc231Riscv64;
-    }).overrideAttrs (old: {
-      configureFlags = (old.configureFlags or [ ]) ++ [
-        "--enable-default-pie=yes"
-        "--enable-default-ssp=yes"
-        "--enable-initfini-array=yes"
-        "--enable-host-bind-now=yes"
-        "--enable-gprofng=no"
-        "--disable-gcov"
-        "--disable-libgomp"
-        "--disable-libquadmath"
-        "--disable-libsanitizer"
-        "--disable-nls"
-        "--with-as=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-as"
-        "--with-ld=${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-ld"
-      ];
-      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
-      preBuild = (old.preBuild or "") + ''
-        EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"
-        GUIXMAPS="-fdebug-prefix-map=/build/build=/tmp/guix-build-gcc-cross-riscv64-linux-gnu-14.3.0.drv-0/build -ffile-prefix-map=${pkgs.lib.getDev crossGlibc231Riscv64}/include=/usr/include -ffile-prefix-map=${linuxHeaders61Riscv64}/include=/usr/include"
-        makeFlagsArray+=(
-          "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS -g"
-          "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
-          "FLAGS_FOR_TARGET=$EXTRA_SANS_O2 $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
-        )
-      '';
-      dontStrip = true;
-      postFixup = (old.postFixup or "") + ''
-        find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
-          ${crossBinutils241Riscv64}/bin/riscv64-linux-gnu-objcopy \
-            --enable-deterministic-archives --strip-debug "$f"
-        done
-      '';
-    });
-  };
-
-  riscv64CrossInputs = [
-    crossGuixGccRiscv64
-    crossGuixGccRiscv64.bintools
-  ];
-
-  crossGuixGccRiscv64NoFp = crossGuixGccRiscv64.overrideAttrs (old: {
-    postFixup = (old.postFixup or "") + ''
-      substituteInPlace $out/nix-support/cc-cflags-before \
-        --replace-fail "-fno-omit-frame-pointer" ""
-    '';
-  });
-  riscv64CrossInputsNoFp = [
-    crossGuixGccRiscv64NoFp
-    crossGuixGccRiscv64NoFp.bintools
-  ];
-
-  dependsRiscv64 = pkgs.callPackage ./depends.nix {
-    inherit version url sha256;
-    inherit (pkgs) gcc14Stdenv;
-    hostTriple = "riscv64-linux-gnu";
-    buildQt = true;
-    crossInputs = riscv64CrossInputs;
-  };
-  bitcoindRiscv64 = pkgs.callPackage ./bitcoind-riscv64.nix {
-    inherit version url sha256;
-    inherit (pkgs) gcc14Stdenv;
-    depends = dependsRiscv64;
-    crossInputs = riscv64CrossInputsNoFp;
-    guixGcc = crossGuixGccRiscv64.cc;
-    linuxHeaders = linuxHeaders61Riscv64;
-  };
-  tarballRiscv64 = pkgs.callPackage ./tarball.nix {
-    inherit version url sha256;
-    bitcoind = bitcoindRiscv64;
-    arch = "riscv64-linux-gnu";
-    expectedSha256 = "7ece4ea365bba9b2008b27f0717ef6a518598a572edaa2815e775faadc53c136";
-  };
-  debugTarballRiscv64 = pkgs.callPackage ./tarball.nix {
-    inherit version url sha256;
-    bitcoind = bitcoindRiscv64;
-    arch = "riscv64-linux-gnu";
-    debug = true;
-    expectedSha256 = "acd0e38f4bb99c7c3024e494ca218d3ae67ec4a8b3b7ae556a8292353fe308b5";
-  };
+  dependsPpc64 = ppc64Cross.depends;
+  bitcoindPpc64 = ppc64Cross.bitcoind;
+  tarballPpc64 = ppc64Cross.tarball;
 
   # --- x86_64 cross-to-self toolchain ---
   # GUIX builds the x86_64 release with a *cross* toolchain targeting the
@@ -1036,5 +1303,8 @@ let
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
     debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
+    dependsArmhf bitcoindArmhf tarballArmhf
+    dependsPpc64 bitcoindPpc64 tarballPpc64
+    riscv64Cross armhfCross ppc64Cross
     crossGlibc231 crossGlibc231X86 crossGuixGccX86;
 }

@@ -189,6 +189,58 @@ jobs:
           echo "actual:   $actual"
           [ "$actual" = "$expected" ]
 
+  # The armhf and powerpc64 releases (release archives only — their
+  # -debug.tar.gz is not byte-reproducible yet, see CLAUDE.md). The
+  # bitcoind drv gates assert all 10 binaries + the byte-matching .dbg
+  # internally; these jobs re-assert the archive sha256 externally.
+  build-armhf:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#tarballArmhf -o result-tarball --print-build-logs
+      - name: Verify bitcoin-31.0-arm-linux-gnueabihf.tar.gz matches upstream GUIX v31.0
+        run: |
+          expected=8c19d007bfc73502625095ea4073af3a98ceb722d500556ab173bac5bcadd0d6
+          actual=$(sha256sum result-tarball | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]
+
+  build-ppc64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#tarballPpc64 -o result-tarball --print-build-logs
+      - name: Verify bitcoin-31.0-powerpc64-linux-gnu.tar.gz matches upstream GUIX v31.0
+        run: |
+          expected=1d9c865aa0ccf675fc068e79d9fa57a5a70b59132fca38bb322a7d44ce2f0ff2
+          actual=$(sha256sum result-tarball | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]
+
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
   # TARGET), so on this arm runner `.#tarballAarch64` is an aarch64
