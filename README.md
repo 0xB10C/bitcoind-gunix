@@ -59,12 +59,8 @@ archives** also reproduce (all 10 runtime binaries of each byte-match):
 1d9c865a…  bitcoin-31.0-powerpc64-linux-gnu.tar.gz
 ```
 
-(For these two targets the separate `-debug.tar.gz` does NOT reproduce
-yet: 5 armhf / 2 powerpc64 `.dbg` files differ from upstream's in a
-single `.debug_loclists` entry each — a gcc var-tracking
-allocation-order sensitivity, see CLAUDE.md — so those binaries'
-`.gnu_debuglink` CRCs are byte-patched to upstream's values. The other
-13 `.dbg` of the two targets are byte-identical and asserted.)
+(Their separate `-debug.tar.gz` archives also reproduce — all 20 `.dbg`
+of the two targets are byte-identical to upstream's, see below.)
 
 Each derivation's `postFixup` asserts these hashes and fails the build on
 mismatch — so a successful build *is* the reproducibility test. The build
@@ -114,9 +110,11 @@ sha256sum result        # -> 7ece4ea3…
 nix build .#debugTarballRiscv64 --print-build-logs
 sha256sum result        # -> acd0e38f…
 
-# The armhf and powerpc64 releases (release archives only — see above):
-nix build .#tarballArmhf --print-build-logs   # -> 8c19d007…
-nix build .#tarballPpc64 --print-build-logs   # -> 1d9c865a…
+# The armhf and powerpc64 releases (each: 10 binaries + both archives):
+nix build .#tarballArmhf --print-build-logs        # -> 8c19d007…
+nix build .#debugTarballArmhf --print-build-logs   # -> fc17562b…
+nix build .#tarballPpc64 --print-build-logs        # -> 1d9c865a…
+nix build .#debugTarballPpc64 --print-build-logs   # -> efe3e7d0…
 
 # Just the depends tree:
 nix build .#depends
@@ -136,35 +134,36 @@ bitcoin-tx,bitcoin-util,bitcoin-wallet}`, `libexec/{bitcoin-gui,
 bitcoin-node,test_bitcoin}`) and the `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
 archive.
 
-The separate debug-symbols archives are **also reproduced** for the
-x86_64/aarch64/riscv64 targets (`nix build .#debugTarball` →
-`96e35061…`; `.#debugTarballAarch64` → `91917647…`;
-`.#debugTarballRiscv64` → `acd0e38f…`): all thirty of their `.dbg`
-debug files are byte-identical to upstream's with no byte patching.
-For armhf/powerpc64 the debug archives do not reproduce yet (7 of 20
-`.dbg` differ in one `.debug_loclists` entry each; those binaries'
-`.gnu_debuglink` CRCs are patched to upstream's — see CLAUDE.md).
+The separate debug-symbols archives are **also reproduced for all five
+targets** (`nix build .#debugTarball` → `96e35061…`;
+`.#debugTarballAarch64` → `91917647…`; `.#debugTarballRiscv64` →
+`acd0e38f…`; `.#debugTarballArmhf` → `fc17562b…`; `.#debugTarballPpc64`
+→ `efe3e7d0…`): all fifty `.dbg` debug files are byte-identical to
+upstream's with no byte patching anywhere.
 
 ## Layout
 
 - `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` and exposes
   the outputs per build host (`packages.{x86_64,aarch64}-linux`); all
   toolchain construction lives in `default.nix`.
-- `default.nix` — assembles the three GUIX-exact **cross toolchains**
+- `default.nix` — assembles the five GUIX-exact **cross toolchains**
   (binutils 2.41, glibc 2.31 from GUIX's git source, gcc 14.3.0 with the
   `gcc-ssa-generation` patch and GUIX's `linux-base-gcc` flags, rebuilt
   against glibc 2.31 via `libcCross`): cross-to-self `x86_64-linux-gnu`
-  and cross `aarch64-linux-gnu` / `riscv64-linux-gnu`. Exposes all
-  targets' outputs.
+  and cross `aarch64-linux-gnu` / `riscv64-linux-gnu` /
+  `arm-linux-gnueabihf` / `powerpc64-linux-gnu` (the last three via the
+  `mkLinuxCrossTarget` generator). Exposes all targets' outputs.
 - `depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the full
   Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves
   every target (`HOST=` puts depends in cross-compile mode, matching
   GUIX either way).
-- `bitcoind.nix` / `bitcoind-aarch64.nix` / `bitcoind-riscv64.nix` —
+- `bitcoind.nix` / `bitcoind-aarch64.nix` / `bitcoind-cross.nix` —
   build all of Bitcoin Core via CMake with the prefixed cross compiler,
   then split-debug (cross binutils 2.41) and `.comment` rewrite, and
-  assert all twenty per-target hashes (10 binaries + 10 `.dbg`). They
-  differ in the ELF interpreter and the per-binary hash tables.
+  assert all twenty per-target hashes (10 binaries + 10 `.dbg`).
+  `bitcoind-cross.nix` is parameterized over the target and serves
+  riscv64/armhf/ppc64 (via `mkLinuxCrossTarget` in `default.nix`); the
+  x86_64 and aarch64 files predate it.
 - `tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
   byte-identical to upstream and asserts its hash (parameterized by `arch`).
 - `patches/` — patch files applied via the .nix derivations.

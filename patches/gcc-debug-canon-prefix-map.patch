@@ -6,29 +6,82 @@ expressions) is sensitive to GGC allocation order — the ggc-allocating
 v3 of this patch flipped location-list entries in previously
 byte-matching CUs.
 
+v5: NIX_DEBUG_CANON_PREFIX_MAP accepts multiple colon-separated pairs
+("OLD=NEW[:OLD=NEW...]", first match wins; single-pair behavior is
+unchanged).  Needed because the depends tree must ALSO be canon-mapped
+(store path -> /bitcoin/depends/<triple>) instead of -ffile-prefix-map:
+gcc's own remap_filename ggc-allocates every fired rewrite, and a map
+that fires where GUIX's environment fires none (their depends is at the
+real /bitcoin, outside every map) flips var-tracking loclists in big
+CUs — an IDENTITY map alone reproduces the flip (replay-verified on
+armhf net_processing.cpp).
+
+v6: the canon also covers the MACRO (__FILE__) remapping —
+-ffile-prefix-map was doing double duty as debug AND macro map, so
+dropping it from argv leaked raw store paths into .rodata via boost
+assert macros (which changed RUNTIME binaries, not just .dbg).  Order
+differs from the debug side: macro maps are tried FIRST and the canon
+only rewrites what no map matched, because cmake spells its
+-fmacro-prefix-map with the build-local source dir and that map must
+keep winning for source files (it fires equivalently in the reference
+environment); the canon covers only the depends remainder, which the
+reference never maps.
+
 --- a/gcc/file-prefix-map.cc
 +++ b/gcc/file-prefix-map.cc
-@@ -166,12 +166,62 @@
-   return remap_filename (macro_prefix_maps, filename);
+@@ -187,15 +187,105 @@
+ const char *
+ remap_macro_filename (const char *filename)
+ {
++  /* bitcoind-gunix (v6): macro (__FILE__) remapping with the canon
++     rewrite covering what no map matched.  Order: the ordinary maps
++     are tried on the RAW spelling first (cmake passes
++     -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/src=. spelled with the
++     build-local source dir, and it must keep winning for source
++     files exactly like the reference environment's own map does);
++     the canon then covers what the reference never maps (the
++     depends tree) WITHOUT the nix-store mangling and WITHOUT ggc
++     allocations; the mangling fallback only fires for store paths
++     no map and no canon pair covers (nixpkgs default behavior).
++     Strict no-op when the canon env var is unset.  */
++  const char *remapped = remap_filename (macro_prefix_maps, filename);
++  if (remapped != filename)
++    return remapped;
++  const char *canonned = canon_debug_filename (filename);
++  if (canonned != filename)
++    return canonned;
+   return remap_filename (macro_prefix_maps, filename, true);
  }
  
 +/* bitcoind-gunix: optional CANONICAL rewrite applied before the debug
 +   prefix maps, configured via the NIX_DEBUG_CANON_PREFIX_MAP
-+   environment variable ("OLD=NEW").  Unlike -fdebug-prefix-map this
-+   rewrite is also applied to the DWARF file table's lookup keys
-+   (lookup_filename), making it transparent to the table's dedupe
-+   logic — the compilation behaves exactly as if it had actually run
-+   under NEW.  Needed to byte-reproduce builds whose reference
-+   environment compiles at a path (NEW) the sandbox cannot provide: a
-+   plain -fdebug-prefix-map=OLD=NEW changes how many file table entries
-+   the MAIN file gets (a remapped main file enters the table under two
-+   different keys), which shifts the gas-generated DWARF line tables
-+   relative to the reference.  Read once; no effect when unset.  */
++   environment variable ("OLD=NEW[:OLD=NEW...]"; first matching pair
++   wins).  Unlike -fdebug-prefix-map this rewrite is also applied to
++   the DWARF file table's lookup keys (lookup_filename), making it
++   transparent to the table's dedupe logic — the compilation behaves
++   exactly as if it had actually run under NEW.  Two reasons to use it
++   over -fdebug-prefix-map when byte-reproducing a build whose
++   reference environment compiles at a path (NEW) the sandbox cannot
++   provide:
++   (a) a plain -fdebug-prefix-map=OLD=NEW changes how many file table
++       entries the MAIN file gets (a remapped main file enters the
++       table under two different keys), shifting the gas-generated
++       DWARF line tables relative to the reference; and
++   (b) remap_filename allocates every fired rewrite with ggc_alloc —
++       a map that fires where the reference environment fires none
++       (e.g. our store-side depends tree vs GUIX's unmapped real
++       /bitcoin path) perturbs the GGC allocation stream and flips
++       var-tracking's .debug_loclists representative choice in large
++       CUs (verified: an IDENTITY -ffile-prefix-map=X=X alone flips
++       them).  The canon rewrite is malloc'd, hence GGC-neutral.
++   Read once; no effect when unset.  */
 +
-+static const char *canon_old_prefix;
-+static const char *canon_new_prefix;
-+static size_t canon_old_len;
-+static size_t canon_new_len;
++#define CANON_MAX_PAIRS 8
++static const char *canon_old_prefix[CANON_MAX_PAIRS];
++static const char *canon_new_prefix[CANON_MAX_PAIRS];
++static size_t canon_old_len[CANON_MAX_PAIRS];
++static size_t canon_new_len[CANON_MAX_PAIRS];
++static int canon_npairs;
 +static bool canon_parsed;
 +
 +const char *
@@ -38,28 +91,39 @@ byte-matching CUs.
 +    {
 +      canon_parsed = true;
 +      const char *spec = getenv ("NIX_DEBUG_CANON_PREFIX_MAP");
-+      if (spec)
++      while (spec && *spec && canon_npairs < CANON_MAX_PAIRS)
 +	{
-+	  const char *sep = strchr (spec, '=');
++	  const char *end = strchr (spec, ':');
++	  size_t pair_len = end ? (size_t) (end - spec) : strlen (spec);
++	  const char *sep = (const char *) memchr (spec, '=', pair_len);
 +	  if (sep && sep != spec)
 +	    {
-+	      canon_old_prefix = xstrndup (spec, sep - spec);
-+	      canon_old_len = sep - spec;
-+	      canon_new_prefix = xstrdup (sep + 1);
-+	      canon_new_len = strlen (canon_new_prefix);
++	      int i = canon_npairs++;
++	      canon_old_prefix[i] = xstrndup (spec, sep - spec);
++	      canon_old_len[i] = sep - spec;
++	      canon_new_prefix[i] = xstrndup (sep + 1,
++					      spec + pair_len - (sep + 1));
++	      canon_new_len[i] = strlen (canon_new_prefix[i]);
 +	    }
++	  spec = end ? end + 1 : NULL;
 +	}
 +    }
-+  if (!canon_old_prefix || !filename
-+      || filename_ncmp (filename, canon_old_prefix, canon_old_len) != 0)
++  if (!canon_npairs || !filename)
 +    return filename;
 +
-+  const char *name = filename + canon_old_len;
-+  size_t name_len = strlen (name) + 1;
-+  char *s = XNEWVEC (char, name_len + canon_new_len);
-+  memcpy (s, canon_new_prefix, canon_new_len);
-+  memcpy (s + canon_new_len, name, name_len);
-+  return s;
++  for (int i = 0; i < canon_npairs; i++)
++    {
++      if (filename_ncmp (filename, canon_old_prefix[i],
++			 canon_old_len[i]) != 0)
++	continue;
++      const char *name = filename + canon_old_len[i];
++      size_t name_len = strlen (name) + 1;
++      char *s = XNEWVEC (char, name_len + canon_new_len[i]);
++      memcpy (s, canon_new_prefix[i], canon_new_len[i]);
++      memcpy (s + canon_new_len[i], name, name_len);
++      return s;
++    }
++  return filename;
 +}
 +
  /* Remap using -fdebug-prefix-map.  Return the GC-allocated new name

@@ -6,7 +6,95 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-06-12): armhf + powerpc64 RELEASE tarballs reproduce — .dbg loclists residue documented
+## Status (2026-06-12, later): armhf + ppc64 .dbg loclists residue SOLVED — all 7 .dbg byte-identical, CRC patches GONE again, debug tarballs wired
+
+The "loclists residue" (next section) is fixed: all 20 armhf and all 20
+ppc64 artifacts byte-match upstream, `nix build .#debugTarballArmhf`
+(`fc17562b…`) and `.#debugTarballPpc64` (`efe3e7d0…`) assemble both
+`-debug.tar.gz` byte-identically, the `debuglinkCrcs` byte-patch
+mechanism is REMOVED from bitcoind-cross.nix (zero byte patches anywhere,
+again), and CI asserts both debug archives. Five of the v31.0 Linux
+release families now reproduce completely — binaries, release archive
+AND debug archive (outstanding: macOS x2, win64).
+
+**Root cause (found by replay bisection, ~3 min/iteration)**: gcc's
+`remap_filename` (file-prefix-map.cc) **ggc-allocates every rewrite a
+`-ffile-prefix-map` actually performs**, and our depends map
+(`store-path=/bitcoin/depends/<triple>`) fires on every depends header —
+while GUIX's environment fires NO map there (their depends lives at the
+real `/bitcoin`, which their per-store-item `/gnu/store/*→/usr` maps
+never match; build.sh:212). Those few hundred extra GGC allocations
+shift the arena and flip var-tracking's representative choice among
+equivalent location expressions in the biggest CUs — armhf: variable
+`it` in net_processing.cpp (split `r6-56`/`r5-16` vs upstream's single
+`r5-16`, the SAME flip in the 5 binaries containing that CU); ppc64: a
+qt CU. The toolchain-header `/usr` maps are innocent: GUIX fires those
+too, with byte-equal remapped results (= equal allocation sizes).
+
+Decisive experiments (unshare-chroot single-CU replays of the armhf
+net_processing.cpp compile, `tmpdiff/replay2/`):
+- source tree at GUIX's literal `/distsrc-base/distsrc-31.0-…` (B1) and
+  at a same-shape path (B3a): **byte-identical .o to the sandbox build**
+  — raw path length/shape/content of the source tree is completely
+  inert (kills the env-mirroring/path-length hypothesis).
+- depends at `/bitcoin/depends/<triple>` with the map dropped (B2):
+  upstream's exact loclists; offset-normalized diff vs baseline = ONLY
+  the two `it` lists (−20 bytes), every other section byte-equal.
+- an **IDENTITY map** (`/bitcoin/…=/bitcoin/…`, rewriting every depends
+  header to itself) restores the split byte-for-byte (H2), while an
+  extra map matching NOTHING changes nothing (H1) → the map's
+  *application* is the entire poison; argv content irrelevant.
+
+**Fix**: route the depends rewrite through the canon mechanism —
+`patches/gcc-debug-canon-prefix-map.patch` v5 accepts multiple
+colon-separated pairs in `NIX_DEBUG_CANON_PREFIX_MAP` (canon rewrites
+are malloc'd = GGC-neutral, the v4 lesson), new `canonDepends` knob in
+mkLinuxCrossTarget/bitcoind-cross.nix drops the depends `-ffile-prefix-
+map` from argv and adds the pair to the env var. **v6 (the second
+lesson)**: `-ffile-prefix-map` is debug AND MACRO map — v5 alone broke
+6 armhf RUNTIME binaries because the un-remapped depends `__FILE__`
+paths hit nixpkgs' mangle-NIX_STORE-in-__FILE__.patch (uppercased store
+hashes in `.rodata`, 9 boost strings, +256 B). v6 hooks the canon into
+`remap_macro_filename` too, ordered maps-on-raw-first (cmake's
+build-local `-fmacro-prefix-map=$src=.` must keep winning, firing
+equivalently to GUIX's own map), then canon (malloc, no mangling), then
+nixpkgs' mangle fallback. The v6 file-prefix-map.cc hunk is generated
+against the POST-mangle source (nixpkgs' mangle patch rewrites the same
+function; modify-hunks against pristine gcc don't apply). armhf: canon
+patch + `canonDepends` + `debugCanonMap` (the full ppc64 wiring — third
+root cause below); ppc64: `canonDepends` added as a second pair after
+its existing `/build→DISTSRC` pair. riscv64/x86_64/aarch64 untouched
+(their .dbg already matched WITH the poison — their big CUs sit below
+the flip threshold; do NOT "clean up" their depends maps onto canon,
+that would risk re-flipping). Dress-rehearsal replays with the
+canon-patched gcc: env unset ⇒ byte-identical to the old compiler
+(strict no-op, both directions per the playbook); env set + map
+dropped ⇒ byte-identical to the B2/upstream form. Side-finding:
+nixpkgs' cfi_startproc-reorder-label-14-1.diff patches only
+libgcc/config/aarch64/lse.S — never an armhf suspect.
+
+**Third root cause (uncovered when the loclists fix landed)**: the
+armhf node/gui/test_bitcoin/qt `.dbg` divergences were NEVER
+loclists-only — the build-dir GENERATED CUs (mpgen capnp, qt moc) had
+carried the ppc64 dup-main-file divergence all along, mislabeled under
+the "+20 loclists" finding (which had only been byte-verified on
+bitcoind.dbg, the one diverger with NO generated CUs, and extrapolated
+to the other four). Our `/build=$DISTSRC` argv map matches the
+generated CUs' main files → duplicate file-table entry (visible on the
+v5 side as a doubled line-table file entry, +1-shifted
+`DW_AT_decl_file` implicit_consts in .debug_abbrev, and
+`DW_OP_implicit_pointer` DIE offsets ±1) — upstream, building at the
+real $DISTSRC, never remaps them. Fix: `debugCanonMap = true` on armhf
+too (replay c3: the capnp CU's dup gone, file table upstream-exact,
+.text/.rodata untouched; netproc/wallet byte-equal to the c1 forms —
+the canon respelling is transparent for src/ CUs). The earlier claim
+that armhf's v5 line tables "show the doubled entry on BOTH sides"
+holds only for src/ CUs (each side's own map matches those); for
+generated CUs it was wrong. Lesson: when a divergence class is found
+in ONE artifact, verify it per-artifact before concluding it explains
+the whole failing set.
+
+## Status (2026-06-12): armhf + powerpc64 RELEASE tarballs reproduce — .dbg loclists residue documented (SOLVED — see above)
 
 The 4th and 5th targets. `nix build .#tarballArmhf` (`8c19d007…`) and
 `.#tarballPpc64` (`1d9c865a…`) byte-match the upstream release archives;
