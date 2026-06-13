@@ -6,6 +6,69 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-13): darwin x86_64 -unsigned artifacts REPRODUCE — all 10 binaries + .tar.gz + .zip; qt/gui LC_UUID patched
+
+The full x86_64-apple-darwin `-unsigned` set byte-matches upstream:
+`nix build .#bitcoindDarwinX86` gates all 10 Mach-O binaries,
+`.#tarballDarwinX86` the `-unsigned.tar.gz` (`d1d0174f…`) and
+`.#zipDarwinX86` the `-unsigned.zip` (`b8d9b991…`). Round-2 closed the
+three round-1 root causes; two follow-on fixes + one accepted patch
+finished it:
+
+- **kj fibers — the LIBRARY_PATH must be a CURATED union.** Mirroring
+  GUIX's `LIBRARY_PATH=$NATIVE_GCC/lib` with the RAW gcc+glibc lib dirs
+  broke capnp's own tool links: `ld64.lld: …/glibc-2.42/lib/libpthread.so:
+  unhandled file type`. nixpkgs' glibc 2.42 ships unversioned COMPAT
+  SYMLINKS (libpthread/librt/libdl/libutil/libanl.so → .so.N, ELF stubs)
+  that vanilla glibc dropped when those libs merged into libc in 2.34;
+  capnp's `-lpthread` (CMake Threads) then hands ld64.lld the ELF and
+  dies, where GUIX's `-lpthread` falls through to the SDK tbd. Fix:
+  `darwinLibraryPathDir` in depends.nix — a runCommand union of gcc's lib
+  + glibc's lib MINUS exactly those five compat links (one dir, like
+  GUIX's). Re-verified both directions with direct clang/ld64.lld link
+  tests: `-lpthread` links, `-lc` still errors (so the fibers
+  makecontext check fails → KJ_USE_FIBERS=0, matching upstream).
+- **LC_UUID — chroot fix WORKS for 8/10; qt/gui patched.** Building
+  inside the unshare/userns chroot at GUIX's `/distsrc-base/distsrc-31.0-
+  x86_64-apple-darwin` (depends at `/bitcoin/depends/<host>`) makes 8 of
+  10 binaries byte-identical INCLUDING the UUID. bitcoin-qt and
+  bitcoin-gui remained off by EXACTLY the 8 lld UUID digest bytes (byte 3
+  + bytes 9-15 of the `"LLD\xa1UU1D"`+digest+swap(3,8) layout); the
+  stripped images are otherwise byte-identical. The UUID is an xxh3 of
+  the UNSTRIPPED link-time image, and the differing bytes live entirely
+  in the Qt symtab/stabs region that `cmake --install --strip` removes
+  AFTER lld hashes it. Ruled out every path leak (all N_SO/N_OSO stabs
+  are GUIX-correct /distsrc-base, zero nix-store refs), .llvm./outlined/
+  cold symbols, and codegen (__TEXT byte-identical). The residual is in
+  the Qt local-symbol/stab content or ordering of the unstripped image;
+  pinning it needs a GUIX darwin reference to diff against, which is
+  UNAVAILABLE here (no guix binary, no darwin output in the local
+  guix-build — only upstream's STRIPPED binary, which has no symtab).
+  Matching the UUID is also REQUIRED for the signed artifacts (the
+  detached-sig cdhash covers it). Decision (user-approved): copy
+  upstream's literal UUID into exactly bitcoin-qt + bitcoin-gui post-link
+  — the darwin analog of the historical .gnu_debuglink CRC patch.
+  `patch-uuid.py` (new repo file; walks Mach-O load commands to LC_UUID
+  0x1b, overwrites 16 bytes), `uuidPatches` knob in bitcoind-darwin.nix
+  (values from the upstream -unsigned binaries), applied to $out/bin/
+  bitcoin-qt + $out/libexec/bitcoin-gui AND the deploy app's
+  Contents/MacOS/Bitcoin-Qt.
+- **-unsigned.zip mode fix.** macdeployqtplus copies Qt's translations
+  (Contents/Resources/qt_*.qm) straight from the read-only Nix store →
+  mode 0444 → zip records the DOS read-only bit (external_attr
+  0x81240001); upstream's GUIX deploy has them 0644 (0x81a40000). Fix:
+  `chmod -R u+w build/dist/Bitcoin-Qt.app` before re-zipping (a no-op for
+  the already-0755/0644 entries). The app binary is byte-identical to
+  bin/bitcoin-qt, so it's UUID-patched too, then the zip is regenerated
+  deterministically with the same cmake/script/macos_zip.sh
+  (SOURCE_DATE_EPOCH touch + find|sort|zip -X@).
+
+Outstanding for darwin: arm64 mirror (building — depends rebuilt for the
+LIBRARY_PATH-union change), then the SIGNED artifacts (signapple +
+bitcoin-core/bitcoin-detached-sigs) and -codesigning.tar.gz; the UUID
+patch already makes the to-be-signed binaries upstream-identical so the
+detached sigs will apply cleanly. After darwin: win64.
+
 ## Status (2026-06-12, evening): macOS started — clang/lld 19.1.4 toolchain pinned, SDK staged, plan laid out
 
 The macOS targets (arm64-/x86_64-apple-darwin, the next issue-#6 items)
@@ -75,6 +138,84 @@ unsigned artifact assembly + gates; then signapple + detached-sigs for
 the signed artifacts. Risk #1 is Qt 6.8.3-darwin cross in the Nix
 sandbox (expect posix_shm-style feature-check divergences). NOTE: the
 SDK (and anything embedding it) must not be pushed to public Cachix.
+
+## Status (2026-06-12, night): darwin x86_64 ROUND 1 — within 8 bytes on 7/10 binaries; all three root causes identified, round 2 in flight
+
+The full darwin pipeline now BUILDS end-to-end in the sandbox (depends
+incl. Qt 6.8.3, all 10 Mach-O binaries, the deploy app zip), wired as
+`dependsDarwin{X86,Arm64}` / `bitcoindDarwin{X86,Arm64}` (new
+bitcoind-darwin.nix; manual cmake — the nixpkgs cmake hook would inject
+-DCMAKE_C_COMPILER over the toolchain's multi-token clang) +
+`tarballDarwin*` / `zipDarwin*` artifact drvs with upstream-hash gates.
+Round 1 vs upstream (per-binary refs extracted from the published
+-unsigned.tar.gz into tmpdiff/upstream-darwin/): 7 of 10 binaries
+byte-identical EXCEPT the 8 bytes of LC_UUID; bitcoin-qt additionally
+diverged in qt_prfxpath (+ its inlined strlen immediate — both already
+fixed by the existing qt.mk -prefix sed which the interactive replay
+lacked); bitcoin-node/bitcoin-gui/test_bitcoin additionally carried
++4.4 KB of kj FIBER code. Replay trick for darwin: `nix develop
+.#dependsDarwinX86` + `make -C depends HOST=… SDK_PATH=… SOURCES_PATH=…`
+in tmpdiff/darwin-replay iterates qt-configure-level problems in
+minutes; bitcoind replays build straight against the replay depends.
+
+Three root causes, each verified at the byte/check level:
+
+- **CMake's PATH-prefix find probing poisons darwin try_compiles.**
+  find_library derives search prefixes from every $PATH entry (strip
+  /bin, probe <prefix>/lib) → finds the BUILD glibc's ELF librt.so →
+  Qt's FindWrapRt link checks die in ld64.lld ("unhandled file type") →
+  qt configure aborts ("Target Core links to WrapRt::WrapRt…"); zeromq's
+  find_library(RT_LIBRARY rt) would leak -lrt into zmq.pc. Upstream's
+  build succeeding proves GUIX's find is NOTFOUND (glibc 2.39 ships no
+  unversioned librt.so; nixpkgs' 2.42 does). Fix: darwin-only
+  `CMAKE_SYSTEM_IGNORE_PATH=<stdenv-glibc>/lib` via funcs.mk + qt.mk
+  seds (depends.nix postPatch). NOT -DLIBRT=…-NOTFOUND (find_library
+  re-runs on -NOTFOUND values) and NOT
+  CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=OFF (kills find_program's
+  make/compiler lookup — tried, both rejected by test).
+- **capnp/kj fibers: GUIX's LIBRARY_PATH export is load-bearing.**
+  build.sh:80 exports LIBRARY_PATH=$NATIVE_GCC/lib for the darwin
+  DEPENDS build (unset again after depends). GUIX's gcc-toolchain is a
+  UNION incl. glibc (commencement.scm), so that dir holds glibc's ASCII
+  libc.so linker script; clang forwards LIBRARY_PATH to the target link
+  → ld64.lld errors on the script → capnp's
+  check_library_exists(c makecontext) FAILS in GUIX's container →
+  KJ_USE_FIBERS=0. Our env had no LIBRARY_PATH → -lc resolved to the
+  SDK's libc.tbd → fibers ON → the 3 multiprocess-linking binaries
+  gained fiber code + getcontext/setcontext/makecontext/mprotect/
+  setjmp imports upstream lacks. Fix: depends.nix darwin env mirrors it.
+  Verified: the check flips fail/pass with the env var alone, exact
+  ld64.lld error reproduced. **But NOT the raw gcc+glibc lib dirs**
+  (round-2 lesson): nixpkgs' glibc 2.42 installs unversioned COMPAT
+  SYMLINKS for the 2.34-merged libs (libpthread.so→libpthread.so.0,
+  librt/libdl/libutil/libanl.so) that vanilla glibc — GUIX's — never
+  ships; with those on LIBRARY_PATH, capnp's tool links (-lpthread via
+  CMake Threads) hand ld64.lld the ELF stub and die ("unhandled file
+  type"), while GUIX's -lpthread falls through to the SDK tbd. Fix:
+  `darwinLibraryPathDir` in depends.nix — a runCommand union of gcc's
+  lib + glibc's lib MINUS exactly those five compat links (one dir,
+  like GUIX's $NATIVE_GCC/lib). Both directions re-verified by direct
+  clang/ld64.lld link tests: -lpthread links, -lc still errors.
+- **LC_UUID fossilizes the pre-strip build paths.** lld computes the
+  UUID as xxhash(unstripped output + output basename) BEFORE the
+  install-time `cmake --install --strip`; the unstripped image carries
+  the linker's debug-map stabs — N_SO (absolute source paths) + N_OSO
+  (absolute object/archive paths) for bitcoin's OWN TUs (depends
+  archives contribute none — verified; only the qt_prfxpath .rodata
+  string carries a depends path and the -prefix sed pins it) — which
+  strip removes. Byte-equal UUID therefore requires byte-equal
+  UNSTRIPPED images = GUIX's literal paths. The sandbox root is
+  read-only (mkdir /distsrc-base → EPERM), but USER NAMESPACES WORK
+  inside the Nix sandbox: bitcoind-darwin.nix builds inside an
+  `unshare --user --map-root-user --mount` chroot with a bind-mounted
+  new root — source tree at /distsrc-base/distsrc-31.0-<host>, depends
+  symlinked at /bitcoin/depends/<host>, --toolchain spelled through it
+  (toolchain.cmake is fully CMAKE_CURRENT_LIST_DIR-relative, so every
+  depends path then matches GUIX's BASEPREFIX spellings).
+
+Round 2 (all three fixes) is building. Ops note: an auto-GC collected
+the 19.1.4 toolchain mid-session (built with --no-link, no root) — keep
+out-links (e.g. result-llvm-tools) for the darwin toolchain pieces.
 
 ## Status (2026-06-12, later): armhf + ppc64 .dbg loclists residue SOLVED — all 7 .dbg byte-identical, CRC patches GONE again, debug tarballs wired
 

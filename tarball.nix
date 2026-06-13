@@ -32,6 +32,10 @@
 # unlike the main archive, no directory entries match, so the archive
 # contains just the 10 file entries). Pass the matching expectedSha256.
 , debug ? false
+# darwin = true assembles the darwin "-unsigned.tar.gz": same packaging
+# rules, but build.sh ships NO README.md for darwin (its per-host case
+# copies it for linux only) and there are no .dbg files at all.
+, darwinUnsigned ? false
 , expectedSha256 ? "d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074"
 }:
 
@@ -39,7 +43,7 @@ let
   src = fetchurl { inherit url sha256; };
   # SOURCE_DATE_EPOCH = `git log --format=%at -1` of the v31.0 tag.
   sourceDateEpoch = "1776286524";
-  archiveName = "bitcoin-${version}-${arch}${lib.optionalString debug "-debug"}.tar.gz";
+  archiveName = "bitcoin-${version}-${arch}${lib.optionalString darwinUnsigned "-unsigned"}${lib.optionalString debug "-debug"}.tar.gz";
 in
 runCommandLocal archiveName
 {
@@ -75,12 +79,13 @@ runCommandLocal archiveName
 
   # Committed extras from the release source tarball (extracted into a
   # separate dir so it doesn't collide with $D = bitcoin-${version}).
+  # darwin ships no README.md (build.sh copies it for linux hosts only).
   mkdir srctmp
   tar xzf ${src} -C srctmp \
-    bitcoin-${version}/README.md \
+    ${lib.optionalString (!darwinUnsigned) "bitcoin-${version}/README.md"} \
     bitcoin-${version}/share/examples/bitcoin.conf \
     bitcoin-${version}/share/rpcauth
-  cp srctmp/bitcoin-${version}/README.md "$D/README.md"
+  ${lib.optionalString (!darwinUnsigned) ''cp srctmp/bitcoin-${version}/README.md "$D/README.md"''}
   cp srctmp/bitcoin-${version}/share/examples/bitcoin.conf "$D/bitcoin.conf"
   cp srctmp/bitcoin-${version}/share/rpcauth/* "$D/share/rpcauth/"
 '') + ''
