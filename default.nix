@@ -1684,15 +1684,25 @@ let
           # NOLIBC stdenv (mingwCrtStdenv) instead of nixpkgs' bootstrap 15.2.0
           # / 2.46 — see mingwCrtStdenv. Plus the FP + hardening overrides so
           # the codegen matches GUIX's flag-free -O2 base-gcc CRT.
+          # -g + the GUIX ephemeral comp_dir map so the CRT/winpthreads debug
+          # info (which strip moves into each .dbg) byte-matches upstream. GUIX
+          # builds both in ONE drv at /tmp/guix-build-mingw-w64-x86_64-winpthreads-
+          # 12.0.0.drv-0/mingw-w64-v12.0.0/{mingw-w64-crt,mingw-w64-libraries/
+          # winpthreads}; nixpkgs builds at /build/mingw-w64-v12.0.0 (same shape),
+          # so one prefix map covers both comp_dirs. dontStrip keeps the .o debug.
+          mingwCrtDbgFlags = " -g -fdebug-prefix-map=/build/mingw-w64-v12.0.0="
+            + "/tmp/guix-build-mingw-w64-x86_64-winpthreads-12.0.0.drv-0/mingw-w64-v12.0.0";
           mingw_w64 = (wprev.mingw_w64.override { stdenv = mingwCrtStdenv; }).overrideAttrs (o: {
             hardeningDisable = (o.hardeningDisable or [ ]) ++ [
               "zerocallusedregs" "strictoverflow" "stackprotector"
               "stackclashprotection" "fortify" "fortify3"
               "strictflexarrays1" "libcxxhardeningfast" "format"
             ];
+            dontStrip = true;
+            separateDebugInfo = false;
             env = (o.env or { }) // {
               NIX_CFLAGS_COMPILE = (o.env.NIX_CFLAGS_COMPILE or "")
-                + " -fomit-frame-pointer -momit-leaf-frame-pointer";
+                + " -fomit-frame-pointer -momit-leaf-frame-pointer" + wfinal.mingwCrtDbgFlags;
             };
           });
           pthreads = (wprev.pthreads.override { stdenv = mingwPthreadsStdenv; }).overrideAttrs (o: {
@@ -1701,9 +1711,11 @@ let
               "stackclashprotection" "fortify" "fortify3"
               "strictflexarrays1" "libcxxhardeningfast" "format"
             ];
+            dontStrip = true;
+            separateDebugInfo = false;
             env = (o.env or { }) // {
               NIX_CFLAGS_COMPILE = (o.env.NIX_CFLAGS_COMPILE or "")
-                + " -fomit-frame-pointer -momit-leaf-frame-pointer";
+                + " -fomit-frame-pointer -momit-leaf-frame-pointer" + wfinal.mingwCrtDbgFlags;
             };
           });
         });
@@ -1779,6 +1791,19 @@ let
       ];
       patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
       dontStrip = true;
+      # libgcc's debug info (which strip moves into each .dbg) must carry GUIX's
+      # paths: comp_dir at the ephemeral gcc build dir, and the mingw headers it
+      # includes mapped to /usr (GUIX's /gnu/store→/usr). Same preBuild pattern
+      # as the linux crossGuixGcc.
+      preBuild = (old.preBuild or "") + ''
+        EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"
+        GUIXMAPS="-fdebug-prefix-map=/build/build=/tmp/guix-build-gcc-cross-${mingwTriple}-14.3.0.drv-0/build -ffile-prefix-map=${mingwLibc}/include=/usr/include"
+        makeFlagsArray+=(
+          "CFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS -g"
+          "CXXFLAGS_FOR_TARGET=$EXTRA_FLAGS_FOR_TARGET $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+          "FLAGS_FOR_TARGET=$EXTRA_SANS_O2 $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
+        )
+      '';
       postFixup = (old.postFixup or "") + ''
         find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
           ${mingwBinutils241}/bin/${mingwTriple}-objcopy \
