@@ -27,12 +27,51 @@
 # non-empty, the build also unsets the Nix-exported CC/CXX/… so Bitcoin's
 # depends derives the host_toolchain-prefixed cross tools instead of the
 # native `gcc` (hosts/default.mk add_host_tool_func treats an
-# environment-set CC as the host compiler).
+# environment-set CC as the host compiler). For darwin hosts the inputs
+# are the UNPREFIXED clang/lld/llvm-* tools instead — darwin.mk resolves
+# them via `command -v clang` etc. from PATH.
 , crossInputs ? [ ]
+# Extracted macOS SDK (a directory containing
+# Xcode-<ver>-<build>-extracted-SDK-with-libcxx-headers/), required for
+# *-apple-darwin hostTriples; passed to make as SDK_PATH. A store-path
+# derivation (not an in-build extraction) so the -isysroot recorded in
+# the generated toolchain.cmake stays valid for the later bitcoind build.
+, darwinSdk ? null
+, runCommand
 }:
 
 let
   dependsDir = "bitcoin-${version}/depends";
+
+  isDarwin = lib.hasInfix "-apple-darwin" hostTriple;
+
+  # The LIBRARY_PATH dir for the darwin depends build (see the env block
+  # below for why LIBRARY_PATH is set at all). GUIX points it at ONE dir:
+  # $NATIVE_GCC/lib, the gcc-toolchain UNION of gcc's and glibc's lib/.
+  # We can't use our gcc/glibc lib dirs raw: nixpkgs' glibc additionally
+  # installs unversioned COMPAT SYMLINKS for the libraries glibc 2.34
+  # merged into libc (libpthread.so -> libpthread.so.0 etc.) which
+  # vanilla glibc — GUIX's — does not ship. Those links point at ELF
+  # stub shared objects, so any darwin target link passing -lpthread
+  # (capnp's tools via CMake Threads) finds the ELF and ld64.lld hard-
+  # errors ("unhandled file type"), while in GUIX the same -lpthread
+  # falls through to the SDK's tbd. Build the union minus exactly those
+  # nixpkgs-only compat links; everything vanilla glibc ships (incl. the
+  # load-bearing ASCII libc.so linker script that fails capnp's -lc
+  # fibers check) stays.
+  darwinLibraryPathDir = runCommand "guix-gcc-toolchain-lib-union" { } ''
+    mkdir -p $out/lib
+    for f in ${gcc14Stdenv.cc.cc.lib}/lib/*; do
+      ln -s "$f" "$out/lib/$(basename "$f")"
+    done
+    for f in ${gcc14Stdenv.cc.libc}/lib/*; do
+      b=$(basename "$f")
+      case "$b" in
+        libpthread.so|librt.so|libdl.so|libutil.so|libanl.so) continue ;;
+      esac
+      ln -sfn "$f" "$out/lib/$b"
+    done
+  '';
 
   # `downloadFile` is the name on the remote server (defaults to `file`). It
   # only differs from `file` when the upstream depends Makefile renames the
@@ -320,7 +359,13 @@ gcc14Stdenv.mkDerivation (rec {
   # try_run checks (zmq_check_*, secp256k1's Valgrind detection, etc.) so
   # all the resulting depends archives and the secp256k1 region in the
   # final bitcoind match upstream's GUIX-built binary byte-for-byte.
-  makeFlags = [ "HOST=${hostTriple}" ] ++ lib.optionals (!buildQt) [ "NO_QT=1" ];
+  makeFlags = [ "HOST=${hostTriple}" ]
+    ++ lib.optionals (!buildQt) [ "NO_QT=1" ]
+    # darwin: hosts/darwin.mk derives OSX_SDK from $(SDK_PATH); the
+    # depends Makefile errors out early if the extracted SDK dir is
+    # missing. GUIX mounts it at depends/SDKs (see guix-build); we point
+    # SDK_PATH at the extracted-SDK store path instead.
+    ++ lib.optionals isDarwin [ "SDK_PATH=${darwinSdk}" ];
 
   # Override the nixpkgs gcc-wrapper's `-fno-omit-frame-pointer
   # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before) so depends
@@ -341,11 +386,31 @@ gcc14Stdenv.mkDerivation (rec {
   # also omit the frame pointer at -O2, but have no leaf/non-leaf split —
   # -momit-leaf-frame-pointer is an x86/aarch64-only option — so they get
   # only -fomit-frame-pointer (overriding the wrapper's injection).
-  env.NIX_CFLAGS_COMPILE =
-    (if lib.hasPrefix "aarch64" hostTriple then "-momit-leaf-frame-pointer"
-     else if lib.hasPrefix "x86_64" hostTriple then "-fomit-frame-pointer -momit-leaf-frame-pointer"
-     else "-fomit-frame-pointer")
-    + " -pipe";
+  env = {
+    NIX_CFLAGS_COMPILE =
+      (if lib.hasPrefix "aarch64" hostTriple then "-momit-leaf-frame-pointer"
+       else if lib.hasPrefix "x86_64" hostTriple then "-fomit-frame-pointer -momit-leaf-frame-pointer"
+       else "-fomit-frame-pointer")
+      + " -pipe";
+  } // lib.optionalAttrs isDarwin {
+    # GUIX build.sh:80 exports LIBRARY_PATH=$NATIVE_GCC/lib for the whole
+    # darwin DEPENDS build ("Required for native packages"; build.sh
+    # unsets it again before the bitcoin build). NATIVE_GCC is GUIX's
+    # gcc-toolchain — a union of gcc AND glibc (commencement.scm
+    # make-gcc-toolchain), so its lib/ contains glibc's ASCII linker
+    # scripts (libc.so = "GROUP(...)"). clang forwards LIBRARY_PATH
+    # entries to the TARGET link, where ld64.lld chokes on the ELF/ASCII
+    # libc.so ("unhandled file type") — which makes capnp's
+    # check_library_exists(c makecontext …) FAIL in GUIX's container and
+    # turns kj fibers OFF (KJ_USE_FIBERS=0). Without this, our `-lc`
+    # check resolves against the SDK's libc.tbd, fibers come out ON, and
+    # bitcoin-node/bitcoin-gui/test_bitcoin gain ~4.4 KB of fiber code +
+    # getcontext/setcontext/makecontext/mprotect imports that upstream's
+    # binaries don't have (verified). Mirror the env as ONE union dir
+    # like GUIX's (see darwinLibraryPathDir above for why the raw
+    # gcc/glibc lib dirs won't do).
+    LIBRARY_PATH = "${darwinLibraryPathDir}/lib";
+  };
 
   # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply to
   # depends compiles:
@@ -409,7 +474,7 @@ gcc14Stdenv.mkDerivation (rec {
   preBuild = ''
     unset CC CXX AR RANLIB NM STRIP OBJCOPY OBJDUMP
   '';
-} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple) {
+} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple && !isDarwin) {
   # x86_64-target cross builds only (on a non-x86 build machine the make
   # conditional below is false and the sed is a harmless no-op):
   # hosts/linux.mk special-cases an x86 build machine —
@@ -446,8 +511,36 @@ gcc14Stdenv.mkDerivation (rec {
       packages/qt.mk
     grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
   '';
-} // lib.optionalAttrs (crossInputs != [ ] && !lib.hasPrefix "x86_64" hostTriple) {
-  # Non-x86 cross builds (aarch64/riscv64/armhf/powerpc64): same Qt posix
+} // lib.optionalAttrs isDarwin {
+  # darwin: hide the BUILD machine's glibc lib dir from CMake's find
+  # commands in HOST packages. find_library derives search PREFIXES from
+  # every $PATH entry (strip /bin, probe <prefix>/lib) — in the Nix env
+  # that reaches the stdenv glibc, so e.g. FindWrapRt's
+  # find_library(LIBRT rt) returns the ELF librt.so, which then poisons
+  # the Mach-O try_compile link ("ld64.lld: error: …librt.so: unhandled
+  # file type") and flips Qt's WrapRt/clock_gettime checks to FAILED
+  # (configure aborts: "Target Core links to WrapRt::WrapRt but the
+  # target was not found"); zeromq's find_library(RT_LIBRARY rt) would
+  # likewise leak "-lrt" into zmq.pc. In GUIX's container the same
+  # probing finds NO matching unversioned librt.so (their find comes out
+  # NOTFOUND — upstream's build succeeding proves it: WrapRt::WrapRt
+  # exists there only as an EMPTY interface target), so ignoring the one
+  # ELF dir that satisfies these lookups is outcome-identical.
+  # CMAKE_SYSTEM_IGNORE_PATH (not CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_
+  # PATH=OFF, which also breaks find_program's make/compiler lookup; not
+  # -DLIBRT=LIBRT-NOTFOUND, which find_library re-runs on -NOTFOUND).
+  # Two seds: funcs.mk's host-package cmake invocation (zeromq, capnp,
+  # boost, libevent, qrencode) and qt.mk's own config.opt mechanism.
+  postPatch = ''
+    sed -i 's|^\$(1)_cmake += -DCMAKE_SYSTEM_NAME=\$(\$(host_os)_cmake_system_name)$|&\n$(1)_cmake += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
+      funcs.mk
+    grep -q 'CMAKE_SYSTEM_IGNORE_PATH' funcs.mk || { echo "funcs.mk ignore-path sed failed"; exit 1; }
+    sed -i 's|^\$(package)_cmake_opts += -DQT_NO_APPLE_SDK_MAX_VERSION_CHECK=ON$|&\n$(package)_cmake_opts += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
+      packages/qt.mk
+    grep -q 'CMAKE_SYSTEM_IGNORE_PATH' packages/qt.mk || { echo "qt.mk ignore-path sed failed"; exit 1; }
+  '';
+} // lib.optionalAttrs (crossInputs != [ ] && !lib.hasPrefix "x86_64" hostTriple && !isDarwin) {
+  # Non-x86 LINUX cross builds (aarch64/riscv64/armhf/powerpc64): same Qt posix
   # ipc preseed as the x86_64 block above (the sandbox-vs-GUIX-container
   # configure-check divergence is host-independent; the two
   # feature-gated-to-EMPTY objects contribute STT_FILE symtab entries to
