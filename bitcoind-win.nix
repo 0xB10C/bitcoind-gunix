@@ -37,8 +37,13 @@ let
   # omits the FP by default like upstream).
   cflags = "-O2 -g -fno-ident"
     + " -ffile-prefix-map=${depends}=/bitcoin/depends/${hostTriple}"
-    + " -ffile-prefix-map=${guixGcc}=/usr"
-    + " -ffile-prefix-map=${mingwCrt}=/usr"
+    # Toolchain headers → GUIX's /usr layout (its /gnu/store→/usr maps): the
+    # libstdc++ headers map VERSION-LESS (gcc's --with-gxx-include-dir), the
+    # mingw CRT headers (copied into sys-include) → /usr/include, gcc builtins
+    # → /usr/lib/gcc. Same scheme as bitcoind-cross.nix.
+    + " -ffile-prefix-map=${guixGcc}/include/c++/14.3.0=/usr/include/c++"
+    + " -ffile-prefix-map=${guixGcc}/${hostTriple}/sys-include=/usr/include"
+    + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"
     + " -fdebug-prefix-map=/build/bitcoin-${version}=${distsrc}"
     + " -fdebug-prefix-map=/build/bitcoin-${version}/src=.";
 
