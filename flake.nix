@@ -35,7 +35,9 @@
             crossGlibc231 crossGlibc231X86 crossGuixGccX86
             clangDarwin lldDarwin llvmDarwin darwinSdk
             dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
-            tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64;
+            tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
+            signapple detachedSigs
+            codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64;
           default = drvs.bitcoind;
         });
     };
