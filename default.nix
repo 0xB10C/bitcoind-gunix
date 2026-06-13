@@ -1549,6 +1549,324 @@ let
     expectedTarballSha256 = "a2d7a13b4da53d4a3e4c517f3a0269e2429813417bb320d3b268993cfdc545d0";
     expectedZipSha256 = "fc119a34915daac57e5fbdf181c9295d862d6843d52a9380e39dc0d0ac69cf20";
   };
+  # === win64 (x86_64-w64-mingw32) cross-compile ============================
+  # GUIX's win64 toolchain (manifest.scm make-mingw-pthreads-cross-toolchain):
+  # binutils 2.41 + binutils-unaligned-default.patch, mingw-w64 12.0.0 CRT +
+  # winpthreads (POSIX threads), gcc 14.3.0 (mingw-w64-base-gcc:
+  # --enable-threads=posix --enable-default-ssp=yes --enable-host-bind-now=yes
+  # --disable-gcov --disable-libgomp) + gcc-ssa-generation.patch. nixpkgs'
+  # pkgsCross.mingwW64 defaults to mcf threads / gcc 15.2.0 / binutils 2.46 /
+  # mingw-w64 13.0.0, so all four are pinned. msvcrt (not ucrt) CRT — GUIX
+  # passes --with-default-msvcrt=msvcrt (12.0.0 flipped the default to UCRT).
+  mingwTriple = "x86_64-w64-mingw32";
+
+  # GUIX builds the mingw-w64 CRT + winpthreads with the cross binutils 2.41
+  # (+ unaligned patch); nixpkgs' bootstrap uses 2.46, whose alignment NOP-fill
+  # ORDER is reversed (short-first vs 2.41's long-first) — visible in the CRT's
+  # pre_c_init padding at the very start of every .exe's .text. (The bootstrap
+  # gcc is 15.2.0 vs GUIX's 14.3.0, but those produce byte-identical CRT objects
+  # here, so only the binutils matters.) Build the CRT/winpthreads with the
+  # bootstrap stdenvNoLibc gcc but its bintools swapped to 2.41. From a SEPARATE
+  # clean cross import (mingwBootSet) to avoid a splice cycle with pkgsCrossMingw's
+  # windows override; using stdenvNoLibc.cc (NOT gccWithoutTargetLibc, which
+  # drags in a broken, uncacheable target-bash).
+  mingwBootSet = import pkgs.path {
+    localSystem = buildSystem;
+    crossSystem = { config = mingwTriple; libc = "msvcrt"; };
+    config.allowUnsupportedSystem = true;
+  };
+  # PLAIN binutils 2.41 for the CRT/winpthreads — NO unaligned-default patch.
+  # GUIX's make-mingw-w64 (CRT + winpthreads) passes no #:xbinutils, so it uses
+  # the UNPATCHED cross-binutils; only the final gcc's binutils
+  # (binutils-mingw-patches) gets the patch. With the patch, gas encodes
+  # aligned vector moves as unaligned (movaps→movups), which diverged the CRT's
+  # _FindPESectionExec etc. (ours movups 0f11, upstream movaps 0f29).
+  mingwCrtBinutils241 = mingwBootSet.stdenv.cc.bintools.bintools.overrideAttrs (old: {
+    version = "2.41";
+    src = pkgs.fetchurl {
+      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+    };
+    patches = [ ];
+    configureFlags =
+      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
+      ++ [ "--enable-compressed-debug-sections=all" ];
+  });
+  # GUIX builds the CRT/winpthreads with base-gcc 14.3.0; gcc 15 diverges from
+  # 14 on the CRT (verified: crtexe.c __tmainCRTStartup is 16 B bigger under
+  # gcc15 — dllimport `mov`/IAT becomes `lea`/auto-import), so we need a gcc 14
+  # NOLIBC cross cc. Reconstruct it as the gcc14 cc with the same nolibc args
+  # the bootstrap uses, + --with-as/--with-ld=2.41 (the bootstrap BAKES
+  # --with-as=2.46, which also reverses the alignment NOP-fill order). This
+  # UNWRAPPED cc does NOT pull the target-bash that the gccWithoutTargetLibc
+  # WRAPPER drags in — we wrap it with the clean stdenvNoLibc.cc wrapper below.
+  # Build it by SWAPPING the gcc 14.3.0 source into the bootstrap nolibc gcc15
+  # cc via overrideAttrs (NOT .override) — this keeps every other input
+  # (binutils-wrapper, the buildable target-bash, mingw headers) byte-identical
+  # to the working gcc15 path. Constructing a nolibc gcc14 fresh with .override
+  # instead yields a different binutils-wrapper whose target-bash can't build
+  # (bash doesn't cross-compile to mingw and isn't cached for this triple).
+  # Append --with-as/--with-ld=2.41 (the bootstrap BAKES --with-as=2.46, which
+  # reverses the alignment NOP-fill order). gcc14's own src + patches; relax the
+  # version self-check.
+  mingwCc14Unwrapped = mingwBootSet.stdenvNoLibc.cc.cc.overrideAttrs (old: {
+    inherit (mingwBootSet.buildPackages.gcc14.cc) version src;
+    patches = mingwBootSet.buildPackages.gcc14.cc.patches;
+    postPatch = builtins.replaceStrings [ "15.2.0" ] [ "14.3.0" ] (old.postPatch or "");
+    configureFlags = (old.configureFlags or [ ]) ++ [
+      "--with-as=${mingwCrtBinutils241}/bin/${mingwTriple}-as"
+      "--with-ld=${mingwCrtBinutils241}/bin/${mingwTriple}-ld"
+    ];
+  });
+  # NOLIBC stdenv for the CRT (mingw_w64) itself — it only emits .o/.a, no
+  # shared link, so it can't (and mustn't) depend on a target libc.
+  mingwCrtStdenv =
+    let
+      bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
+        bintools = mingwCrtBinutils241;
+      };
+      cc241 = mingwBootSet.stdenvNoLibc.cc.override {
+        cc = mingwCc14Unwrapped;
+        bintools = bintools241;
+      };
+    in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc cc241;
+  # CRT-AWARE stdenv for winpthreads, which links a shared libwinpthread (needs
+  # dllcrt2.o / -lmingw32 / -lmsvcrt …). Same clean wrapper + 2.41 as, but with
+  # libc = the boot set's CRT so the link resolves. bitcoind statically links
+  # libwinpthread.a (the .o content, compiled from our 12.0.0 source by this
+  # gcc), so which CRT the *shared* link uses never reaches the final binary.
+  mingwPthreadsStdenv =
+    let
+      bootCrt = mingwBootSet.windows.mingw_w64;
+      bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
+        bintools = mingwCrtBinutils241;
+        libc = bootCrt;
+      };
+      cc241 = mingwBootSet.stdenvNoLibc.cc.override {
+        cc = mingwCc14Unwrapped;
+        bintools = bintools241;
+        libc = bootCrt;
+        noLibc = false;
+      };
+    in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc cc241;
+
+  pkgsCrossMingw = import pkgs.path {
+    localSystem = buildSystem;
+    crossSystem = { config = mingwTriple; libc = "msvcrt"; };
+    config.allowUnsupportedSystem = true;
+    overlays = [
+      (final: prev: {
+        # Pin mingw-w64 to GUIX's 12.0.0 (nixpkgs ships 13.0.0). The CRT
+        # (mingw_w64) and winpthreads (pthreads) both `inherit (mingw_w64_headers)
+        # version src`, so overriding the headers cascades to all three.
+        windows = prev.windows.overrideScope (wfinal: wprev: {
+          mingw_w64_headers = wprev.mingw_w64_headers.overrideAttrs (o: {
+            version = "12.0.0";
+            src = pkgs.fetchurl {
+              url = "mirror://sourceforge/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v12.0.0.tar.bz2";
+              hash = "sha256-zEGJiqxLbo3Vz/1zMbnZUVuRLfRCCjphK16ilVu+7S8=";
+            };
+          });
+          # The mingw-w64 CRT (crt2.o etc.) and winpthreads are built by
+          # nixpkgs' bootstrap cc-wrapper (crossThreadsStdenv), which injects
+          # -fno-omit-frame-pointer. GUIX builds them with bare cross-gcc → -O2
+          # omits the frame pointer. Those CRT objects are linked into every
+          # .exe, so their FP prologues leak into the shipped binaries (the
+          # startup code at the bottom of .text). Override the injection so the
+          # CRT/winpthreads match GUIX's flag-free -O2 codegen.
+          # Also disable the nixpkgs hardenings GUIX's bare base-gcc doesn't
+          # apply: zerocallusedregs (-fzero-call-used-regs appends register-
+          # zeroing `xor`s before returns — visible in the CRT/winpthreads
+          # functions linked into every .exe), plus the rest of the set
+          # bitcoind/depends drop. GUIX's CRT is built by plain base-gcc with
+          # none of these.
+          # Build the CRT + winpthreads with the gcc 14.3.0 / binutils 2.41
+          # NOLIBC stdenv (mingwCrtStdenv) instead of nixpkgs' bootstrap 15.2.0
+          # / 2.46 — see mingwCrtStdenv. Plus the FP + hardening overrides so
+          # the codegen matches GUIX's flag-free -O2 base-gcc CRT.
+          mingw_w64 = (wprev.mingw_w64.override { stdenv = mingwCrtStdenv; }).overrideAttrs (o: {
+            hardeningDisable = (o.hardeningDisable or [ ]) ++ [
+              "zerocallusedregs" "strictoverflow" "stackprotector"
+              "stackclashprotection" "fortify" "fortify3"
+              "strictflexarrays1" "libcxxhardeningfast" "format"
+            ];
+            env = (o.env or { }) // {
+              NIX_CFLAGS_COMPILE = (o.env.NIX_CFLAGS_COMPILE or "")
+                + " -fomit-frame-pointer -momit-leaf-frame-pointer";
+            };
+          });
+          pthreads = (wprev.pthreads.override { stdenv = mingwPthreadsStdenv; }).overrideAttrs (o: {
+            hardeningDisable = (o.hardeningDisable or [ ]) ++ [
+              "zerocallusedregs" "strictoverflow" "stackprotector"
+              "stackclashprotection" "fortify" "fortify3"
+              "strictflexarrays1" "libcxxhardeningfast" "format"
+            ];
+            env = (o.env or { }) // {
+              NIX_CFLAGS_COMPILE = (o.env.NIX_CFLAGS_COMPILE or "")
+                + " -fomit-frame-pointer -momit-leaf-frame-pointer";
+            };
+          });
+        });
+      })
+    ];
+  };
+
+  # GUIX uses winpthreads (POSIX threads), not nixpkgs' default mcfgthreads.
+  # We can't set the global `threads` overlay attr to winpthreads: that puts
+  # winpthreads into the final gcc's depsTargetTarget, and its pthread.h then
+  # shadows the BUILD glibc's when gcc builds its own native helper tools
+  # (libcody's gthr-default.h pulls in <pthread.h> → <process.h> not found).
+  # GUIX instead merges winpthreads' headers+libs INTO the cross libc (its
+  # make-mingw-w64 #:with-winpthreads?), so pthread.h is reachable only on the
+  # TARGET include path. Mirror that: a merged CRT+winpthreads libc, passed to
+  # the final gcc as libcCross, with --enable-threads=posix (threadsCross.model)
+  # but no separate threadsCross.package (so depsTargetTarget stays empty).
+  # winpthreads MUST come first: the mingw-w64 CRT ships DUMMY pthread*.h /
+  # pthread_time.h headers ("gets overridden if winpthread is installed") —
+  # the dummy pthread_time.h declares no clock_gettime/CLOCK_REALTIME, so
+  # Qt's FindWrapRt HAVE_GETTIME check (and std::chrono in libstdc++) fail.
+  # symlinkJoin is first-wins, so listing pthreads first makes its REAL
+  # pthread_time.h win, with the rest of the CRT headers/libs falling through.
+  mingwLibc = pkgs.symlinkJoin {
+    name = "mingw-w64-crt-with-winpthreads-12.0.0";
+    paths = [
+      pkgsCrossMingw.windows.pthreads
+      pkgsCrossMingw.windows.mingw_w64
+      pkgsCrossMingw.windows.mingw_w64.dev
+    ];
+  };
+
+  # binutils 2.41 + GUIX's binutils-unaligned-default.patch (turns on
+  # -muse-unaligned-vector-move by default — avoids unaligned-instruction
+  # divergence). Same bundled-zlib + compressed-debug-sections override as
+  # the linux crossBinutils241X86.
+  mingwBinutils241 = pkgsCrossMingw.stdenv.cc.bintools.bintools.overrideAttrs (old: {
+    version = "2.41";
+    src = pkgs.fetchurl {
+      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
+      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+    };
+    patches = [ ./patches/binutils-unaligned-default.patch ];
+    configureFlags =
+      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
+      ++ [ "--enable-compressed-debug-sections=all" ];
+  });
+  mingwBintools241 = pkgsCrossMingw.stdenv.cc.bintools.override {
+    bintools = mingwBinutils241;
+    libc = mingwLibc;
+  };
+
+  # Final cross gcc 14.3.0 with GUIX's mingw-w64-base-gcc flags. Posix
+  # threads come from the overlay (threadsCross). gcc-ssa-generation.patch
+  # for deterministic SSA numbering (same as every other target).
+  mingwGuixGcc = pkgsCrossMingw.stdenv.cc.override {
+    bintools = mingwBintools241;
+    libc = mingwLibc;
+    cc = (pkgsCrossMingw.buildPackages.gcc14.cc.override {
+      libcCross = mingwLibc;
+      # posix threads (winpthreads merged into libcCross above); no separate
+      # threadsCross.package → nothing in depsTargetTarget to leak to the
+      # build compiler.
+      threadsCross = { model = "posix"; package = null; };
+    }).overrideAttrs (old: {
+      configureFlags = (old.configureFlags or [ ]) ++ [
+        "--enable-default-ssp=yes"
+        "--enable-host-bind-now=yes"
+        "--disable-gcov"
+        "--disable-libgomp"
+        "--with-as=${mingwBinutils241}/bin/${mingwTriple}-as"
+        "--with-ld=${mingwBinutils241}/bin/${mingwTriple}-ld"
+      ];
+      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      dontStrip = true;
+      postFixup = (old.postFixup or "") + ''
+        find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
+          ${mingwBinutils241}/bin/${mingwTriple}-objcopy \
+            --enable-deterministic-archives --strip-debug "$f"
+        done
+      '';
+    });
+  };
+  mingwCrossInputs = [ mingwGuixGcc mingwGuixGcc.bintools ];
+
+  # NoFp wrapper variant — strips BOTH of the cc-wrapper's frame-pointer
+  # injections (-fno-omit-frame-pointer AND -mno-omit-leaf-frame-pointer) so
+  # bitcoind compiles bare -O2. On x86_64 -O2 omits ALL frame pointers, which
+  # is what upstream's flag-free DW_AT_producer records (build.sh's HOST_CFLAGS
+  # is just -O2 -g -fno-ident + maps). Stripping only the -fno- flag (as the
+  # linux targets do, where the wrapper injects only that) left
+  # -mno-omit-leaf-frame-pointer behind — the single DW_AT_producer delta vs
+  # upstream, and it kept frame pointers, growing .text/.xdata.
+  mingwGuixGccNoFp = mingwGuixGcc.overrideAttrs (old: {
+    postFixup = (old.postFixup or "") + ''
+      substituteInPlace $out/nix-support/cc-cflags-before \
+        --replace-fail "-fno-omit-frame-pointer" "" \
+        --replace-fail "-mno-omit-leaf-frame-pointer" ""
+    '';
+  });
+  mingwCrossInputsNoFp = [ mingwGuixGccNoFp mingwGuixGccNoFp.bintools ];
+  # The mingw-w64 CRT (msvcrt headers/libs) store path — leaks into
+  # bitcoind's debug info via the system include path; mapped to /usr.
+  mingwCrt = pkgsCrossMingw.windows.mingw_w64;
+
+  # win64 depends tree (Qt included; no X11 — Windows Qt). Package set
+  # (depends packages.mk *_mingw32_packages): boost libevent qrencode qt
+  # sqlite zeromq capnp + native_{capnp,libmultiprocess,qt}.
+  dependsMingw = pkgs.callPackage ./depends.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = mingwTriple;
+    buildQt = true;
+    crossInputs = mingwCrossInputs;
+  };
+
+  # win64 reference hashes (from the upstream -unsigned.zip / -debug.zip).
+  mingwExpectedHashes = {
+    "bin/bitcoin.exe" = "a652b9a581162afe8b57be0b5cbd7154ed00e4575036b71e19829bff0092fdd7";
+    "bin/bitcoin-cli.exe" = "47a464a6d1092c0f11c6b0875b0d6097746802193afbb20d8d87d5939ba87fc0";
+    "bin/bitcoind.exe" = "32f9367808d81d01c2b20c153485d0399c32201e6be8a65f9456ea7b2766862c";
+    "bin/bitcoin-tx.exe" = "b05233bd855f197d14687baa98f0f419eee43f16d332a04e438da68ef0b2a7b9";
+    "bin/bitcoin-util.exe" = "28e3977269ad9c2cb404d2ca3fc3b05f1489b64894ccf132494e104db5e3ccd3";
+    "bin/bitcoin-wallet.exe" = "0f567a09f23976ed01dc5bb70fb59ec8a1fa7c6a884a3e37b34ace76900a48ec";
+    "bin/bitcoin-qt.exe" = "c7978302fb4e92879663f6b4bae501e08dcf95d705164dda6995ce6c61ec11a9";
+    "libexec/test_bitcoin.exe" = "4f7722bb07084e13c6c603e3d2f1da440c3fd52f34f27d31894e2f175478bc22";
+    "bin/bitcoin.exe.dbg" = "dbbca99548c957abed922db75787587e53bf45f207300ef87aa32fd894dcc856";
+    "bin/bitcoin-cli.exe.dbg" = "a36ebcb1c6515ae24d43dd63eca608340029274c143582636a1f4621079f29ce";
+    "bin/bitcoind.exe.dbg" = "07c56841a0671c94dc8f6bb4ac7eb5d9d288a2259e76abb7cd5fe5c5da5bc06d";
+    "bin/bitcoin-tx.exe.dbg" = "17261bcec7fe93787bcb4230920b537516394751cba2c01c086c1d1bd3689114";
+    "bin/bitcoin-util.exe.dbg" = "92fd2266e436ace8b42c9592112b48d46b9faf7bb5a5b9878f361bc58137d406";
+    "bin/bitcoin-wallet.exe.dbg" = "d33ee25bc416d8351b06fdd38a98b5652142d13d1914d2e1cdd72fe038f0f87b";
+    "bin/bitcoin-qt.exe.dbg" = "9300dd4c45da542c4778968184df192b3cf778bf8eddb1c8e5af01ab1234e0dc";
+    "libexec/test_bitcoin.exe.dbg" = "99f9f8bf85fb2b9a1d65c480eda196623ddc07fdf4bc3e7dc98d3ef31c26f16a";
+  };
+  bitcoindMingw = pkgs.callPackage ./bitcoind-win.nix {
+    inherit version url sha256;
+    inherit (pkgs) gcc14Stdenv;
+    depends = dependsMingw;
+    crossInputs = mingwCrossInputsNoFp;
+    guixGcc = mingwGuixGcc.cc;
+    mingwCrt = mingwCrt;
+    hostTriple = mingwTriple;
+    pname = "bitcoind-win64";
+    expectedHashes = mingwExpectedHashes;
+  };
+  # Dev variant: skip the byte-match gate (empty expectedHashes) so the
+  # binaries can be extracted and diffed against upstream during iteration.
+  bitcoindMingwNoGate = bitcoindMingw.override { expectedHashes = { }; };
+
+  # The published win64 .zip archives (build.sh mingw case).
+  unsignedZipMingw = pkgs.callPackage ./win-zip.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindMingw;
+    expectedSha256 = "5ecd365b53a2896850178f90302375480933e6c85ef81bb8abe8675fd44e1d9c";
+  };
+  debugZipMingw = pkgs.callPackage ./win-zip.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindMingw;
+    debug = true;
+    expectedSha256 = "df3f8c2f6ce8fde8d2661d3c01f5265f90f938019d52e2f94acf2a9001af70ae";
+  };
+
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
     debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
@@ -1560,5 +1878,8 @@ in {
     dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
     tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
     signapple detachedSigs
-    codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64;
+    codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64
+    mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw dependsMingw
+    mingwCrtStdenv
+    bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw;
 }

@@ -6,6 +6,106 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-13, win64 WIP): 8 PE binaries' CODE 100% byte-reproduced — only 6 .dbg-derived bytes differ (PE CheckSum + .gnu_debuglink CRC); .dbg/.zip/NSIS/signing remain
+
+bitcoin-cli.exe (and all 8) now differ from upstream in EXACTLY 6 bytes: the
+PE optional-header CheckSum (2 B @ 0xd8) and the .gnu_debuglink CRC32 (4 B) —
+both computed FROM the .dbg. Every loadable section (.text/.data/.rdata/.pdata/
+.xdata/.idata/.rsrc/.reloc/…) is byte-identical. So the codegen is DONE; the
+binaries fully match once the .dbg is byte-reproduced (then the CRC + CheckSum
+fall out). Root causes closed (each verified at disasm/byte level): bitcoind FP
+(NoFp wrapper strips BOTH frame-pointer flags), CRT/winpthreads FP +
+zerocallusedregs, the binutils-2.41 NOP-fill order, the gcc14 CRT (crtexe.c
+__tmainCRTStartup — gcc15 made dllimport `mov`→`lea`, +16 B; needs gcc 14.3.0
+via the src-swap trick — see win64-goal memory), and the CRT/winpthreads must
+use PLAIN binutils 2.41 (NO unaligned-default patch — GUIX's make-mingw-w64
+passes no #:xbinutils; only the FINAL gcc's binutils gets the patch, for
+libgcc/bitcoin which pass -Wa,-muse-unaligned-vector-move).
+
+REMAINING: .dbg byte-repro (closes the 6 bytes → unsigned.zip/debug.zip),
+NSIS setup-unsigned.exe + codesigning.tar.gz, osslsigncode signing. See below.
+
+## Status (2026-06-13, win64 earlier): mingw toolchain + depends BUILD
+
+win64 (x86_64-w64-mingw32) is the last issue-#6 target. 6 artifacts to
+reproduce: `win64-unsigned.zip` (5ecd365b…), `win64-debug.zip` (df3f8c2f…),
+`win64-setup-unsigned.exe` (ad31d4d8…), `win64-codesigning.tar.gz`
+(62baf547…), signed `win64-setup.exe` (1893e819…) + `win64.zip`
+(82fd2c50…). 8 PE binaries (bitcoin{,-cli,-tx,-util,-wallet,-qt,d}.exe +
+libexec/test_bitcoin.exe; NO node/gui — ENABLE_IPC OFF for WIN32). Upstream
+refs in `tmpdiff/upstream-win64/{unsigned,debug}-extract`.
+
+DONE: the GUIX-exact mingw toolchain (`default.nix`): `pkgsCrossMingw` =
+mingwW64 cross, `libc="msvcrt"`, overlay pinning mingw-w64 **12.0.0** (override
+`windows.mingw_w64_headers`). gcc **14.3.0** (`mingwGuixGcc`:
+`--enable-default-ssp=yes --enable-host-bind-now=yes --disable-gcov
+--disable-libgomp` + gcc-ssa-generation.patch) + binutils **2.41**
+(`mingwBinutils241`, + binutils-unaligned-default.patch). **POSIX threads** —
+NOT via the global `threads` overlay (leaks winpthreads' pthread.h into native
+libcody → `process.h` error); instead MERGE winpthreads into the cross libc
+(`mingwLibc` = symlinkJoin `[pthreads mingw_w64 mingw_w64.dev]`, **pthreads
+FIRST** so its real `pthread_time.h` wins over the CRT dummy), passed as gcc
+`libcCross` + cc-wrapper `libc` + bintools `libc`, with
+`threadsCross={model="posix";package=null;}`. `dependsMingw` builds the full
+win64 depends incl. Qt (depends.nix `isMingw` branch: LIBRARY_PATH =
+`nativeLibraryPathDir` full gcc+glibc union; `CMAKE_SYSTEM_IGNORE_PATH=<glibc>/lib`
+in funcs.mk + qt.mk so Qt's FindWrapRt HAVE_GETTIME check works — same
+find_library glibc-leak as darwin; NO posix-shm/sem preseed, Windows Qt uses
+the win32 backend). `bitcoind-win.nix` builds the 8 PE binaries
+(HOST_CFLAGS `-O2 -g -fno-ident` + prefix maps, LDFLAGS
+`-Wl,--no-insert-timestamp`, split-debug w/ mingw objcopy, no .comment),
+`win-zip.nix` assembles the unsigned/debug .zip.
+
+The CRT/winpthreads toolchain (the hard part): built by `mingwCrtStdenv` /
+`mingwPthreadsStdenv` (from a SEPARATE clean cross import `mingwBootSet`, no
+windows override → no splice cycle), using `stdenvNoLibc.cc` (NOT
+`gccWithoutTargetLibc`, which drags in an uncacheable broken
+`bash-x86_64-w64-mingw32`) with (a) bintools swapped to binutils 2.41 and (b)
+the unwrapped gcc15 nolibc cc rebuilt with `--with-as/--with-ld=2.41` appended
+(the bootstrap BAKES `--with-as=2.46`, which reverses the alignment NOP-fill
+ORDER — short-first vs 2.41 long-first — seen in `pre_c_init` padding at .text
+start). gcc15==gcc14 for the CRT (byte-identical), so only binutils 2.41
+matters. winpthreads needs the CRT-aware variant (`mingwPthreadsStdenv`, libc =
+boot CRT) because it links a shared libwinpthread; bitcoind statically links
+the .a, so the shared-link CRT never reaches the binary. mingw_w64/pthreads
+also get FP-omit + hardeningDisable(zerocallusedregs…) overrides (GUIX builds
+the CRT with plain base-gcc, none of nixpkgs' wrapper injections).
+
+ROOT CAUSES FIXED (each verified at the byte/disasm level): bitcoind frame
+pointers (NoFp wrapper stripping BOTH `-fno-omit-frame-pointer` AND
+`-mno-omit-leaf-frame-pointer`; x86_64 -O2 omits both, upstream producer is
+flag-free); CRT/winpthreads frame pointers + `zerocallusedregs` (register-
+zeroing xors) + the binutils-2.41 NOP-fill order. After all fixes the startup
+(`pre_c_init`, long-first padding) and the bulk of .text/.rdata/.pdata match.
+
+REMAINING (NOT yet reproduced):
+- **Binaries**: residual ~96 B .text (+) / ~328 B .xdata (−) — a codegen size
+  delta in the CRT/winpthreads/early region (.pdata is size-identical, so SAME
+  function count; the .xdata delta points to a prologue/unwind difference in
+  some functions). Could not localize further: the .dbg path spellings differ
+  (not byte-matched) so function-level alignment is unreliable, and there is no
+  local GUIX *mingw* reference to diff against (same wall as the darwin
+  LC_UUID). Likely a subtle GUIX-vs-nixpkgs mingw-w64 12.0.0 CRT/winpthreads
+  build-flag difference (e.g. GUIX's make `DEFS=-DHAVE_CONFIG_H
+  -D__MINGW_HAS_DXSDK=1`, or a configure flag).
+- **.dbg byte-repro** (needed for unsigned.zip — the stripped .exe embeds the
+  `.gnu_debuglink` CRC of the .dbg): CRT/winpthreads need `-g` +
+  `-fdebug-prefix-map` to GUIX ephemeral
+  `/tmp/guix-build-mingw-w64-x86_64-winpthreads-12.0.0.drv-0/mingw-w64-v12.0.0/{mingw-w64-crt,mingw-w64-libraries/winpthreads}`;
+  libgcc `-g`+map (`/tmp/guix-build-gcc-cross-x86_64-w64-mingw32-14.3.0.drv-0/build/x86_64-w64-mingw32/libgcc`);
+  bitcoin CUs already map via `/build/bitcoin-31.0`→`${distsrc}/build/src`;
+  toolchain header maps → /usr. See `tmpdiff/dbg-paths.txt`.
+- **NSIS** `win64-setup-unsigned.exe` (cmake `deploy` target → makensis; pin
+  nsis to GUIX's **3.10**, nixpkgs ships 3.11) + `win64-codesigning.tar.gz`.
+- **Signing** (`win64-setup.exe`, `win64.zip`): osslsigncode 2.5 + win detached
+  sigs from bitcoin-core/bitcoin-detached-sigs v31.0 — analogous to the darwin
+  signed-artifacts flow.
+
+Attrs: `.#mingwGuixGcc{,NoFp}`, `.#mingwBinutils241`, `.#dependsMingw`,
+`.#bitcoindMingw` (gated, FAILS until the residual closes), `.#bitcoindMingwNoGate`
+(builds; for diffing), `.#unsignedZipMingw` / `.#debugZipMingw` (gated).
+
+
 ## Status (2026-06-13): darwin x86_64 -unsigned artifacts REPRODUCE — all 10 binaries + .tar.gz + .zip; qt/gui LC_UUID patched
 
 The full x86_64-apple-darwin `-unsigned` set byte-matches upstream:
