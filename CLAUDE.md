@@ -100,6 +100,10 @@ fccf54f3…  -codesigning.tar.gz      955563c7…
   binaries are already upstream-identical, applying upstream's detached
   sigs reproduces the signed bytes exactly — confirmed for all four.
 
+CI: two new x86_64-runner jobs `build-darwin-x86` / `build-darwin-arm64`
+each build the full chain for one host and re-assert all 5 artifact
+hashes (they push to Cachix like every other target).
+
 Issue #6 remaining: win64 only.
 
 ## Status (2026-06-12, evening): macOS started — clang/lld 19.1.4 toolchain pinned, SDK staged, plan laid out
@@ -169,8 +173,7 @@ LIBRARY_PATH=$NATIVE_GCC/lib for native packages, /bitcoin/depends/
 deploy target for the app zip, SOURCE_DATE_EPOCH=1776286524); then the
 unsigned artifact assembly + gates; then signapple + detached-sigs for
 the signed artifacts. Risk #1 is Qt 6.8.3-darwin cross in the Nix
-sandbox (expect posix_shm-style feature-check divergences). NOTE: the
-SDK (and anything embedding it) must not be pushed to public Cachix.
+sandbox (expect posix_shm-style feature-check divergences).
 
 ## Status (2026-06-12, night): darwin x86_64 ROUND 1 — within 8 bytes on 7/10 binaries; all three root causes identified, round 2 in flight
 
