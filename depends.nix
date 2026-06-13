@@ -44,6 +44,25 @@ let
   dependsDir = "bitcoin-${version}/depends";
 
   isDarwin = lib.hasInfix "-apple-darwin" hostTriple;
+  isMingw = lib.hasInfix "mingw" hostTriple;
+
+  # GUIX build.sh:81 exports LIBRARY_PATH=$NATIVE_GCC/lib for the whole
+  # mingw DEPENDS build ("Required for native packages"). NATIVE_GCC is
+  # GUIX's gcc-toolchain — a UNION of gcc AND glibc. Unlike darwin (whose
+  # ld64.lld chokes on glibc's unversioned compat symlinks, so those are
+  # removed — see darwinLibraryPathDir), the mingw native tools link with
+  # the ordinary GNU ld on the build host, which needs those linker-name
+  # symlinks (libpthread.so → .so.0 etc.) to resolve -lpthread. So this is
+  # the FULL gcc+glibc lib union with nothing removed.
+  nativeLibraryPathDir = runCommand "guix-gcc-toolchain-lib-union-full" { } ''
+    mkdir -p $out/lib
+    for f in ${gcc14Stdenv.cc.cc.lib}/lib/*; do
+      ln -sfn "$f" "$out/lib/$(basename "$f")"
+    done
+    for f in ${gcc14Stdenv.cc.libc}/lib/*; do
+      ln -sfn "$f" "$out/lib/$(basename "$f")"
+    done
+  '';
 
   # The LIBRARY_PATH dir for the darwin depends build (see the env block
   # below for why LIBRARY_PATH is set at all). GUIX points it at ONE dir:
@@ -410,6 +429,10 @@ gcc14Stdenv.mkDerivation (rec {
     # like GUIX's (see darwinLibraryPathDir above for why the raw
     # gcc/glibc lib dirs won't do).
     LIBRARY_PATH = "${darwinLibraryPathDir}/lib";
+  } // lib.optionalAttrs isMingw {
+    # build.sh:81 — same LIBRARY_PATH export for mingw native packages
+    # (full gcc+glibc union; see nativeLibraryPathDir).
+    LIBRARY_PATH = "${nativeLibraryPathDir}/lib";
   };
 
   # Disable nixpkgs hardenings that GUIX's toolchain doesn't apply to
@@ -474,7 +497,7 @@ gcc14Stdenv.mkDerivation (rec {
   preBuild = ''
     unset CC CXX AR RANLIB NM STRIP OBJCOPY OBJDUMP
   '';
-} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple && !isDarwin) {
+} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple && !isDarwin && !isMingw) {
   # x86_64-target cross builds only (on a non-x86 build machine the make
   # conditional below is false and the sed is a harmless no-op):
   # hosts/linux.mk special-cases an x86 build machine —
@@ -538,6 +561,27 @@ gcc14Stdenv.mkDerivation (rec {
     sed -i 's|^\$(package)_cmake_opts += -DQT_NO_APPLE_SDK_MAX_VERSION_CHECK=ON$|&\n$(package)_cmake_opts += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
       packages/qt.mk
     grep -q 'CMAKE_SYSTEM_IGNORE_PATH' packages/qt.mk || { echo "qt.mk ignore-path sed failed"; exit 1; }
+  '';
+} // lib.optionalAttrs isMingw {
+  # mingw: same BUILD-glibc find_library leak as darwin. In the Nix sandbox
+  # CMake's find_library derives search prefixes from $PATH and reaches the
+  # stdenv glibc, so Qt's FindWrapRt finds the ELF librt.so and tries to
+  # build a WrapRt::WrapRt target around it — which then fails for the
+  # Windows target ("Target Core links to WrapRt::WrapRt but the target was
+  # not found"), aborting Qt configure. In GUIX's container the same probe
+  # finds NO unversioned librt.so (glibc 2.39 ships none), so WrapRt is an
+  # empty interface target and Core links fine. Hide the one ELF dir that
+  # satisfies the lookup (CMAKE_SYSTEM_IGNORE_PATH) — outcome-identical, the
+  # same fix as the darwin block. NO posix-shm/sem preseed: Windows Qt uses
+  # the win32 shared-memory backend, so QT_FEATURE_posix_shm/sem stay OFF
+  # like upstream.
+  postPatch = ''
+    sed -i 's|^\$(1)_cmake += -DCMAKE_SYSTEM_NAME=\$(\$(host_os)_cmake_system_name)$|&\n$(1)_cmake += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
+      funcs.mk
+    grep -q 'CMAKE_SYSTEM_IGNORE_PATH' funcs.mk || { echo "funcs.mk ignore-path sed failed"; exit 1; }
+    sed -i 's|^\$(package)_cmake_opts += -DCMAKE_SYSTEM_NAME=\$(\$(host_os)_cmake_system_name)$|&\n$(package)_cmake_opts += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
+      packages/qt.mk
+    grep -q 'CMAKE_SYSTEM_IGNORE_PATH' packages/qt.mk || { echo "qt.mk mingw ignore-path sed failed"; exit 1; }
   '';
 } // lib.optionalAttrs (crossInputs != [ ] && !lib.hasPrefix "x86_64" hostTriple && !isDarwin) {
   # Non-x86 LINUX cross builds (aarch64/riscv64/armhf/powerpc64): same Qt posix

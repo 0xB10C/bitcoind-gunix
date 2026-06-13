@@ -37,7 +37,10 @@
             dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
             tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
             signapple detachedSigs
-            codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64;
+            codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64
+            mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw
+            mingwCrtStdenv
+            bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw;
           default = drvs.bitcoind;
         });
     };
