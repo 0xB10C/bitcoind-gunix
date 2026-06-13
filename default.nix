@@ -1617,6 +1617,16 @@ let
       "--with-as=${mingwCrtBinutils241}/bin/${mingwTriple}-as"
       "--with-ld=${mingwCrtBinutils241}/bin/${mingwTriple}-ld"
     ];
+    # HAVE_GAS_CFI_DIRECTIVE=1 (see mingwGuixGcc) so the CRT/winpthreads
+    # .debug_frame is gas-generated (CIE v1, RA col 32), matching upstream.
+    preConfigure = (old.preConfigure or "") + ''
+      export OBJDUMP_FOR_TARGET=${mingwCrtBinutils241}/bin/${mingwTriple}-objdump
+      export gcc_cv_objdump=${mingwCrtBinutils241}/bin/${mingwTriple}-objdump
+      export gcc_cv_as_cfi_directive=yes
+      export gcc_cv_as_cfi_advance_working=yes
+        export gcc_cv_as_cfi_personality_directive=yes
+        export gcc_cv_as_cfi_sections_directive=yes
+    '';
   });
   # NOLIBC stdenv for the CRT (mingw_w64) itself — it only emits .o/.a, no
   # shared link, so it can't (and mustn't) depend on a target libc.
@@ -1791,6 +1801,21 @@ let
       ];
       patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
       dontStrip = true;
+      # gcc's configure decides HAVE_GAS_CFI_DIRECTIVE by running the CROSS
+      # objdump on a test .o ("working cfi advance" check). Without a working
+      # objdump it errs to 0 → gcc emits .debug_frame DIRECTLY (CIE v3, RA col
+      # 16) instead of via gas .cfi (CIE v1, RA col 32 — what GUIX's gcc, which
+      # had objdump, produces). Point OBJDUMP_FOR_TARGET at the cross objdump so
+      # the check passes and .debug_frame matches upstream. (Only affects
+      # .debug_frame in the .dbg, not the SEH .xdata in the stripped binary.)
+      preConfigure = (old.preConfigure or "") + ''
+        export OBJDUMP_FOR_TARGET=${mingwBinutils241}/bin/${mingwTriple}-objdump
+        export gcc_cv_objdump=${mingwBinutils241}/bin/${mingwTriple}-objdump
+        export gcc_cv_as_cfi_directive=yes
+        export gcc_cv_as_cfi_advance_working=yes
+        export gcc_cv_as_cfi_personality_directive=yes
+        export gcc_cv_as_cfi_sections_directive=yes
+      '';
       # libgcc's debug info (which strip moves into each .dbg) must carry GUIX's
       # paths: comp_dir at the ephemeral gcc build dir, and the mingw headers it
       # includes mapped to /usr (GUIX's /gnu/store→/usr). Same preBuild pattern
