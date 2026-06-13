@@ -63,11 +63,44 @@ finished it:
   deterministically with the same cmake/script/macos_zip.sh
   (SOURCE_DATE_EPOCH touch + find|sort|zip -X@).
 
-Outstanding for darwin: arm64 mirror (building — depends rebuilt for the
-LIBRARY_PATH-union change), then the SIGNED artifacts (signapple +
-bitcoin-core/bitcoin-detached-sigs) and -codesigning.tar.gz; the UUID
-patch already makes the to-be-signed binaries upstream-identical so the
-detached sigs will apply cleanly. After darwin: win64.
+## Status (2026-06-13, later): ALL 10 darwin artifacts REPRODUCE — both arches, incl. -codesigning + SIGNED
+
+macOS is DONE. Both arm64 and x86_64 now reproduce all FIVE published
+artifacts each (10 total): -unsigned.tar.gz, -unsigned.zip,
+-codesigning.tar.gz, signed .tar.gz, signed .zip — every one byte-matches
+upstream's SHA256SUMS and self-gates:
+
+```
+x86_64                              arm64
+fccf54f3…  -codesigning.tar.gz      955563c7…
+56824dd7…  signed .tar.gz           a2d7a13b…
+8e230f36…  signed .zip              fc119a34…
+(+ the -unsigned.tar.gz/.zip from the prior status section)
+```
+
+- **signapple.nix** packages GUIX's exact signing toolchain: signapple
+  @85bfcec + elfesteem @2eb1e53 (GUIX overrides signapple's own pyproject
+  elfesteem pin, so we do too) + the achow101 **certvalidator FORK**
+  @a145bf25 (signapple's `apply` verifies the result, hitting
+  ValidationContext(additional_critical_extensions=…) which stock
+  certvalidator lacks — stock fails with TypeError); asn1crypto + oscrypto
+  1.3.0 from nixpkgs. Pure python, runs on Linux (no macOS APIs on the
+  apply path). `.#signapple`.
+- **detachedSigs** = bitcoin-core/bitcoin-detached-sigs @v31.0 (c88e80d8);
+  osx/<host>/{bitcoin-31.0/{bin,libexec}/*.<arch>sign, dist/Bitcoin-Qt.app/…}.
+- **darwin-codesigning.nix** assembles the -codesigning.tar.gz =
+  unsigned-app/{detached-sig-create.sh, dist/Bitcoin-Qt.app, bitcoin-31.0/}
+  (the bitcoin-31.0/ tree is byte-for-byte the -unsigned.tar.gz content, so
+  it's extracted from the already-verified tarballDarwin), same
+  deterministic find|sort|tar --mode|gzip -9n as the release archives.
+- **darwin-signed.nix** mirrors codesign.sh: extract the codesigning
+  tarball, `signapple apply` the app bundle + each binary in place, then
+  the signed .zip (find|sort|zip -X@ over dist/) and signed .tar.gz
+  (find|sort|tar over bitcoin-31.0/). Because the UUID-patched unsigned
+  binaries are already upstream-identical, applying upstream's detached
+  sigs reproduces the signed bytes exactly — confirmed for all four.
+
+Issue #6 remaining: win64 only.
 
 ## Status (2026-06-12, evening): macOS started — clang/lld 19.1.4 toolchain pinned, SDK staged, plan laid out
 

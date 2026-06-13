@@ -1505,6 +1505,50 @@ let
     arch = "arm64-apple-darwin";
     expectedSha256 = "b639946d343114cca5d87b218aaece04d0d111374b725d90dffc7e2d1d3b99f5";
   };
+
+  # --- darwin signed artifacts -------------------------------------------
+  # signapple (+ its elfesteem) pinned to GUIX's manifest, and the v31.0
+  # detached signatures. These reproduce the -codesigning.tar.gz and the
+  # SIGNED .tar.gz/.zip (the UUID-patched unsigned binaries are already
+  # upstream-identical, so applying upstream's detached sigs reproduces the
+  # signed bytes).
+  signapple = pkgs.callPackage ./signapple.nix { };
+  detachedSigs = pkgs.fetchFromGitHub {
+    owner = "bitcoin-core";
+    repo = "bitcoin-detached-sigs";
+    rev = "c88e80d81ef94f7950dbf9a8b8d4b3f4407f150d"; # v31.0
+    hash = "sha256-j4vVHmRl61hNmqRdrW6dNZnkAPJqrxd0EQvrVZGFng4=";
+  };
+  codesigningDarwinX86 = pkgs.callPackage ./darwin-codesigning.nix {
+    inherit version url sha256;
+    host = "x86_64-apple-darwin";
+    bitcoindDarwin = bitcoindDarwinX86;
+    unsignedTarball = tarballDarwinX86;
+    expectedSha256 = "fccf54f31bd58a3f834add05fa5df36520313d936445c556be8f71ccf314b658";
+  };
+  codesigningDarwinArm64 = pkgs.callPackage ./darwin-codesigning.nix {
+    inherit version url sha256;
+    host = "arm64-apple-darwin";
+    bitcoindDarwin = bitcoindDarwinArm64;
+    unsignedTarball = tarballDarwinArm64;
+    expectedSha256 = "955563c720b4d5fc22a11d4b102940d605f1cb9eb0b564f50deb606412c631e5";
+  };
+  signedDarwinX86 = pkgs.callPackage ./darwin-signed.nix {
+    inherit version signapple detachedSigs;
+    host = "x86_64-apple-darwin";
+    arch = "x86_64";
+    codesigningTarball = codesigningDarwinX86;
+    expectedTarballSha256 = "56824dd705bc2a3b22d42e8aa02ed53498d491ff7c2c8aa96831333871887ead";
+    expectedZipSha256 = "8e230f36a2020072763adf742b20d95348cb20aaa0b0a918ca44ecdc83ac4efd";
+  };
+  signedDarwinArm64 = pkgs.callPackage ./darwin-signed.nix {
+    inherit version signapple detachedSigs;
+    host = "arm64-apple-darwin";
+    arch = "arm64";
+    codesigningTarball = codesigningDarwinArm64;
+    expectedTarballSha256 = "a2d7a13b4da53d4a3e4c517f3a0269e2429813417bb320d3b268993cfdc545d0";
+    expectedZipSha256 = "fc119a34915daac57e5fbdf181c9295d862d6843d52a9380e39dc0d0ac69cf20";
+  };
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
     debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
@@ -1514,5 +1558,7 @@ in {
     crossGlibc231 crossGlibc231X86 crossGuixGccX86
     llvmPackages1914 clangDarwin lldDarwin llvmDarwin darwinSdk
     dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
-    tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64;
+    tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
+    signapple detachedSigs
+    codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64;
 }
