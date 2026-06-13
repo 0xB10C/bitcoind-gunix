@@ -252,6 +252,94 @@ jobs:
           echo "debug actual:   $actual"
           [ "$actual" = "$expected" ]
 
+  # The two macOS releases, cross-built on the same x86_64 runner with the
+  # bare clang/lld 19.1.4 toolchain + the Xcode SDK (fetched from the public
+  # bitcoincore.org mirror). Each job builds the full chain for one host —
+  # all five published artifacts (-unsigned.tar.gz/.zip, -codesigning.tar.gz,
+  # signed .tar.gz/.zip) — every one self-gating against the upstream GUIX
+  # v31.0 hashes, then re-asserts them externally for log visibility. The
+  # bitcoind step builds inside an unshare/userns chroot (for byte-identical
+  # LC_UUIDs); GitHub's ubuntu runners allow the nested user namespace the
+  # Nix sandbox needs for it. The SDK-embedding closures ARE pushed to
+  # Cachix (the SDK is already public on the depends-sources mirror).
+  build-darwin-x86:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#tarballDarwinX86 -o result-unsigned-tar --print-build-logs
+      - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
+      - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
+      - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
+      - name: Verify all 5 x86_64-apple-darwin artifacts match upstream GUIX v31.0
+        run: |
+          declare -A expected=(
+            [result-unsigned-tar]=d1d0174f07cf87d9af4318f7072350510fa0f1bf8d3d3b1ee7143ad5967b6bdf
+            [result-unsigned-zip]=b8d9b9915a1871ee12a3a9883fd47860028454fcd192864735f2e0d3a88b4735
+            [result-codesigning]=fccf54f31bd58a3f834add05fa5df36520313d936445c556be8f71ccf314b658
+            [result-signed/bitcoin-31.0-x86_64-apple-darwin.tar.gz]=56824dd705bc2a3b22d42e8aa02ed53498d491ff7c2c8aa96831333871887ead
+            [result-signed/bitcoin-31.0-x86_64-apple-darwin.zip]=8e230f36a2020072763adf742b20d95348cb20aaa0b0a918ca44ecdc83ac4efd
+          )
+          rc=0
+          for f in "${!expected[@]}"; do
+            actual=$(sha256sum "$f" | cut -d' ' -f1)
+            if [ "$actual" = "${expected[$f]}" ]; then
+              echo "OK:   $f"
+            else
+              echo "FAIL: $f  expected ${expected[$f]}  actual $actual"; rc=1
+            fi
+          done
+          exit $rc
+
+  build-darwin-arm64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#tarballDarwinArm64 -o result-unsigned-tar --print-build-logs
+      - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
+      - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
+      - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
+      - name: Verify all 5 arm64-apple-darwin artifacts match upstream GUIX v31.0
+        run: |
+          declare -A expected=(
+            [result-unsigned-tar]=48d34a140aeaacd63a4bd37c24ed1876df4b077c98a7e0dd9a4483d1032839f4
+            [result-unsigned-zip]=b639946d343114cca5d87b218aaece04d0d111374b725d90dffc7e2d1d3b99f5
+            [result-codesigning]=955563c720b4d5fc22a11d4b102940d605f1cb9eb0b564f50deb606412c631e5
+            [result-signed/bitcoin-31.0-arm64-apple-darwin.tar.gz]=a2d7a13b4da53d4a3e4c517f3a0269e2429813417bb320d3b268993cfdc545d0
+            [result-signed/bitcoin-31.0-arm64-apple-darwin.zip]=fc119a34915daac57e5fbdf181c9295d862d6843d52a9380e39dc0d0ac69cf20
+          )
+          rc=0
+          for f in "${!expected[@]}"; do
+            actual=$(sha256sum "$f" | cut -d' ' -f1)
+            if [ "$actual" = "${expected[$f]}" ]; then
+              echo "OK:   $f"
+            else
+              echo "FAIL: $f  expected ${expected[$f]}  actual $actual"; rc=1
+            fi
+          done
+          exit $rc
+
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
   # TARGET), so on this arm runner `.#tarballAarch64` is an aarch64
