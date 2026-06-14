@@ -16,6 +16,7 @@
 , crossInputs      # NoFp cross cc/bintools (x86_64-w64-mingw32-gcc/-objcopy/…)
 , guixGcc          # the unwrapped cross gcc — for header prefix-maps → /usr
 , mingwCrt         # the mingw-w64 CRT (msvcrt) store path — prefix-mapped → /usr
+, mingwPthreads    # the winpthreads store path — prefix-mapped → /usr
 , hostTriple       # "x86_64-w64-mingw32"
 , expectedHashes   # rel path -> upstream sha256 (8 binaries + 8 .dbg)
 , pname
@@ -35,8 +36,12 @@ let
   # the /usr map never touches them); we map our depends store path there.
   # No frame-pointer flag (crossInputs is the NoFp wrapper → bare -O2, x86_64
   # omits the FP by default like upstream).
+  # The depends→/bitcoin rewrite goes through the gcc canon env var
+  # (NIX_DEBUG_CANON_PREFIX_MAP below), NOT a -ffile-prefix-map — the latter's
+  # per-header ggc_alloc shifts var-tracking's loclist representative choice in
+  # the biggest CUs (−44 B .debug_loclists on bitcoind/-qt/test_bitcoin). Same
+  # canonDepends mechanism as the armhf/ppc64 linux targets.
   cflags = "-O2 -g -fno-ident"
-    + " -ffile-prefix-map=${depends}=/bitcoin/depends/${hostTriple}"
     # Toolchain headers → GUIX's /usr layout (its /gnu/store→/usr maps): the
     # libstdc++ headers map VERSION-LESS (gcc's --with-gxx-include-dir), the
     # mingw CRT headers (copied into sys-include) → /usr/include, gcc builtins
@@ -44,6 +49,13 @@ let
     + " -ffile-prefix-map=${guixGcc}/include/c++/14.3.0=/usr/include/c++"
     + " -ffile-prefix-map=${guixGcc}/${hostTriple}/sys-include=/usr/include"
     + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"
+    # The CRT/winpthreads headers reach the bitcoin compile via the final gcc's
+    # --with-native-system-header-dir = mingwLibc/include (a symlinkJoin); gcc
+    # realpaths each header through the join to its REAL component output, so it
+    # records ${mingwCrt.dev}/include and ${mingwPthreads}/include — NOT the
+    # ${guixGcc}/sys-include the map above expects. Map the components too → /usr.
+    + " -ffile-prefix-map=${mingwCrt.dev}/include=/usr/include"
+    + " -ffile-prefix-map=${mingwPthreads}/include=/usr/include"
     + " -fdebug-prefix-map=/build/bitcoin-${version}=${distsrc}"
     + " -fdebug-prefix-map=/build/bitcoin-${version}/src=.";
 
@@ -91,6 +103,11 @@ gcc14Stdenv.mkDerivation {
   env = {
     CFLAGS = cflags;
     CXXFLAGS = cflags;
+    # depends store path → GUIX's /bitcoin/depends/<host>, via the gcc canon
+    # mechanism (malloc'd rewrite, GGC-neutral; also hooks the macro map so
+    # depends __FILE__ strings still rewrite). gcc-debug-canon-prefix-map.patch
+    # is applied to mingwGuixGcc.
+    NIX_DEBUG_CANON_PREFIX_MAP = "${depends}=/bitcoin/depends/${hostTriple}";
     # build.sh mingw HOST_LDFLAGS (CMake reads LDFLAGS to seed the linker
     # flags). bitcoin's own CMakeLists adds -static / the subsystem-version
     # flags for MINGW, so build.sh sets no CMAKE_EXE_LINKER_FLAGS here.
