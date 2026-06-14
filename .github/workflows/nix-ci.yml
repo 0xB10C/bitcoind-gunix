@@ -259,9 +259,12 @@ jobs:
   # signed .tar.gz/.zip) — every one self-gating against the upstream GUIX
   # v31.0 hashes, then re-asserts them externally for log visibility. The
   # bitcoind step builds inside an unshare/userns chroot (for byte-identical
-  # LC_UUIDs); GitHub's ubuntu runners allow the nested user namespace the
-  # Nix sandbox needs for it. The SDK-embedding closures ARE pushed to
-  # Cachix (the SDK is already public on the depends-sources mirror).
+  # LC_UUIDs), which needs CLONE_NEWUSER; Ubuntu 24.04+'s AppArmor
+  # unprivileged_userns_restriction blocks that for unconfined processes
+  # (`unshare: write failed /proc/self/uid_map: Operation not permitted`), so
+  # each job first disables it via sysctl. The SDK-embedding closures ARE
+  # pushed to Cachix (the SDK is already public on the depends-sources
+  # mirror).
   build-darwin-x86:
     runs-on: ubuntu-latest
 
@@ -277,6 +280,8 @@ jobs:
         with:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - name: Allow unprivileged user namespaces (needed for the darwin chroot build)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: nix build .#tarballDarwinX86 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
@@ -316,6 +321,8 @@ jobs:
         with:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - name: Allow unprivileged user namespaces (needed for the darwin chroot build)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: nix build .#tarballDarwinArm64 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
