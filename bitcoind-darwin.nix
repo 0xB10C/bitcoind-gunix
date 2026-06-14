@@ -16,16 +16,30 @@
 # image contains the linker's debug-map stabs — N_SO (absolute source
 # paths) and N_OSO (absolute object/archive paths) for bitcoin's own
 # TUs — which the strip removes, leaving the UUID as a fossil of the
-# build paths. Round 1 measured 7 of 10 binaries diverging from upstream
-# in ONLY those UUID bytes. No flag can rewrite the stabs (they are
-# linker-recorded argv/compile paths, not DWARF), so the only way to
-# upstream's UUID is to make the unstripped image byte-identical: build
-# at GUIX's DISTSRC (/distsrc-base/distsrc-<ver>-<host>) with depends
-# visible at /bitcoin/depends/<host>. The Nix sandbox root is read-only,
-# but user namespaces ARE available inside the sandbox: unshare + a
-# bind-mounted new root + chroot recreate GUIX's path layout exactly.
-# (Only bitcoin's own TUs emit stabs — depends archives contribute none,
-# verified — so the DEPENDS build needs no such treatment.)
+# build paths. No flag can rewrite the stabs (they are linker-recorded
+# argv/compile paths, not DWARF), so the only way to upstream's UUID is
+# to make the unstripped image byte-identical: build at GUIX's DISTSRC
+# (/distsrc-base/distsrc-<ver>-<host>) with depends visible at
+# /bitcoin/depends/<host>. The Nix sandbox root is read-only, but user
+# namespaces ARE available inside the sandbox: unshare + a bind-mounted
+# new root + chroot recreate GUIX's path layout exactly. (Only bitcoin's
+# own TUs emit stabs — depends archives contribute none, verified — so
+# the DEPENDS build needs no such treatment.)
+#
+# With the chroot alone, 8 of 10 binaries matched upstream including
+# LC_UUID; bitcoin-qt/bitcoin-gui still diverged in their UUID. Root
+# cause: qtbase_plugins_cocoa.patch disables precompiled headers for
+# QCocoaIntegrationPlugin only when `CMAKE_VERSION VERSION_LESS "3.25"
+# AND NOT QT_FEATURE_sessionmanager` — bitcoin's qt.mk disables
+# sessionmanager unconditionally, so the guard reduces to the cmake
+# version check. GUIX builds depends with cmake-minimal 3.24.2 (guard
+# fires, PCH disabled); nixpkgs' cmake is >=3.25 (guard never fires, PCH
+# stays enabled). PCH usage doesn't change qnsview.mm's .text/.data but
+# shifts the unstripped image's Objective-C selector/class-ref symtab
+# numbering enough to flip LC_UUID. Fixed in depends.nix's darwin
+# postPatch: drop the `CMAKE_VERSION VERSION_LESS "3.25" AND ` clause so
+# PCH is disabled unconditionally, matching GUIX's effective cmake-3.24.2
+# behavior — a build-configuration fix, no byte/UUID patching needed.
 #
 # We bypass nixpkgs' cmake setup-hook entirely (dontUseCmakeConfigure):
 # it unconditionally injects -DCMAKE_C_COMPILER=$CC, which would override
@@ -47,28 +61,12 @@
 , crossInputs # clangDarwin/lldDarwin/llvmDarwin — bare tools on PATH
 , hostTriple # "x86_64-apple-darwin" | "arm64-apple-darwin"
 , expectedHashes # rel path -> upstream sha256 for all 10 binaries
-, uuidPatches # rel path -> upstream LC_UUID (32 hex chars) for qt + gui
 , withGate ? true # disable to keep diverging outputs for diffing
 , pname
 }:
 
 let
   distsrc = "/distsrc-base/distsrc-${version}-${hostTriple}";
-
-  # bitcoin-qt and bitcoin-gui come out byte-identical to upstream EXCEPT
-  # lld's 8-byte LC_UUID — an xxh3 of the UNSTRIPPED link-time image. The
-  # bytes that differ live entirely in the Qt symtab/stabs region that
-  # `cmake --install --strip` removes AFTER lld hashes it; reproducing
-  # GUIX's exact bytes there needs a GUIX darwin reference we don't have.
-  # We therefore copy upstream's literal UUID into these two binaries after
-  # the link (the darwin analog of the historical .gnu_debuglink CRC
-  # patch). This also makes the signed artifacts reproduce, since the
-  # detached-sig cdhash covers the UUID. patch-uuid.py walks the Mach-O
-  # load commands to LC_UUID (0x1b) and overwrites its 16 bytes.
-  patchOutCmds = lib.concatStringsSep "\n    " (lib.mapAttrsToList
-    (rel: hex: ''python3 "$NIX_BUILD_TOP/patch-uuid.py" "$out/${rel}" ${hex}'')
-    uuidPatches);
-  qtUuidHex = uuidPatches."bin/bitcoin-qt";
 in
 gcc14Stdenv.mkDerivation {
   inherit pname;
@@ -90,11 +88,6 @@ gcc14Stdenv.mkDerivation {
   # mount namespace lives only as long as the unshare invocation).
   buildPhase = ''
     runHook preBuild
-
-    # Mach-O LC_UUID patcher (see qtUuidHex/patchOutCmds note above).
-    # Shipped as a repo file (not an inline heredoc) so its column-0 python
-    # lines do not defeat this nix string's indentation stripping.
-    cp ${./patch-uuid.py} "$NIX_BUILD_TOP/patch-uuid.py"
 
     # The script that runs INSIDE the chroot, at GUIX's literal paths.
     # build.sh (darwin): no CC/CXX env for the cmake invocation and
@@ -134,9 +127,6 @@ gcc14Stdenv.mkDerivation {
     find build -name 'cmake_install.cmake' -exec sed -i 's| -u -r | |g' {} +
     cmake --install build --strip --prefix $out
 
-    # Patch the qt/gui LC_UUID to upstream's (see the note in the let block).
-    ${patchOutCmds}
-
     # The macOS app bundle: \`deploy\` installs the bitcoin-qt component
     # into dist/Bitcoin-Qt.app, runs macdeployqtplus (Qt translations,
     # plists; OBJDUMP=llvm-objdump comes from Maintenance.cmake) and
@@ -145,14 +135,6 @@ gcc14Stdenv.mkDerivation {
     # bitcoin-<ver>-<host>-unsigned.zip and the dist/ tree inside the
     # -codesigning.tar.gz.
     cmake --build build -j $NIX_BUILD_CORES --target deploy
-
-    # The deployed app's Bitcoin-Qt is byte-identical to bin/bitcoin-qt, so
-    # it carries the same diverging UUID. Patch it to upstream's and
-    # regenerate the app zip deterministically with the same macos_zip.sh
-    # the deploy target used (SOURCE_DATE_EPOCH touch + find|sort|zip -X@),
-    # so bitcoin-macos-app.zip (= the -unsigned.zip) matches upstream.
-    python3 "$NIX_BUILD_TOP/patch-uuid.py" \
-      build/dist/Bitcoin-Qt.app/Contents/MacOS/Bitcoin-Qt ${qtUuidHex}
 
     # macdeployqtplus copies Qt's translations (Contents/Resources/qt_*.qm)
     # straight from the read-only Nix store, so they land mode 0444 and zip

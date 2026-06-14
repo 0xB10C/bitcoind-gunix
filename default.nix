@@ -1428,19 +1428,6 @@ let
       "libexec/bitcoin-node" = "80f7b8184d420b9c8a4c4cf9211248dfb5aa571ee1d5b4a1b7cd2aed9186c972";
       "libexec/test_bitcoin" = "4f6a85f2ae6b2c5e405865d184cc8c4a2090ef2308c9339e7c7ee2ba162c5d5a";
     };
-    # bitcoin-qt and bitcoin-gui are byte-identical to upstream EXCEPT lld's
-    # 8-byte LC_UUID — an xxh3 of the UNSTRIPPED link-time image, whose
-    # strip-removed Qt symtab/stabs region differs from GUIX's in a way we
-    # cannot reproduce without a GUIX darwin reference (unavailable: no guix
-    # here, no darwin output in the local guix-build). Matching the UUID is
-    # also REQUIRED for the signed artifacts (the detached-sig cdhash covers
-    # it). So we copy upstream's literal UUID into exactly these two binaries
-    # post-link (the darwin analog of the historical .gnu_debuglink CRC
-    # patch). Values read from the upstream -unsigned.tar.gz binaries.
-    uuidPatches = {
-      "bin/bitcoin-qt" = "4c4c447055553144a1e1f35d6e3fd77f";
-      "libexec/bitcoin-gui" = "4c4c446c55553144a10b6656c86400b1";
-    };
   };
   bitcoindDarwinArm64 = pkgs.callPackage ./bitcoind-darwin.nix {
     inherit version url sha256;
@@ -1460,11 +1447,6 @@ let
       "libexec/bitcoin-gui" = "12d7e9299110f2c24293397c99c6a41a896d37a0482574a63690a8b2adc3f038";
       "libexec/bitcoin-node" = "194c86c913566b6288cd6754cc9840df6f9fa4f909ce62004fd52b63cd8b2364";
       "libexec/test_bitcoin" = "0b12e79748f53540606d5eb7915d99731ac824dd0c015121790f16863093ae6c";
-    };
-    # See the x86_64 block for why the qt/gui LC_UUID is patched to upstream's.
-    uuidPatches = {
-      "bin/bitcoin-qt" = "4c4c449d55553144a16f7c2beff98e6a";
-      "libexec/bitcoin-gui" = "4c4c44e255553144a1786f61b843876a";
     };
   };
   # The published darwin -unsigned artifacts. The -unsigned.tar.gz is
