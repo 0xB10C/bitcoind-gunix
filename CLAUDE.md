@@ -6,6 +6,65 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-14, win64): ALL 8 PE binaries + both .dbg + unsigned.zip + debug.zip REPRODUCE byte-for-byte — NSIS + signing remain
+
+`nix build .#bitcoindMingw` gates all 16 hashes (8 .exe + 8 .dbg, every one
+byte-identical to upstream), `.#unsignedZipMingw` assembles `win64-unsigned.zip`
+(`5ecd365b…`) and `.#debugZipMingw` `win64-debug.zip` (`df3f8c2f…`) — both
+byte-match. The `.dbg` byte-repro (which closed the 6-byte CheckSum/CRC residue
+on the stripped .exe) needed FIVE fixes, found by per-section/-CU diffing the
+`.dbg` against the local GUIX build (`bitcoin/guix-build-31.0/distsrc-31.0-
+x86_64-w64-mingw32`, which the user provided — its installed `.dbg` == published,
+its `.obj` survive for per-object diffing):
+
+1. **CRT/winpthreads DW_AT_producer** — drop the flags upstream's flag-free
+   base-gcc never records (uniform +86 B/crt-CU, +75 B/winpthreads-CU,
+   codegen-neutral since x86_64 -O2 already omits FP): build the CRT/winpthreads
+   with a **NoFp wrapper** (`stripMingwFpFlags` — strips the wrapper's
+   `-fno-omit-frame-pointer`/`-mno-omit-leaf-frame-pointer` instead of adding
+   `-fomit…` via NIX_CFLAGS, so no FP flag is recorded); drop our extra `-g` from
+   `mingwCrtDbgFlags` (the autoconf default `-g -O2` already supplies one);
+   strip `-frandom-seed` (reproducible-builds hook); `ac_cv_prog_cc_c23=no` so
+   autoconf 2.72's AC_PROG_CC doesn't append `-std=gnu23` to the crt's CC.
+2. **CRT/winpthreads header dir tables** — GUIX's make-mingw-w64 (mingw.scm
+   setenv phase) sets `CROSS_C_INCLUDE_PATH` to the IN-SOURCE split
+   `mingw-w64-headers/{,include,crt,defaults/include,direct-x/include}`, NOT
+   nixpkgs' MERGED `mingw_w64_headers` package. Mirror with `-isystem` in GUIX's
+   order (`mingwCrtHeaderInc`) so each header records the same split dir GUIX
+   does (corecrt.h→/crt, winnt.h→/include); the existing /build/mingw-w64-v12.0.0
+   → ephemeral map rewrites them.
+3. **gcc-builtin headers** — a few crt/winpthreads files pull `<xmmintrin.h>`
+   etc. from the boot gcc's lib/gcc/<triple>/14.3.0/include → map to
+   `/usr/lib/gcc/...` (added to `mingwCrtDbgFlags`).
+4. **bitcoin's own CU header paths** — the final gcc's
+   `--with-native-system-header-dir = mingwLibc/include` is a symlinkJoin; gcc
+   REALPATHS each header through it to the component output, recording
+   `${mingwCrt.dev}/include` + `${mingwPthreads}/include` (NOT
+   `${guixGcc}/sys-include`). Map both components → /usr/include in
+   bitcoind-win.nix.
+5. **COMDAT `.debug_frame$` selection** (last ~268 .dbg bytes) — the FINAL
+   binutils (`mingwBinutils241`) must NOT `--enable-compressed-debug-sections`:
+   with it, gas emits PE `.zdebug_frame$<mangled>` for C++ COMDAT FDEs while the
+   COMDAT group symbol stays `.debug_frame$<mangled>`; ld warns "COMDAT symbol
+   does not match section name" and drops the IMAGE_COMDAT_SELECT_ANY (comdat 2)
+   selection during cross-TU dedup → our COFF symtab had comdat 0 where upstream
+   has 2. Uncompressed = names match = selection preserved (GUIX's .obj confirm
+   uncompressed/comdat 2). (Linux .dbg ARE SHF_COMPRESSED so they keep the flag;
+   PE .dbg are not — the flag was wrong for mingw.)
+6. **.debug_loclists GGC poison on the 3 biggest binaries** (bitcoind/-qt/
+   test_bitcoin, −44 B) — the depends `-ffile-prefix-map`'s per-header ggc_alloc
+   shifts var-tracking's loclist representative choice (the armhf/ppc64 root
+   cause). Fix = the SAME `canonDepends`: `gcc-debug-canon-prefix-map.patch` on
+   `mingwGuixGcc` + route depends→/bitcoin through `NIX_DEBUG_CANON_PREFIX_MAP`
+   (malloc'd, GGC-neutral; v6 covers the __FILE__ macro too) in bitcoind-win.nix.
+
+(Earlier `.debug_frame` CIE-version + producer/header work — see the prior WIP
+section below for the full toolchain context.)
+
+REMAINING (issue #6 win64): NSIS `win64-setup-unsigned.exe` (`ad31d4d8…`, nsis
+3.10) + `win64-codesigning.tar.gz` (`62baf547…`); osslsigncode-signed
+`win64-setup.exe` (`1893e819…`) + `win64.zip` (`82fd2c50…`).
+
 ## Status (2026-06-13, win64 WIP): 8 PE binaries' CODE 100% byte-reproduced — only 6 .dbg-derived bytes differ (PE CheckSum + .gnu_debuglink CRC); .dbg/.zip/NSIS/signing remain
 
 bitcoin-cli.exe (and all 8) now differ from upstream in EXACTLY 6 bytes: the

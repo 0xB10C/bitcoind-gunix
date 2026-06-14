@@ -1630,15 +1630,28 @@ let
   });
   # NOLIBC stdenv for the CRT (mingw_w64) itself — it only emits .o/.a, no
   # shared link, so it can't (and mustn't) depend on a target libc.
+  # Strip the wrapper's -fno-omit-frame-pointer / -mno-omit-leaf-frame-pointer
+  # from a wrapped cc so the CRT/winpthreads build with the bare -O2 default
+  # (omit BOTH) — matching GUIX's flag-free base-gcc producer (NO frame-pointer
+  # flag recorded in DW_AT_producer) with byte-identical codegen (x86_64 -O2
+  # omits FP by default). Doing it via the wrapper (not NIX_CFLAGS) leaves the
+  # producer clean, like bitcoind's mingwGuixGccNoFp.
+  stripMingwFpFlags = wrappedCc: wrappedCc.overrideAttrs (o: {
+    postFixup = (o.postFixup or "") + ''
+      substituteInPlace $out/nix-support/cc-cflags-before \
+        --replace-fail "-fno-omit-frame-pointer" "" \
+        --replace-fail "-mno-omit-leaf-frame-pointer" ""
+    '';
+  });
   mingwCrtStdenv =
     let
       bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
         bintools = mingwCrtBinutils241;
       };
-      cc241 = mingwBootSet.stdenvNoLibc.cc.override {
+      cc241 = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
         cc = mingwCc14Unwrapped;
         bintools = bintools241;
-      };
+      });
     in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc cc241;
   # CRT-AWARE stdenv for winpthreads, which links a shared libwinpthread (needs
   # dllcrt2.o / -lmingw32 / -lmsvcrt …). Same clean wrapper + 2.41 as, but with
@@ -1652,12 +1665,12 @@ let
         bintools = mingwCrtBinutils241;
         libc = bootCrt;
       };
-      cc241 = mingwBootSet.stdenvNoLibc.cc.override {
+      cc241 = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
         cc = mingwCc14Unwrapped;
         bintools = bintools241;
         libc = bootCrt;
         noLibc = false;
-      };
+      });
     in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc cc241;
 
   pkgsCrossMingw = import pkgs.path {
@@ -1700,8 +1713,45 @@ let
           # 12.0.0.drv-0/mingw-w64-v12.0.0/{mingw-w64-crt,mingw-w64-libraries/
           # winpthreads}; nixpkgs builds at /build/mingw-w64-v12.0.0 (same shape),
           # so one prefix map covers both comp_dirs. dontStrip keeps the .o debug.
-          mingwCrtDbgFlags = " -g -fdebug-prefix-map=/build/mingw-w64-v12.0.0="
-            + "/tmp/guix-build-mingw-w64-x86_64-winpthreads-12.0.0.drv-0/mingw-w64-v12.0.0";
+          # Only the comp_dir prefix-map — NO -g here. The CRT/winpthreads
+          # autotools build already passes -g -O2 (autoconf default CFLAGS /
+          # the mingw makefiles), so adding our own -g would record a SECOND -g
+          # in DW_AT_producer (upstream has exactly one). dontStrip keeps the
+          # makefile-emitted debug info; the map rewrites its comp_dir to GUIX's.
+          mingwCrtDbgFlags = " -fdebug-prefix-map=/build/mingw-w64-v12.0.0="
+            + "/tmp/guix-build-mingw-w64-x86_64-winpthreads-12.0.0.drv-0/mingw-w64-v12.0.0"
+            # gcc builtin headers (xmmintrin.h, stddef.h, …) that a few CRT/
+            # winpthreads files pull resolve to the boot gcc's own
+            # lib/gcc/<triple>/14.3.0/include; upstream records them as
+            # /usr/lib/gcc/<triple>/14.3.0/include (GUIX's gcc store→/usr).
+            + " -ffile-prefix-map=${mingwCc14Unwrapped}/lib/gcc/${mingwTriple}/14.3.0/include"
+            + "=/usr/lib/gcc/${mingwTriple}/14.3.0/include";
+          # Drop the -frandom-seed=<out-hash> nixpkgs' reproducible-builds hook
+          # appends — it lands in DW_AT_producer (upstream has none). Codegen is
+          # unchanged (the stripped CRT already byte-matches with it present).
+          mingwCrtSeedStrip = ''
+            export NIX_CFLAGS_COMPILE=$(echo "$NIX_CFLAGS_COMPILE" | sed 's/-frandom-seed=[^ ]*//')
+          '';
+          # The CRT/winpthreads .debug_line directory tables must record the
+          # headers from the IN-SOURCE split tree (mingw-w64-headers/{include,
+          # crt,defaults/include,direct-x/include}), NOT nixpkgs' MERGED
+          # mingw_w64_headers package (one flat include/) — GUIX's make-mingw-w64
+          # sets CROSS_C_INCLUDE_PATH to exactly those source subdirs (mingw.scm
+          # setenv phase). Mirror it: -isystem the in-source dirs in GUIX's order
+          # so each header resolves to the same split dir GUIX records (corecrt.h
+          # → .../crt, winnt.h → .../include), searched BEFORE the boot gcc's
+          # baked sys-include (the merged headers, which then never resolve → are
+          # never recorded). The existing /build/mingw-w64-v12.0.0 → ephemeral map
+          # rewrites them to GUIX's /tmp/.../mingw-w64-headers/* spellings. Both
+          # the crt and winpthreads nixpkgs drvs unpack the full source, so
+          # /build/mingw-w64-v12.0.0/mingw-w64-headers is present in each.
+          mingwCrtHeaderInc =
+            let base = "/build/mingw-w64-v12.0.0/mingw-w64-headers";
+            in " -isystem ${base}"
+              + " -isystem ${base}/include"
+              + " -isystem ${base}/crt"
+              + " -isystem ${base}/defaults/include"
+              + " -isystem ${base}/direct-x/include";
           mingw_w64 = (wprev.mingw_w64.override { stdenv = mingwCrtStdenv; }).overrideAttrs (o: {
             hardeningDisable = (o.hardeningDisable or [ ]) ++ [
               "zerocallusedregs" "strictoverflow" "stackprotector"
@@ -1710,9 +1760,17 @@ let
             ];
             dontStrip = true;
             separateDebugInfo = false;
+            # ac_cv_prog_cc_c23=no: nixpkgs runs autoreconfHook, and autoconf
+            # 2.72's AC_PROG_CC appends -std=gnu23 to CC (the newest std the
+            # bootstrap gcc supports) → recorded in the crt's DW_AT_producer
+            # (the per-file -std=gnu99 wins for codegen, but gnu23 stays in the
+            # string). GUIX's older configure never probes C23. Same cache var
+            # as gawk530.
+            configureFlags = (o.configureFlags or [ ]) ++ [ "ac_cv_prog_cc_c23=no" ];
+            preConfigure = (o.preConfigure or "") + wfinal.mingwCrtSeedStrip;
             env = (o.env or { }) // {
               NIX_CFLAGS_COMPILE = (o.env.NIX_CFLAGS_COMPILE or "")
-                + " -fomit-frame-pointer -momit-leaf-frame-pointer" + wfinal.mingwCrtDbgFlags;
+                + wfinal.mingwCrtDbgFlags + wfinal.mingwCrtHeaderInc;
             };
           });
           pthreads = (wprev.pthreads.override { stdenv = mingwPthreadsStdenv; }).overrideAttrs (o: {
@@ -1723,9 +1781,11 @@ let
             ];
             dontStrip = true;
             separateDebugInfo = false;
+            configureFlags = (o.configureFlags or [ ]) ++ [ "ac_cv_prog_cc_c23=no" ];
+            preConfigure = (o.preConfigure or "") + wfinal.mingwCrtSeedStrip;
             env = (o.env or { }) // {
               NIX_CFLAGS_COMPILE = (o.env.NIX_CFLAGS_COMPILE or "")
-                + " -fomit-frame-pointer -momit-leaf-frame-pointer" + wfinal.mingwCrtDbgFlags;
+                + wfinal.mingwCrtDbgFlags + wfinal.mingwCrtHeaderInc;
             };
           });
         });
@@ -1769,9 +1829,18 @@ let
       sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
     };
     patches = [ ./patches/binutils-unaligned-default.patch ];
+    # NO --enable-compressed-debug-sections: GUIX's mingw binutils does NOT
+    # default-compress (its .obj carry plain .debug_*, verified in the local
+    # guix-build). With compression ON gas emits PE .zdebug_frame$<mangled> for
+    # C++ COMDAT FDEs while the COMDAT group symbol stays .debug_frame$<mangled>
+    # — ld warns "COMDAT symbol does not match section name" and, during
+    # cross-TU COMDAT dedup, drops the IMAGE_COMDAT_SELECT_ANY (comdat 2)
+    # selection on the kept section symbol → our .dbg COFF symtab had comdat 0
+    # where upstream has 2 (the last ~268 .dbg bytes). Uncompressed = names
+    # match = selection preserved. (Linux targets DO compress — their .dbg are
+    # SHF_COMPRESSED; PE .dbg are not, so this flag was wrong for mingw.)
     configureFlags =
-      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
-      ++ [ "--enable-compressed-debug-sections=all" ];
+      builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]);
   });
   mingwBintools241 = pkgsCrossMingw.stdenv.cc.bintools.override {
     bintools = mingwBinutils241;
@@ -1799,7 +1868,19 @@ let
         "--with-as=${mingwBinutils241}/bin/${mingwTriple}-as"
         "--with-ld=${mingwBinutils241}/bin/${mingwTriple}-ld"
       ];
-      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      # gcc-debug-canon-prefix-map.patch: route the depends→/bitcoin rewrite
+      # through NIX_DEBUG_CANON_PREFIX_MAP (malloc'd, GGC-neutral) instead of a
+      # -ffile-prefix-map. GUIX's depends live at the real /bitcoin/depends/<host>
+      # so NO map fires there; our -ffile-prefix-map's per-header ggc_alloc
+      # rewrites shift the GGC arena → var-tracking picks a different equivalent
+      # loclist representative in the biggest CUs (bitcoind/-qt/test_bitcoin),
+      # giving a −44 B .debug_loclists divergence. Same fix + patch as armhf/ppc64
+      # (see canonDepends in mkLinuxCrossTarget). v6 also hooks remap_macro_filename
+      # so the depends __FILE__ macros still rewrite (no raw store path in .rodata).
+      patches = (old.patches or [ ]) ++ [
+        ./patches/gcc-ssa-generation.patch
+        ./patches/gcc-debug-canon-prefix-map.patch
+      ];
       dontStrip = true;
       # gcc's configure decides HAVE_GAS_CFI_DIRECTIVE by running the CROSS
       # objdump on a test .o ("working cfi advance" check). Without a working
@@ -1829,8 +1910,13 @@ let
           "FLAGS_FOR_TARGET=$EXTRA_SANS_O2 $EXTRA_LDFLAGS_FOR_TARGET $GUIXMAPS"
         )
       '';
+      # Strip debug from the C++ runtime archives AND libssp: upstream's .dbg
+      # has none of their CUs (verified against the local GUIX win64 build —
+      # 0 ssp.c CUs). bitcoind statically links libssp's __*_chk /
+      # __stack_chk_fail (so the .text matches), but our -g leaves ssp.c /
+      # *-chk.c CUs in the .dbg that GUIX's stripped libssp lacks.
       postFixup = (old.postFixup or "") + ''
-        find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
+        find $out \( -name 'libstdc++*.a' -o -name 'libsupc++*.a' -o -name 'libssp*.a' \) | while read -r f; do
           ${mingwBinutils241}/bin/${mingwTriple}-objcopy \
             --enable-deterministic-archives --strip-debug "$f"
         done
@@ -1896,6 +1982,7 @@ let
     crossInputs = mingwCrossInputsNoFp;
     guixGcc = mingwGuixGcc.cc;
     mingwCrt = mingwCrt;
+    mingwPthreads = pkgsCrossMingw.windows.pthreads;
     hostTriple = mingwTriple;
     pname = "bitcoind-win64";
     expectedHashes = mingwExpectedHashes;
