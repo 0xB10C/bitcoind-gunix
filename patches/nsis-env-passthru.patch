@@ -1,0 +1,11 @@
+--- nsis-3.08-src/SConstruct	2021-01-15 17:31:10.000000000 +0100
++++ nsis-3.08-src/SConstruct-passthru	2022-08-02 17:11:12.414702282 +0200
+@@ -71,7 +71,7 @@
+ 
+ defenv = {
+ 	'TARGET_ARCH': ARGUMENTS.get('TARGET_ARCH', 'x86'),
+-	'ENV': {}
++	'ENV': os.environ.copy()
+ }
+ 
+ ######################################################################
