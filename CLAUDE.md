@@ -6,50 +6,55 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
-## Status (2026-06-14, win64 NSIS WIP): installer STUB byte-matches; setup.exe ~1041 B off (embedded-uninstaller .rsrc timestamp); gate OFF
+## Status (2026-06-14, win64 NSIS): setup-unsigned.exe REPRODUCES byte-for-byte — codesigning + signed setup remain
 
-The `win64-setup-unsigned.exe` (NSIS installer, `ad31d4d8…`) = a ~98 KB NSIS
-STUB + an LZMA-solid payload (the 7 stripped `.exe` we reproduce + COPYING/
-readme/conf/rpcauth/pixmaps). GUIX builds it with `cmake --build build -t
-deploy` → makensis (nsis-x86_64 **3.10**; gnu/packages/installers.scm
-`make-nsis`: native makensis + CROSS-compiled stubs). The stub is compiled by
-GUIX's **default** cross-gcc — `%xgcc` = gcc-11 = **11.4.0** (the stub's
-`.comment` reads "GCC: (GNU) 11.4.0"), NOT the bitcoin base-gcc 14.3.0 — with
-the default cross-binutils (2.41) + cross-libc (mingw-w64 12.0.0).
+`nix build .#setupExeMingw` produces `bitcoin-31.0-win64-setup-unsigned.exe`
+byte-identical to upstream (`ad31d4d8…`, gate now ON). The `win64-setup-
+unsigned.exe` (NSIS installer) = a ~98 KB NSIS STUB + an LZMA-solid payload
+(the 7 stripped `.exe` we reproduce + COPYING/readme/conf/rpcauth/pixmaps).
+GUIX builds it with `cmake --build build -t deploy` → makensis (nsis-x86_64
+**3.10**; gnu/packages/installers.scm `make-nsis`: native makensis +
+CROSS-compiled stubs). The stub is compiled by GUIX's **default** cross-gcc —
+`%xgcc` = gcc-11 = **11.4.0** (the stub's `.comment` reads "GCC: (GNU)
+11.4.0"), NOT the bitcoin base-gcc 14.3.0 — with the default cross-binutils
+(2.41) + cross-libc (mingw-w64 12.0.0).
 
-Wired up (uncommitted→committed this change): nixos-26.05 REMOVED gcc11, so a
-second flake input **`nixpkgs2405`** (nixos-24.05, gcc11 = 11.4.0; its mingw
-cross binutils is already 2.41) supplies it. `default.nix`: `nsisHeaders12Overlay`
-(pin mingw-w64 → 12.0.0), `nsisCrtBootSet` (a SEPARATE clean 24.05 import — the
-CRT compiler, to break the splice cycle "gcc11.libcCross = this CRT", same trick
-as `mingwBootSet`), `nsisCrtStdenv` (gcc 11.4.0 NoFp), `pkgsCrossMingwNsis`
-(mingw-w64 CRT REBUILT with `nsisCrtStdenv` + GUIX's bare-gcc hardeningDisable —
-else 24.05's default gcc 13.2.0 stamps the stub with "GCC 13.2.0"), `nsisGcc11`
-(NoFp gcc 11.4.0). `nsis310.nix` (GUIX's `make-nsis` scons flags; `nsis-env-
-passthru.patch`; preBuild `SOURCE_DATE_EPOCH=1` → version "v01-Jan-1970.cvs" +
-stub PE TimeDateStamp 1). `win-nsis.nix` (reproduces cmake `generate_setup_nsi`'s
+Wired up (`default.nix`): nixos-26.05 REMOVED gcc11, so a second flake input
+**`nixpkgs2405`** (nixos-24.05, gcc11 = 11.4.0; its mingw cross binutils is
+already 2.41) supplies it. `nsisHeaders12Overlay` (pin mingw-w64 → 12.0.0),
+`nsisCrtBootSet` (a SEPARATE clean 24.05 import — the CRT compiler, to break
+the splice cycle "gcc11.libcCross = this CRT", same trick as `mingwBootSet`),
+`nsisCrtStdenv` (gcc 11.4.0 NoFp), `pkgsCrossMingwNsis` (mingw-w64 CRT REBUILT
+with `nsisCrtStdenv` + GUIX's bare-gcc hardeningDisable + `--with-default-
+msvcrt=msvcrt` (24.05's mingw_w64 recipe defaults msvcrt builds to UCRT in
+12.0.0; force msvcrt.dll like GUIX's gcc-11 CRT) — else 24.05's default gcc
+13.2.0 stamps the stub with "GCC 13.2.0"), `nsisGcc11` (NoFp gcc 11.4.0).
+`nsis310.nix` (GUIX's `make-nsis` scons flags; `nsis-env-passthru.patch`;
+preBuild `SOURCE_DATE_EPOCH=1` → version "v01-Jan-1970.cvs" + stub COFF PE
+TimeDateStamp 1; buildPhase wraps the whole scons build in `faketime -f
+"1970-01-01 00:00:01"` (epoch+1, using `pkgs2405.libfaketime` for glibc-ABI
+compatibility with the 24.05 toolchain) so `ld`'s PE `.rsrc`
+IMAGE_RESOURCE_DIRECTORY.TimeDateStamp — written via `time(NULL)`, a separate
+field from the COFF ts and NOT covered by SOURCE_DATE_EPOCH — also comes out
+deterministic). `win-nsis.nix` (reproduces cmake `generate_setup_nsi`'s
 `@VAR@` substitution by hand — verified BYTE-IDENTICAL to GUIX's generated
-`.nsi` after path-normalize — then `makensis -V2`).
+`.nsi` after path-normalize — then `makensis -V2`; also strips
+`.gnu_debuglink` from each release `.exe` via `mingwBinutils241 objcopy`
+under the same frozen faketime, reproducing GUIX's `deploy` target which
+strips the cmake build-tree binary directly, before split-debug ever added
+that section).
 
-DONE: the ENTIRE installer stub (exehead, ~98 KB) byte-matches upstream through
-file offset 0x2A018 (all embedded `.comment`s are 11.4.0 — the gcc 11.4.0 CRT
-fix removed the residual 13.2.0). The `.nsi` matches.
+DONE: the entire installer stub (exehead, ~98 KB) + the embedded uninstaller
++ both NSIS plugin DLLs + all 7 bundled release `.exe` byte-match upstream;
+the decompressed LZMA-solid payload is byte-identical
+(108573603 bytes); overall sha256 == `ad31d4d8…`. Attrs: `.#nsis310`,
+`.#nsisGcc11`, `.#setupExeMingw` (gated, asserts `ad31d4d8…`).
 
-REMAINING (+1041 B, gate OFF): the EMBEDDED UNINSTALLER's `.rsrc`
-IMAGE_RESOURCE_DIRECTORY TimeDateStamp (at uninst-PE offset 0x2804) is the
-BUILD TIME in ours (so also NON-deterministic) vs `1` upstream; it cascades
-through the LZMA stream. The uninstaller's PE *COFF* TimeDateStamp is already
-correct (1 — makensis/ld set it from SOURCE_DATE_EPOCH=1). NSIS 3.10 has NO
-SOURCE_DATE_EPOCH support (the version string + COFF ts come from scons/ld
-externally); `windres` alone yields a deterministic resource ts (tested), so a
-later nsis310 step (ld or makensis's CResourceEditor re-stamping the uninst
-stub's resource dir) bakes in build-time. `makensis` PARSES the uninst stub's
-resource dir and PRESERVES its ts on save (ResourceEditor.cpp:1280
-`m_rdDir = *prd`; new dirs are 0 via line 365's commented `time(0)`). NEXT:
-find/force that step to a deterministic value (=1). Then NSIS done →
-codesigning.tar.gz (`62baf547…`) + osslsigncode signed setup.exe (`1893e819…`)
-+ win64.zip (`82fd2c50…`). Attrs: `.#nsis310`, `.#nsisGcc11`,
-`.#setupExeMingw{,NoGate}` (gate currently OFF).
+NEXT: `win64-codesigning.tar.gz` (`62baf547…`) + osslsigncode-signed
+`win64-setup.exe` (`1893e819…`) + signed `win64.zip` (`82fd2c50…`) — the win64
+analog of the darwin signing flow (signapple.nix / detachedSigs already
+established for darwin, but win64 signing uses osslsigncode + Authenticode,
+not signapple).
 
 ## Status (2026-06-14, win64): ALL 8 PE binaries + both .dbg + unsigned.zip + debug.zip REPRODUCE byte-for-byte — NSIS + signing remain
 
