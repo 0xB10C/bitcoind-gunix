@@ -6,6 +6,49 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-14, win64 + PROJECT COMPLETE): ALL v31.0 win64 artifacts reproduce — issue #6 DONE, every target byte-identical
+
+win64 is now fully reproduced: all 6 published artifacts byte-match
+upstream's SHA256SUMS:
+
+- `bitcoin-31.0-win64-unsigned.zip` (`5ecd365b…`)
+- `bitcoin-31.0-win64-debug.zip` (`df3f8c2f…`)
+- `bitcoin-31.0-win64-setup-unsigned.exe` (`ad31d4d8…`)
+- `bitcoin-31.0-win64-codesigning.tar.gz` (`62baf547…`)
+- signed `bitcoin-31.0-win64-setup.exe` (`1893e819…`)
+- signed `bitcoin-31.0-win64.zip` (`82fd2c50…`)
+
+`win-codesigning.nix` (`.#codesigningMingw`) assembles the codesigning
+tarball — `windeploy/{detached-sig-create.sh, win-codesign.cert, unsigned/
+{bitcoin-31.0-win64-setup-unsigned.exe, bitcoin-31.0/…}}` (the same tree as
+`-unsigned.zip`'s `bitcoin-31.0/`, minus `.dbg`), packed with the same
+`find|sort|tar|gzip -9n` as the release archives. Byte-matched on the first
+build.
+
+`win-signed.nix` (`.#signedMingw`) mirrors `codesign.sh`'s `*mingw*)` case:
+extracts the codesigning tarball, applies `bitcoin-detached-sigs`' v31.0
+`.pem` signatures (9 total: setup + 7 `bin/*.exe` + `libexec/test_bitcoin.exe`)
+via `osslsigncode attach-signature`, moves the signed setup.exe out, and
+`find|sort|zip -X@`s the signed `bitcoin-31.0/` tree. Both outputs
+byte-matched on the first build. Two findings:
+
+- **osslsigncode pinned to GUIX's 2.5** (`osslsigncode25` —
+  `pkgs.osslsigncode.overrideAttrs` with `fetchFromGitHub rev="2.5"`;
+  nixpkgs ships 2.13). attach-signature's PE-patching (cert-table RVA/size
+  write + checksum recompute) is version-sensitive.
+- **`-CAfile` is a no-op for output bytes**: `append_signature` +
+  `update_data_size` (checksum recompute) run BEFORE the post-attach
+  `check_attached_data`/`verify_signature` step, and on verification
+  failure the already-written output is KEPT (only the exit code goes
+  nonzero) — so `${cacert}/etc/ssl/certs/ca-bundle.crt` + `|| true` suffices
+  regardless of whether the chain validates against it.
+
+Issue #6 — and the whole multi-arch reproduction project — is now COMPLETE:
+every published artifact of `x86_64-linux-gnu`, `aarch64-linux-gnu`,
+`riscv64-linux-gnu`, `armhf`, `powerpc64-linux-gnu`, `x86_64-apple-darwin`,
+`arm64-apple-darwin`, and `x86_64-w64-mingw32` (incl. all signed/codesigning
+variants) byte-matches upstream's GUIX v31.0 release.
+
 ## Status (2026-06-14, win64 NSIS): setup-unsigned.exe REPRODUCES byte-for-byte — codesigning + signed setup remain
 
 `nix build .#setupExeMingw` produces `bitcoin-31.0-win64-setup-unsigned.exe`

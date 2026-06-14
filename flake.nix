@@ -48,7 +48,8 @@
             mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw
             mingwCrtStdenv mingwCrt
             bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-            nsisGcc11 nsis310 setupExeMingw
+            nsisGcc11 nsis310 setupExeMingw codesigningMingw
+            osslsigncode25 signedMingw
             pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
           default = drvs.bitcoind;
         });

@@ -340,6 +340,53 @@ jobs:
           done
           exit $rc
 
+  # win64 (x86_64-w64-mingw32): the last issue-#6 target. bitcoindMingw's
+  # postFixup gates all 16 hashes (8 PE binaries + 8 .dbg); the steps below
+  # build + assert the 6 published archive/installer artifacts (unsigned +
+  # debug zips, NSIS installer, codesigning tarball, signed installer +
+  # signed zip).
+  build-win64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix build .#bitcoindMingw -o result-bitcoind --print-build-logs
+      - run: nix build .#unsignedZipMingw -o result-unsigned-zip --print-build-logs
+      - run: nix build .#debugZipMingw -o result-debug-zip --print-build-logs
+      - run: nix build .#setupExeMingw -o result-setup-unsigned --print-build-logs
+      - run: nix build .#codesigningMingw -o result-codesigning --print-build-logs
+      - run: nix build .#signedMingw -o result-signed --print-build-logs
+      - name: Verify all 6 win64 archive/installer artifacts match upstream GUIX v31.0
+        run: |
+          declare -A expected=(
+            [result-unsigned-zip]=5ecd365b53a2896850178f90302375480933e6c85ef81bb8abe8675fd44e1d9c
+            [result-debug-zip]=df3f8c2f6ce8fde8d2661d3c01f5265f90f938019d52e2f94acf2a9001af70ae
+            [result-setup-unsigned]=ad31d4d82a0ddcf1340a447575ca958ee664656ca2e77282737898e1b8209ec8
+            [result-codesigning]=62baf547357029ac557d6fbbe91742c4ba6c1461c19ed4fab5131d4300b74d93
+            [result-signed/bitcoin-31.0-win64-setup.exe]=1893e819d7554ca43e6e812dc642bd1fb4570a4077b07a03180ad1041e74e223
+            [result-signed/bitcoin-31.0-win64.zip]=82fd2c504a0f20a31d4d13bd407783d6fc7bf17622d0ce85228a9b92694e03f0
+          )
+          rc=0
+          for f in "${!expected[@]}"; do
+            actual=$(sha256sum "$f" | cut -d' ' -f1)
+            if [ "$actual" = "${expected[$f]}" ]; then
+              echo "OK:   $f"
+            else
+              echo "FAIL: $f  expected ${expected[$f]}  actual $actual"; rc=1
+            fi
+          done
+          exit $rc
+
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
   # TARGET), so on this arm runner `.#tarballAarch64` is an aarch64
