@@ -51,13 +51,15 @@ remains REQUIRED and structural: the Nix sandbox root is read-only
 but creating a new user namespace (`CLONE_NEWUSER` via `--map-root-user`,
 the rootless-container trick) grants those capabilities scoped to that
 namespace — there is no flag-based alternative, since `-fdebug-prefix-map`/
-`-ffile-prefix-map` have no effect on linker-recorded STABS. Note for CI:
+`-ffile-prefix-map` have no effect on linker-recorded STABS. CI note:
 Ubuntu 24.04+'s AppArmor `unprivileged_userns_restriction`
-(`kernel.apparmor_restrict_unprivileged_userns`) can block `CLONE_NEWUSER`
-on `ubuntu-latest` runners (`unshare: write failed /proc/self/uid_map:
-Operation not permitted`); if the darwin CI jobs hit this, the fix is
-`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` before the
-darwin nix-build steps.
+(`kernel.apparmor_restrict_unprivileged_userns`) blocks `CLONE_NEWUSER` on
+`ubuntu-latest` runners (`unshare: write failed /proc/self/uid_map:
+Operation not permitted`) — both darwin jobs DID hit this on first run, so
+`nix-ci.yml` now runs `sudo sysctl -w
+kernel.apparmor_restrict_unprivileged_userns=0` as the first step of
+`build-darwin-x86`/`build-darwin-arm64`, before the darwin nix-build steps
+(`runner` has passwordless sudo on GH-hosted runners).
 
 ## Status (2026-06-14, win64 + PROJECT COMPLETE): ALL v31.0 win64 artifacts reproduce — issue #6 DONE, every target byte-identical
 
