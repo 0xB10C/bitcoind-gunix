@@ -2113,6 +2113,37 @@ let
     expectedSha256 = "ad31d4d82a0ddcf1340a447575ca958ee664656ca2e77282737898e1b8209ec8";
   };
 
+  # ---- win64-codesigning.tar.gz ---------------------------------------------
+  codesigningMingw = pkgs.callPackage ./win-codesigning.nix {
+    inherit version url sha256;
+    bitcoind = bitcoindMingw;
+    setupExe = setupExeMingw;
+    expectedSha256 = "62baf547357029ac557d6fbbe91742c4ba6c1461c19ed4fab5131d4300b74d93";
+  };
+
+  # ---- signed win64-setup.exe + win64.zip -----------------------------------
+  # GUIX's osslsigncode is 2.5 (manifest.scm); nixpkgs ships 2.13. attach-
+  # signature's PE-patching changed between versions, so pin the version for
+  # byte-identical output.
+  osslsigncode25 = pkgs.osslsigncode.overrideAttrs (old: {
+    version = "2.5";
+    src = pkgs.fetchFromGitHub {
+      owner = "mtrojnar";
+      repo = "osslsigncode";
+      rev = "2.5";
+      sha256 = "sha256-33uT9PFD1YEIMzifZkpbl2EAoC98IsM72K4rRjDfh8g=";
+    };
+    doCheck = false;
+  });
+
+  signedMingw = pkgs.callPackage ./win-signed.nix {
+    inherit version detachedSigs;
+    osslsigncode = osslsigncode25;
+    codesigningTarball = codesigningMingw;
+    expectedSetupSha256 = "1893e819d7554ca43e6e812dc642bd1fb4570a4077b07a03180ad1041e74e223";
+    expectedZipSha256 = "82fd2c504a0f20a31d4d13bd407783d6fc7bf17622d0ce85228a9b92694e03f0";
+  };
+
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
     debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
@@ -2128,6 +2159,7 @@ in {
     mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw dependsMingw
     mingwCrtStdenv mingwCrt
     bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-    nsisGcc11 nsis310 setupExeMingw
+    nsisGcc11 nsis310 setupExeMingw codesigningMingw
+    osslsigncode25 signedMingw
     pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
 }
