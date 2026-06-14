@@ -6,6 +6,59 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-14, darwin LC_UUID): root-caused — zero byte/UUID patching anywhere in the project
+
+The darwin `bitcoin-qt`/`bitcoin-gui` LC_UUID divergence (the project's
+LAST byte patch, `patch-uuid.py`/`uuidPatches`) is now root-cause fixed
+and the patch machinery is REMOVED entirely.
+
+Root cause: `qtbase_plugins_cocoa.patch` disables precompiled headers for
+`QCocoaIntegrationPlugin` only when `CMAKE_VERSION VERSION_LESS "3.25" AND
+NOT QT_FEATURE_sessionmanager`. Bitcoin's qt.mk disables sessionmanager
+unconditionally on every host, so the guard reduces to the cmake-version
+check. GUIX builds depends with cmake-minimal **3.24.2** (guard fires →
+PCH disabled for QCocoaIntegrationPlugin, i.e. `qnsview.mm` + the rest of
+the cocoa plugin sources in `libqcocoa.a`); nixpkgs' cmake is >=3.25 (guard
+never fires → PCH stays enabled, Qt's default). PCH usage doesn't change
+`qnsview.mm`'s emitted `.text`/`.data` but shifts the unstripped image's
+Objective-C `_OBJC_SELECTOR_REFERENCES_`/`_OBJC_CLASSLIST_REFERENCES_$_`
+symtab numbering by a small constant — enough to flip lld's xxh3 LC_UUID
+(an xxh3 of the UNSTRIPPED link-time image).
+
+Fix (`depends.nix`, darwin `postPatch`): append a sed to `packages/qt.mk`
+that strips the `CMAKE_VERSION VERSION_LESS "3.25" AND ` clause from
+qtbase's cocoa `CMakeLists.txt`, so `DISABLE_PRECOMPILE_HEADERS ON` fires
+unconditionally — matching GUIX's effective cmake-3.24.2 behavior. A
+build-configuration fix, not a binary patch.
+
+Verified: with this fix, the UNSTRIPPED `bitcoin-qt`/`bitcoin-gui` LC_UUID
+match upstream's exactly (`4C4C4470-5555-3144-A1E1-F35D6E3FD77F` /
+`4C4C446C-5555-3144-A10B-6656C86400B1` for x86_64, similarly for arm64) —
+no patching needed. Removed entirely: `patch-uuid.py`, `uuidPatches`,
+`patchOutCmds`/`qtUuidHex`, `captureUnstripped`/`unstripped` output, and
+the throwaway `bitcoindDarwinX86Debug` derivation (from
+`bitcoind-darwin.nix`, `default.nix`, `flake.nix`). Rebuilt + re-verified
+ALL 30 darwin checks (10 binaries × 2 archs via the `withGate=true`
+postFixup, + 5 downstream artifacts × 2 archs: `-unsigned.tar.gz`,
+`-unsigned.zip`, `-codesigning.tar.gz`, signed `.tar.gz`, signed `.zip`) —
+every hash still matches upstream's SHA256SUMS with **zero byte/UUID
+patches anywhere in the project**.
+
+The `unshare --user --map-root-user --mount` chroot (for matching GUIX's
+literal DISTSRC paths in the Mach-O N_SO/N_OSO stabs that feed LC_UUID)
+remains REQUIRED and structural: the Nix sandbox root is read-only
+(no `CAP_SYS_ADMIN` in the initial user namespace for bind-mounts/chroot),
+but creating a new user namespace (`CLONE_NEWUSER` via `--map-root-user`,
+the rootless-container trick) grants those capabilities scoped to that
+namespace — there is no flag-based alternative, since `-fdebug-prefix-map`/
+`-ffile-prefix-map` have no effect on linker-recorded STABS. Note for CI:
+Ubuntu 24.04+'s AppArmor `unprivileged_userns_restriction`
+(`kernel.apparmor_restrict_unprivileged_userns`) can block `CLONE_NEWUSER`
+on `ubuntu-latest` runners (`unshare: write failed /proc/self/uid_map:
+Operation not permitted`); if the darwin CI jobs hit this, the fix is
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` before the
+darwin nix-build steps.
+
 ## Status (2026-06-14, win64 + PROJECT COMPLETE): ALL v31.0 win64 artifacts reproduce — issue #6 DONE, every target byte-identical
 
 win64 is now fully reproduced: all 6 published artifacts byte-match

@@ -561,6 +561,33 @@ gcc14Stdenv.mkDerivation (rec {
     sed -i 's|^\$(package)_cmake_opts += -DQT_NO_APPLE_SDK_MAX_VERSION_CHECK=ON$|&\n$(package)_cmake_opts += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
       packages/qt.mk
     grep -q 'CMAKE_SYSTEM_IGNORE_PATH' packages/qt.mk || { echo "qt.mk ignore-path sed failed"; exit 1; }
+
+    # qtbase_plugins_cocoa.patch appends, to qtbase's cocoa plugin
+    # CMakeLists.txt:
+    #   if(CMAKE_VERSION VERSION_LESS "3.25" AND NOT QT_FEATURE_sessionmanager)
+    #       set_target_properties(QCocoaIntegrationPlugin PROPERTIES
+    #           DISABLE_PRECOMPILE_HEADERS ON)
+    #       endif()
+    # bitcoin's qt.mk disables sessionmanager UNCONDITIONALLY
+    # (-no-feature-sessionmanager is in the shared $(package)_config_opts,
+    # not just _linux/_darwin), so QT_FEATURE_sessionmanager is OFF on every
+    # host and this guard reduces to CMAKE_VERSION VERSION_LESS "3.25". GUIX
+    # builds with cmake-minimal 3.24.2 (manifest.scm "Build tools" — the one
+    # cmake used for every host's native_qt/qt), so the guard fires there:
+    # QCocoaIntegrationPlugin (qnsview.mm + the rest of libqcocoa.a) is built
+    # WITHOUT a precompiled header. nixpkgs' cmake is >=3.25, so the guard
+    # never fires for us and PCH stays at Qt's default (enabled). PCH usage
+    # doesn't change qnsview.mm's emitted .text/.data (verified
+    # byte-identical to upstream) but shifts clang's internal
+    # GCC_except_table/_OBJC_SELECTOR_REFERENCES_/_OBJC_CLASSLIST_REFERENCES_
+    # counters by a small constant — the sole remaining divergence (and the
+    # only reason bitcoin-qt/bitcoin-gui's LC_UUID, an xxh3 of the unstripped
+    # image, didn't match). Drop the version guard so PCH is disabled
+    # unconditionally for this target, like GUIX's cmake 3.24.2 does.
+    cat >> packages/qt.mk <<'EOF'
+$(package)_preprocess_cmds += && sed -i 's/CMAKE_VERSION VERSION_LESS "3.25" AND //' qtbase/src/plugins/platforms/cocoa/CMakeLists.txt
+EOF
+    grep -q 'qtbase/src/plugins/platforms/cocoa/CMakeLists.txt' packages/qt.mk || { echo "qt.mk cocoa PCH sed failed"; exit 1; }
   '';
 } // lib.optionalAttrs isMingw {
   # mingw: same BUILD-glibc find_library leak as darwin. In the Nix sandbox
