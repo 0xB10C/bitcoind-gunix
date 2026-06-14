@@ -23,6 +23,9 @@
 , sha256
 , bitcoind          # the win64 bitcoind derivation (stripped .exe in bin/ + libexec/)
 , nsis              # GUIX-style NSIS 3.10 (makensis + stubs)
+, mingwBinutils241  # final cross binutils 2.41 (objcopy for the release/ exes)
+, libfaketime       # freeze time(NULL) for objcopy's PE TimeDateStamp regen
+, hostTriple        # "x86_64-w64-mingw32"
 , expectedSha256 ? null  # null → don't gate (iteration)
 }:
 
@@ -49,8 +52,29 @@ stdenv.mkDerivation {
     mkdir -p "$S/build/release" "$S/doc" "$S/share/examples" "$S/share/rpcauth" "$S/share/pixmaps"
 
     # The stripped .exe → build/release/ (bitcoind's bin/ + libexec/test_bitcoin).
-    ${lib.concatMapStringsSep "\n" (b: ''cp ${bitcoind}/bin/${b}.exe "$S/build/release/${b}.exe"'') binExes}
+    #
+    # GUIX's `deploy` target runs ${"$"}{CMAKE_STRIP} directly on the cmake
+    # BUILD-TREE binary (before split-debug ever ran), giving a fully-stripped
+    # PE with NO .gnu_debuglink section. Our $out binaries already have
+    # .gnu_debuglink added (bitcoind-win.nix postInstall); removing just that
+    # section reproduces GUIX's release/*.exe byte-for-byte (verified against
+    # the upstream NSIS payload for all 7 binaries).
+    #
+    # binutils 2.41's objcopy ALWAYS regenerates the PE TimeDateStamp via
+    # time(NULL) (ignores SOURCE_DATE_EPOCH and any existing value), so freeze
+    # the clock with faketime to get upstream's ${sourceDateEpoch} (0x69dffb3c).
+    FAKETIME_DATE=$(date -u -d "@${sourceDateEpoch}" '+%Y-%m-%d %H:%M:%S')
+    stripRelease() {
+      chmod u+w "$1"
+      TZ=UTC ${libfaketime}/bin/faketime -f "$FAKETIME_DATE" \
+        ${mingwBinutils241}/bin/${hostTriple}-objcopy --remove-section=.gnu_debuglink "$1"
+    }
+    ${lib.concatMapStringsSep "\n" (b: ''
+      cp ${bitcoind}/bin/${b}.exe "$S/build/release/${b}.exe"
+      stripRelease "$S/build/release/${b}.exe"
+    '') binExes}
     cp ${bitcoind}/libexec/test_bitcoin.exe "$S/build/release/test_bitcoin.exe"
+    stripRelease "$S/build/release/test_bitcoin.exe"
 
     # Committed assets from the release source tarball.
     mkdir srctmp

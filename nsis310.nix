@@ -13,6 +13,7 @@
 , fetchurl
 , scons
 , zlib
+, libfaketime
 , nsisCC          # the gcc 11.4.0 mingw cross (wrapped; provides <triple>-gcc/g++)
 , mingwInclude    # mingw-w64 CRT headers dir (PREFIX_PLUGINAPI_INC)
 , mingwLib        # mingw-w64 CRT libs dir   (PREFIX_PLUGINAPI_LIB)
@@ -50,7 +51,7 @@ stdenv.mkDerivation {
   # PATH / the cross toolchain are visible to the sub-compiles.
   patches = [ ./patches/nsis-env-passthru.patch ];
 
-  nativeBuildInputs = [ scons nsisCC ];
+  nativeBuildInputs = [ scons nsisCC libfaketime ];
   buildInputs = [ zlib ];
 
   # GUIX's vanilla cross-gcc applies none of nixpkgs' cc-wrapper hardenings;
@@ -84,9 +85,17 @@ stdenv.mkDerivation {
     export SOURCE_DATE_EPOCH=1
   '';
 
+  # ld's PE .rsrc resource-directory merge (when the uninstaller stub /
+  # plugin DLLs link in resources) stamps IMAGE_RESOURCE_DIRECTORY.
+  # TimeDateStamp with time(NULL) directly, ignoring SOURCE_DATE_EPOCH
+  # (cross-binutils-2.41's PE COFF TimeDateStamp DOES respect it — the
+  # stubs' COFF ts is already 1 — but the .rsrc resource-dir ts is a
+  # separate field written by the resource merger). Upstream's value is
+  # the literal 1, matching SOURCE_DATE_EPOCH=1 — freeze the wall clock at
+  # that instant with faketime so ld's time(NULL) also returns 1.
   buildPhase = ''
     runHook preBuild
-    scons ${lib.escapeShellArgs sconsFlags} \
+    TZ=UTC faketime -f "1970-01-01 00:00:01" scons ${lib.escapeShellArgs sconsFlags} \
       APPEND_CPPPATH="$APPEND_CPPPATH" APPEND_LIBPATH="$APPEND_LIBPATH" \
       -j"''${NIX_BUILD_CORES:-1}" \
       makensis stubs plugins utils

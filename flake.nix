@@ -46,9 +46,10 @@
             signapple detachedSigs
             codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64
             mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw
-            mingwCrtStdenv
+            mingwCrtStdenv mingwCrt
             bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-            nsisGcc11 nsis310 setupExeMingw setupExeMingwNoGate;
+            nsisGcc11 nsis310 setupExeMingw
+            pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
           default = drvs.bitcoind;
         });
     };

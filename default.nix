@@ -2066,6 +2066,19 @@ let
           mingw_w64 = (wprev.mingw_w64.override {
             stdenv = nsisCrtStdenv;
           }).overrideAttrs (o: {
+            # 24.05's mingw_w64 recipe only adds --with-default-msvcrt=ucrt
+            # for libc=="ucrt"; for libc=="msvcrt" it adds NOTHING, relying
+            # on mingw-w64's OWN configure default — which 12.0.0 flipped to
+            # UCRT. Add 26.05's equivalent flags by hand (crt=msvcrt,
+            # x86_64 lib64-only) so the NSIS plugin DLLs (System.dll etc.)
+            # link against msvcrt.dll like GUIX's gcc-11 CRT, not UCRT.
+            configureFlags = (o.configureFlags or [ ]) ++ [
+              "--with-default-msvcrt=msvcrt"
+              "--disable-lib32"
+              "--enable-lib64"
+              "--disable-libarm64"
+              "ac_cv_prog_cc_c23=no"
+            ];
             # 24.05's hardening set (no stackclashprotection/strictflexarrays1).
             hardeningDisable = (o.hardeningDisable or [ ]) ++ [
               "zerocallusedregs" "strictoverflow" "stackprotector"
@@ -2085,22 +2098,20 @@ let
     mingwInclude = "${pkgsCrossMingwNsis.windows.mingw_w64.dev}/include";
     mingwLib = "${pkgsCrossMingwNsis.windows.mingw_w64}/lib";
     hostTriple = mingwTriple;
+    # nsisCC's wrapper scripts + bash are nixos-24.05 (glibc 2.39); LD_PRELOADing
+    # 26.05's libfaketime (glibc 2.42) into them fails with a GLIBC_ABI_DT_X86_64_PLT
+    # version mismatch. Use 24.05's libfaketime for ABI compatibility.
+    libfaketime = pkgs2405.libfaketime;
   };
 
   setupExeMingw = pkgs.callPackage ./win-nsis.nix {
-    inherit version url sha256;
+    inherit version url sha256 mingwBinutils241;
+    inherit (pkgs) libfaketime;
     bitcoind = bitcoindMingw;
     nsis = nsis310;
-    # GATE OFF (expectedSha256 = null) until the .dbg-style byte-repro closes:
-    # the upstream target is ad31d4d82a0ddcf1340a447575ca958ee664656ca2e77282737898e1b8209ec8.
-    # The 98 KB installer stub already byte-matches upstream; the only residual
-    # is the embedded uninstaller's .rsrc IMAGE_RESOURCE_DIRECTORY TimeDateStamp
-    # (build-time / non-deterministic here vs 1 upstream), which cascades +1041 B
-    # through the LZMA stream. See win64-goal memory.
-    expectedSha256 = null;
+    hostTriple = mingwTriple;
+    expectedSha256 = "ad31d4d82a0ddcf1340a447575ca958ee664656ca2e77282737898e1b8209ec8";
   };
-  # Alias kept for the iteration scripts.
-  setupExeMingwNoGate = setupExeMingw;
 
 in {
   inherit depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
@@ -2115,7 +2126,8 @@ in {
     signapple detachedSigs
     codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64
     mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw dependsMingw
-    mingwCrtStdenv
+    mingwCrtStdenv mingwCrt
     bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-    nsisGcc11 nsis310 setupExeMingw setupExeMingwNoGate;
+    nsisGcc11 nsis310 setupExeMingw
+    pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
 }
