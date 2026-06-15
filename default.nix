@@ -46,6 +46,102 @@ let
   x86     = import ./nix/x86_64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem; };
   darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version url sha256 buildSystem detachedSigs; };
   win64   = import ./nix/win64/toolchain.nix { inherit pkgs pkgs2405 version url sha256 buildSystem detachedSigs; };
+
+  # The artifacts this project byte-reproduces, in upstream's
+  # noncodesigned.SHA256SUMS / all.SHA256SUMS format (see
+  # nix/lib/sha256sums.nix). Order matches upstream EXACTLY (verified
+  # against https://bitcoincore.org/bin/bitcoin-core-${version}/SHA256SUMS,
+  # minus the two out-of-scope entries below) so the outputs diff cleanly
+  # against the published files. guix-attest sorts each per-host
+  # SHA256SUMS.part fragment by its pre-basename PATH
+  # (<outdir_base>/<HOST>/<file>) — the effective order is HOSTS in
+  # alphabetical order (aarch64-linux-gnu, arm-linux-gnueabihf,
+  # arm64-apple-darwin, powerpc64-linux-gnu, riscv64-linux-gnu,
+  # x86_64-apple-darwin, x86_64-linux-gnu, x86_64-w64-mingw32), and within
+  # each darwin/win64 host the *signed* artifacts (from a
+  # codesigned_outdir_base that sorts before outdir_base) come first, then
+  # the noncodesigned ones — both groups alphabetical by filename.
+  # Out of scope: bitcoin-${version}.tar.gz (the source dist-archive, a
+  # fetchurl input not a build output) and
+  # bitcoin-${version}-codesignatures-${version}.tar.gz (not built here).
+  noncodesignedArtifacts = [
+    # aarch64-linux-gnu
+    aarch64.debugTarballAarch64
+    aarch64.tarballAarch64
+    # arm-linux-gnueabihf
+    armhf.debugTarballArmhf
+    armhf.tarballArmhf
+    # arm64-apple-darwin
+    darwin.codesigningDarwinArm64
+    darwin.tarballDarwinArm64
+    darwin.zipDarwinArm64
+    # powerpc64-linux-gnu
+    ppc64.debugTarballPpc64
+    ppc64.tarballPpc64
+    # riscv64-linux-gnu
+    riscv64.debugTarballRiscv64
+    riscv64.tarballRiscv64
+    # x86_64-apple-darwin
+    darwin.codesigningDarwinX86
+    darwin.tarballDarwinX86
+    darwin.zipDarwinX86
+    # x86_64-linux-gnu
+    x86.debugTarball
+    x86.tarball
+    # x86_64-w64-mingw32 (win64)
+    win64.codesigningMingw
+    win64.debugZipMingw
+    win64.setupExeMingw
+    win64.unsignedZipMingw
+  ];
+
+  # all.SHA256SUMS = noncodesignedArtifacts with the 6 *signed* darwin/win64
+  # outputs (codesign.sh's delta) interleaved into the arm64-apple-darwin,
+  # x86_64-apple-darwin and win64 groups, ahead of that group's
+  # noncodesigned entries — see the ordering note above.
+  allArtifactsOrdered = [
+    # aarch64-linux-gnu
+    aarch64.debugTarballAarch64
+    aarch64.tarballAarch64
+    # arm-linux-gnueabihf
+    armhf.debugTarballArmhf
+    armhf.tarballArmhf
+    # arm64-apple-darwin (signed first)
+    "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.tar.gz"
+    "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.zip"
+    darwin.codesigningDarwinArm64
+    darwin.tarballDarwinArm64
+    darwin.zipDarwinArm64
+    # powerpc64-linux-gnu
+    ppc64.debugTarballPpc64
+    ppc64.tarballPpc64
+    # riscv64-linux-gnu
+    riscv64.debugTarballRiscv64
+    riscv64.tarballRiscv64
+    # x86_64-apple-darwin (signed first)
+    "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.tar.gz"
+    "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.zip"
+    darwin.codesigningDarwinX86
+    darwin.tarballDarwinX86
+    darwin.zipDarwinX86
+    # x86_64-linux-gnu
+    x86.debugTarball
+    x86.tarball
+    # x86_64-w64-mingw32 (win64) (signed first)
+    "${win64.signedMingw}/bitcoin-${version}-win64-setup.exe"
+    "${win64.signedMingw}/bitcoin-${version}-win64.zip"
+    win64.codesigningMingw
+    win64.debugZipMingw
+    win64.setupExeMingw
+    win64.unsignedZipMingw
+  ];
+
+  noncodesignedSha256sums = import ./nix/lib/sha256sums.nix
+    { inherit (pkgs) runCommandLocal coreutils gnused; }
+    { name = "noncodesigned.SHA256SUMS"; files = noncodesignedArtifacts; };
+  sha256sums = import ./nix/lib/sha256sums.nix
+    { inherit (pkgs) runCommandLocal coreutils gnused; }
+    { name = "all.SHA256SUMS"; files = allArtifactsOrdered; };
 in {
   inherit (x86) depends bitcoind tarball debugTarball;
   inherit (aarch64) dependsAarch64 bitcoindAarch64 tarballAarch64 debugTarballAarch64;
@@ -68,4 +164,5 @@ in {
     nsisGcc11 nsis310 setupExeMingw codesigningMingw
     osslsigncode25 signedMingw
     pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
+  inherit sha256sums noncodesignedSha256sums;
 }
