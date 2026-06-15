@@ -16,13 +16,7 @@ let
   # Kernel headers pinned to GUIX's 6.1.119 for the aarch64 target — same
   # reasoning as linuxHeaders61 below (the headers VERSION leaks into the
   # .dbg via <linux/rtnetlink.h> enum DIEs).
-  linuxHeaders61Aarch64 = pkgsCrossAarch64.linuxHeaders.overrideAttrs (o: {
-    version = "6.1.119";
-    src = pkgs.fetchurl {
-      url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
-      hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
-    };
-  });
+  linuxHeaders61Aarch64 = import ../lib/linux-headers-61.nix { inherit pkgs; pkgsCross = pkgsCrossAarch64; };
 
   # Stock cross gcc14 wrapper used as crossGlibc231's forced CC — the
   # aarch64 analog of gcc14X86NoFp below (see its comment for the full
@@ -197,25 +191,7 @@ let
   # `stdenv.cc.bintools.bintools`, NOT `binutils-unwrapped` (which is the
   # aarch64-native binutils and can't run on the build machine). Same
   # override as crossBinutils241X86.
-  crossBinutils241 = pkgsCrossAarch64.stdenv.cc.bintools.bintools.overrideAttrs (old: {
-    version = "2.41";
-    src = pkgs.fetchurl {
-      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
-      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
-    };
-    # Drop newer-binutils patches that may not apply to 2.41. Keep the
-    # default cross outputs (incl. `dev`) — the cross binutils' postInstall
-    # references $dev.
-    patches = [ ];
-    # Match GUIX's binutils compression config — same reasoning as
-    # crossBinutils241X86 below: --enable-compressed-debug-sections=all
-    # (upstream's .dbg sections are SHF_COMPRESSED with no explicit
-    # split-debug flag) and bundled zlib, not --with-system-zlib
-    # (identical 2.41 zlib ⇒ identical deflate bytes).
-    configureFlags =
-      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
-      ++ [ "--enable-compressed-debug-sections=all" ];
-  });
+  crossBinutils241 = import ../lib/cross-binutils-241.nix { inherit pkgs; pkgsCross = pkgsCrossAarch64; };
   crossBintools241 = pkgsCrossAarch64.stdenv.cc.bintools.override {
     bintools = crossBinutils241;
     libc = crossGlibc231;
