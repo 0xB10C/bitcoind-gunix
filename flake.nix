@@ -43,7 +43,7 @@
             clangDarwin lldDarwin llvmDarwin darwinSdk
             dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
             tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
-            signapple detachedSigs
+            signapple detachedSigs sourceDistArchive codesignaturesArchive
             codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64
             mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw
             mingwCrtStdenv mingwCrt
