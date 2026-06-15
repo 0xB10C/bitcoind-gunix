@@ -1,190 +1,158 @@
 # bitcoind-gunix
 
-A Nix flake that reproduces the official Bitcoin Core GUIX release with
-**byte-identical sha256** — all ten binaries **and** the full release
-archive — for `x86_64-linux-gnu`, `aarch64-linux-gnu`,
-`riscv64-linux-gnu`, `arm-linux-gnueabihf` and `powerpc64-linux-gnu`.
-All targets are built the way GUIX builds them: through a **cross
-toolchain for the vendor-less target triple** — a "cross-to-self"
-`x86_64-linux-gnu` toolchain for the x86_64 release, and per-target
-cross toolchains for the others (**cross-compiled on an x86_64 host**,
-no qemu).
+A Nix flake that reproduces the **entire official Bitcoin Core v31.0 GUIX
+release** byte-for-byte: every binary, release archive, debug-symbols
+archive, codesigning tarball and signed artifact, for all 8 GUIX release
+targets. Everything is built the way GUIX builds it — through **cross
+toolchains for the vendor-less target triples** (gcc 14.3.0 / glibc 2.31 /
+binutils 2.41 for the Linux targets, clang/lld 19.1.4 for darwin, gcc
+14.3.0 + mingw-w64 12.0.0 for win64) — **cross-compiled from a single
+Linux host** (x86_64 or aarch64, no qemu).
 
-## Status
-
-**Bitcoin Core v31.0** — every binary in the upstream
-`bitcoin-31.0-x86_64-linux-gnu` release reproduces byte-for-byte, and so
-does the assembled `bitcoin-31.0-x86_64-linux-gnu.tar.gz`:
-
-```
-eb5670ae…  bin/bitcoin            ce3b159c…  bin/bitcoin-tx
-3e92883f…  bin/bitcoin-cli        1d18ee4b…  bin/bitcoin-util
-dae69848…  bin/bitcoind           7d8382b8…  bin/bitcoin-wallet
-3480af8f…  bin/bitcoin-qt         01c212ee…  libexec/bitcoin-node
-416e79bb…  libexec/bitcoin-gui    c7a2a906…  libexec/test_bitcoin
-
-d3e4c58a…  bitcoin-31.0-x86_64-linux-gnu.tar.gz
-```
-
-The same holds for the `aarch64-linux-gnu` release, cross-compiled on
-x86_64:
-
-```
-c793384c…  bin/bitcoin            b4128423…  bin/bitcoin-tx
-25c2743e…  bin/bitcoin-cli        3a0daa1c…  bin/bitcoin-util
-6f66822a…  bin/bitcoind           b7c2bb47…  bin/bitcoin-wallet
-760c3de5…  bin/bitcoin-qt         f213271f…  libexec/bitcoin-node
-f85193a8…  libexec/bitcoin-gui    940fd792…  libexec/test_bitcoin
-
-4de1d568…  bitcoin-31.0-aarch64-linux-gnu.tar.gz
-```
-
-And for the `riscv64-linux-gnu` release, also cross-compiled on x86_64:
-
-```
-d28d634c…  bin/bitcoin            e4d682e5…  bin/bitcoin-tx
-bb5ecc78…  bin/bitcoin-cli        a33638e2…  bin/bitcoin-util
-2c868a6a…  bin/bitcoind           22d3c591…  bin/bitcoin-wallet
-b348aa9d…  bin/bitcoin-qt         2d28a094…  libexec/bitcoin-node
-213838af…  libexec/bitcoin-gui    6086d424…  libexec/test_bitcoin
-
-7ece4ea3…  bitcoin-31.0-riscv64-linux-gnu.tar.gz
-```
-
-And the `arm-linux-gnueabihf` and `powerpc64-linux-gnu` **release
-archives** also reproduce (all 10 runtime binaries of each byte-match):
-
-```
-8c19d007…  bitcoin-31.0-arm-linux-gnueabihf.tar.gz
-1d9c865a…  bitcoin-31.0-powerpc64-linux-gnu.tar.gz
-```
-
-(Their separate `-debug.tar.gz` archives also reproduce — all 20 `.dbg`
-of the two targets are byte-identical to upstream's, see below.)
-
-Each derivation's `postFixup` asserts these hashes and fails the build on
-mismatch — so a successful build *is* the reproducibility test. The build
-uses only upstream sources (`fetchurl`/`fetchgit`); nothing is taken from a
-pre-existing GUIX build.
+There is **no binary patching anywhere** in this project: every byte-level
+divergence that was ever found was root-caused to a build-configuration or
+toolchain difference and fixed at that level.
 
 Project history: https://github.com/0xB10C/bitcoind-gunix/issues/1 ·
-follow-ups: https://github.com/0xB10C/bitcoind-gunix/issues/6
+multi-arch/darwin/win64/signing follow-ups:
+https://github.com/0xB10C/bitcoind-gunix/issues/6 (complete)
+
+## Status: COMPLETE
+
+All **26 published artifacts** of the `bitcoin-core-31.0` GUIX release
+reproduce byte-identically. Each derivation's `postFixup` asserts the
+expected upstream sha256 and **fails the build on mismatch** — a
+successful build *is* the reproducibility test. Headline hashes:
+
+| Target | Release archive | sha256 |
+|---|---|---|
+| `x86_64-linux-gnu` | `.tar.gz` | `d3e4c58a…` |
+| `aarch64-linux-gnu` | `.tar.gz` | `4de1d568…` |
+| `riscv64-linux-gnu` | `.tar.gz` | `7ece4ea3…` |
+| `arm-linux-gnueabihf` | `.tar.gz` | `8c19d007…` |
+| `powerpc64-linux-gnu` | `.tar.gz` | `1d9c865a…` |
+| `x86_64-apple-darwin` | `-unsigned.tar.gz` | `d1d0174f…` |
+| `arm64-apple-darwin` | `-unsigned.tar.gz` | `48d34a14…` |
+| `x86_64-w64-mingw32` (win64) | `-unsigned.zip` | `5ecd365b…` |
+
+For each of the 5 Linux targets the `-debug.tar.gz` also reproduces (all
+50 `.dbg` files byte-identical); for darwin and win64 the
+`-codesigning.tar.gz` and the osslsigncode/signapple-**signed** artifacts
+also reproduce. The full 26-line list — in upstream's own `SHA256SUMS`
+format — is built directly with Nix (see below).
+
+The build uses only upstream sources (`fetchurl`/`fetchgit`); nothing is
+taken from a pre-existing GUIX build.
 
 ## Build
 
-Requires Nix with flakes enabled.
-
-The flake exposes the same pipeline for **both `x86_64-linux` and
-`aarch64-linux` build hosts** ("cross everywhere"); package names refer to
-the *target*. On an x86_64 machine `.#bitcoind` is a cross-to-self build
-and `.#bitcoindAarch64` a cross build; on an aarch64 machine it's exactly
+Requires Nix with flakes enabled. The flake exposes the same pipeline for
+**both `x86_64-linux` and `aarch64-linux` build hosts** ("cross
+everywhere"); package names refer to the *target*, not the build host. On
+an x86_64 machine `.#bitcoind` is a cross-to-self build and
+`.#bitcoindAarch64` a cross build; on an aarch64 machine it's exactly
 mirrored — every derivation gates the same upstream hashes either way.
 
+### Verify everything against upstream's SHA256SUMS
+
 ```sh
-# All ten binaries (result/bin/* and result/libexec/*):
-nix build .#bitcoind --print-build-logs
+nix build .#sha256sums .#noncodesignedSha256sums --print-build-logs
 
-# The full release archive (also builds .#bitcoind):
-nix build .#tarball --print-build-logs
-sha256sum result        # -> d3e4c58a…
-
-# The debug-symbols archive (all ten .dbg byte-identical too):
-nix build .#debugTarball --print-build-logs
-sha256sum result        # -> 96e35061…
-
-# The aarch64 release, cross-compiled on x86_64 (10 binaries + tarball):
-nix build .#bitcoindAarch64 --print-build-logs
-nix build .#tarballAarch64 --print-build-logs
-sha256sum result        # -> 4de1d568…
-
-# The aarch64 debug-symbols archive:
-nix build .#debugTarballAarch64 --print-build-logs
-sha256sum result        # -> 91917647…
-
-# The riscv64 release, cross-compiled on x86_64 (10 binaries + tarball):
-nix build .#bitcoindRiscv64 --print-build-logs
-nix build .#tarballRiscv64 --print-build-logs
-sha256sum result        # -> 7ece4ea3…
-
-# The riscv64 debug-symbols archive:
-nix build .#debugTarballRiscv64 --print-build-logs
-sha256sum result        # -> acd0e38f…
-
-# The armhf and powerpc64 releases (each: 10 binaries + both archives):
-nix build .#tarballArmhf --print-build-logs        # -> 8c19d007…
-nix build .#debugTarballArmhf --print-build-logs   # -> fc17562b…
-nix build .#tarballPpc64 --print-build-logs        # -> 1d9c865a…
-nix build .#debugTarballPpc64 --print-build-logs   # -> efe3e7d0…
-
-# Just the depends tree:
-nix build .#depends
+# diff against the real thing
+curl -sLO https://bitcoincore.org/bin/bitcoin-core-31.0/SHA256SUMS
+grep -v -e bitcoin-31.0.tar.gz -e codesignatures SHA256SUMS \
+  | diff - "$(nix path-info .#sha256sums)"
 ```
 
-The first build is long — it rebuilds the gcc 14 / glibc 2.31 toolchain
-and the full Qt6 depends tree (the aarch64 outputs use their own cross
-toolchain + cross depends). A binary cache makes repeat builds fast.
+This builds (or fetches from cache) all 26 artifacts and produces
+`all.SHA256SUMS` / `noncodesigned.SHA256SUMS` with bare filenames
+(`<sha256>  <name>`), in the same order as upstream's published files —
+the `diff` above should be empty.
+
+### Per-target builds
+
+```sh
+# x86_64-linux-gnu (cross-to-self)
+nix build .#bitcoind .#tarball .#debugTarball
+
+# aarch64 / riscv64 / armhf / powerpc64 — same shape, suffixed
+nix build .#bitcoindAarch64 .#tarballAarch64 .#debugTarballAarch64
+nix build .#bitcoindRiscv64 .#tarballRiscv64 .#debugTarballRiscv64
+nix build .#bitcoindArmhf   .#tarballArmhf   .#debugTarballArmhf
+nix build .#bitcoindPpc64   .#tarballPpc64   .#debugTarballPpc64
+
+# darwin x86_64 / arm64: unsigned tar+zip, codesigning tarball, signed tar+zip
+nix build .#bitcoindDarwinX86   .#tarballDarwinX86   .#zipDarwinX86
+nix build .#codesigningDarwinX86 .#signedDarwinX86
+nix build .#bitcoindDarwinArm64 .#tarballDarwinArm64 .#zipDarwinArm64
+nix build .#codesigningDarwinArm64 .#signedDarwinArm64
+
+# win64: unsigned+debug zip, NSIS setup.exe, codesigning tarball, signed setup+zip
+nix build .#bitcoindMingw .#unsignedZipMingw .#debugZipMingw
+nix build .#setupExeMingw .#codesigningMingw .#signedMingw
+
+# just a target's depends tree, e.g.:
+nix build .#depends            # x86_64-linux-gnu
+nix build .#dependsDarwinArm64
+nix build .#dependsMingw
+```
+
+The first build is long — it rebuilds every target's GUIX-exact toolchain
+and the full Qt6 depends tree. A binary cache makes repeat builds fast.
 
 If a build fails and you want to inspect intermediate state, add
 `--keep-failed`. The gates print `OK:`/`FAIL:` lines with the hashes.
 
-## What's reproduced
-
-All ten release binaries (`bin/{bitcoin,bitcoin-cli,bitcoind,bitcoin-qt,
-bitcoin-tx,bitcoin-util,bitcoin-wallet}`, `libexec/{bitcoin-gui,
-bitcoin-node,test_bitcoin}`) and the `bitcoin-31.0-x86_64-linux-gnu.tar.gz`
-archive.
-
-The separate debug-symbols archives are **also reproduced for all five
-targets** (`nix build .#debugTarball` → `96e35061…`;
-`.#debugTarballAarch64` → `91917647…`; `.#debugTarballRiscv64` →
-`acd0e38f…`; `.#debugTarballArmhf` → `fc17562b…`; `.#debugTarballPpc64`
-→ `efe3e7d0…`): all fifty `.dbg` debug files are byte-identical to
-upstream's with no byte patching anywhere.
-
 ## Layout
 
-- `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` and exposes
-  the outputs per build host (`packages.{x86_64,aarch64}-linux`); all
-  toolchain construction lives under `nix/`, assembled by `default.nix`.
-- `default.nix` — thin orchestrator: defines the shared `version`/`url`/
-  `sha256`/`buildSystem` and the cross-target `detachedSigs` (used by both
-  darwin and win64 signing), imports each `nix/<target>/toolchain.nix`, and
-  re-exports their outputs under the original attribute names.
-- `nix/<target>/toolchain.nix` (one per target: `x86_64-linux-gnu`,
+- `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` (plus
+  `nixpkgs2405`, used only for the win64 NSIS gcc-11 toolchain) and exposes
+  outputs per build host (`packages.{x86_64,aarch64}-linux`); all toolchain
+  construction lives under `nix/`, assembled by `default.nix`.
+- `default.nix` — orchestrator: shared `version`/`url`/`sha256`/
+  `buildSystem` and the cross-target `detachedSigs` (used by both darwin
+  and win64 signing), imports each `nix/<target>/toolchain.nix`, re-exports
+  their outputs, and builds the `sha256sums` / `noncodesignedSha256sums`
+  aggregates.
+- `nix/<target>/toolchain.nix` — one per target (`x86_64-linux-gnu`,
   `aarch64-linux-gnu`, `riscv64-linux-gnu`, `arm-linux-gnueabihf`,
-  `powerpc64-linux-gnu`, `darwin`, `win64`) — each builds its GUIX-exact
-  **cross toolchain** (binutils 2.41, glibc 2.31 from GUIX's git source, gcc
-  14.3.0 with the `gcc-ssa-generation` patch and GUIX's `linux-base-gcc`
-  flags, rebuilt against glibc 2.31 via `libcCross`; darwin/win64 use their
-  own clang/mingw toolchains) plus its depends/release/tarball/signing
-  outputs. `x86_64-linux-gnu` is cross-to-self; `riscv64-linux-gnu`,
-  `arm-linux-gnueabihf` and `powerpc64-linux-gnu` are thin wrappers around
-  `nix/lib/linux-cross-target.nix`.
-- `nix/lib/linux-cross-target.nix` — the shared `mkLinuxCrossTarget`
-  generator (binutils/glibc/gcc cross toolchain + depends/bitcoind/tarball
-  with the 20-artifact + 2-archive gate), parameterized over the target
-  triple; used by riscv64/armhf/ppc64.
-- `nix/lib/depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the
-  full Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves
-  every target (`HOST=` puts depends in cross-compile mode, matching
-  GUIX either way).
-- `nix/x86_64-linux-gnu/release.nix` / `nix/aarch64-linux-gnu/release.nix` /
-  `nix/lib/release-cross.nix` — build all of Bitcoin Core via CMake with the
-  prefixed cross compiler, then split-debug (cross binutils 2.41) and
-  `.comment` rewrite, and assert all twenty per-target hashes (10 binaries +
-  10 `.dbg`). `nix/lib/release-cross.nix` is parameterized over the target and
-  serves riscv64/armhf/ppc64 (via `mkLinuxCrossTarget` in
-  `nix/lib/linux-cross-target.nix`); the x86_64 and aarch64 files predate it.
-- `nix/lib/tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
-  byte-identical to upstream and asserts its hash (parameterized by `arch`).
-- `nix/darwin/` — `release.nix` (the 10 Mach-O binaries for x86_64/arm64),
-  `codesigning.nix` / `signed.nix` (the `-codesigning.tar.gz` and
-  signapple-signed artifacts), `signapple.nix` (the signing toolchain).
-- `nix/win64/` — `release.nix` (the 8 PE binaries), `zip.nix`
-  (unsigned/debug `.zip`), `nsis-toolchain.nix` + `setup.nix` (NSIS 3.10 and
-  `setup-unsigned.exe`), `codesigning.nix` / `signed.nix` (the
-  `-codesigning.tar.gz` and osslsigncode-signed artifacts).
-- `nix/patches/` — patch files applied via the .nix derivations.
+  `powerpc64-linux-gnu`, `darwin`, `win64`): each builds its GUIX-exact
+  cross toolchain plus its depends/release/tarball/signing outputs.
+  - The 5 Linux targets share a cross gcc 14.3.0 (GUIX's `linux-base-gcc`
+    flags + `gcc-ssa-generation` patch) + binutils 2.41 + glibc 2.31 from
+    GUIX's git source, rebuilt against each other via `libcCross`.
+    `x86_64-linux-gnu` is cross-to-self; `riscv64-linux-gnu`,
+    `arm-linux-gnueabihf` and `powerpc64-linux-gnu` are thin wrappers around
+    `nix/lib/linux-cross-target.nix`.
+  - `nix/darwin/` — clang/lld 19.1.4 toolchain (`toolchain.nix`); the 10
+    Mach-O binaries + app bundle (`release.nix`); `-codesigning.tar.gz`
+    (`codesigning.nix`); signapple-signed artifacts (`signed.nix`,
+    `signapple.nix`).
+  - `nix/win64/` — mingw-w64 12.0.0 / gcc 14.3.0 toolchain
+    (`toolchain.nix`); the 8 PE binaries (`release.nix`); unsigned/debug
+    `.zip` (`zip.nix`); NSIS 3.10 installer (`nsis-toolchain.nix`,
+    `setup.nix`); `-codesigning.tar.gz` (`codesigning.nix`);
+    osslsigncode-signed artifacts (`signed.nix`).
+- `nix/lib/` — shared building blocks:
+  - `linux-cross-target.nix` — the `mkLinuxCrossTarget` generator (cross
+    toolchain + depends/bitcoind/tarball + 20-artifact/2-archive gate),
+    used by riscv64/armhf/powerpc64.
+  - `depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the full
+    Qt6 GUI dependencies), parameterized by `hostTriple`; serves every
+    target.
+  - `release-cross.nix` — builds Bitcoin Core via CMake with the prefixed
+    cross compiler, split-debug + `.comment` rewrite, and the per-target
+    binary/`.dbg` hash gate (riscv64/armhf/powerpc64; x86_64/aarch64 have
+    their own `release.nix` predating this generator).
+  - `tarball.nix` — assembles `bitcoin-31.0-<arch>(.tar.gz|-unsigned.tar.gz|
+    -debug.tar.gz)` byte-identical to upstream and asserts its hash.
+  - `cross-binutils-241.nix`, `linux-headers-61.nix` — binutils 2.41 /
+    Linux 6.1.119 headers pinned and shared across targets.
+  - `sha256sums.nix` — aggregates every reproduced artifact into
+    `all.SHA256SUMS` / `noncodesigned.SHA256SUMS`, upstream's own format.
+- `nix/patches/` — patches applied by the derivations above (gcc SSA
+  determinism, glibc riscv jumptarget fix, debug-prefix-map
+  canonicalization, NSIS env passthrough, etc.)
 - `CLAUDE.md` — design notes and the reproducibility methodology playbook.
 
 ## License
