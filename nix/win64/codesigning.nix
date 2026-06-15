@@ -7,7 +7,7 @@
 #   ./win-codesign.cert              (from contrib/windeploy/, verbatim)
 #   ./unsigned/bitcoin-<ver>-win64-setup-unsigned.exe  (= setupExeMingw)
 #   ./unsigned/bitcoin-<ver>/...      (the SAME tree as -unsigned.zip, minus
-#                                      .dbg — win-zip.nix's non-debug $D)
+#                                      .dbg — win64/zip.nix's non-debug $D)
 # with the same deterministic packaging as the release archives
 # (find|sort|tar --mode=...|gzip -9n; TAR_OPTIONS supplies --mtime/--owner).
 { lib

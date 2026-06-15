@@ -36,7 +36,7 @@
 # fires, PCH disabled); nixpkgs' cmake is >=3.25 (guard never fires, PCH
 # stays enabled). PCH usage doesn't change qnsview.mm's .text/.data but
 # shifts the unstripped image's Objective-C selector/class-ref symtab
-# numbering enough to flip LC_UUID. Fixed in depends.nix's darwin
+# numbering enough to flip LC_UUID. Fixed in lib/depends.nix's darwin
 # postPatch: drop the `CMAKE_VERSION VERSION_LESS "3.25" AND ` clause so
 # PCH is disabled unconditionally, matching GUIX's effective cmake-3.24.2
 # behavior — a build-configuration fix, no byte/UUID patching needed.

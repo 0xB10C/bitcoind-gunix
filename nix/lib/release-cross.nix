@@ -2,10 +2,10 @@
 # incl. the Qt GUI), byte-for-byte identical to the upstream GUIX release —
 # parameterized over the target. Used (via default.nix's mkLinuxCrossTarget)
 # for riscv64-linux-gnu, arm-linux-gnueabihf and powerpc64-linux-gnu;
-# bitcoind.nix (x86_64 cross-to-self) and bitcoind-aarch64.nix predate it
-# and keep their bespoke files. Structure and reasoning are identical to
-# bitcoind-aarch64.nix — see its comments and bitcoind.nix's for the full
-# story on every flag.
+# x86_64-linux-gnu/release.nix (x86_64 cross-to-self) and aarch64-linux-gnu/release.nix
+# predate it and keep their bespoke files. Structure and reasoning are
+# identical to aarch64-linux-gnu/release.nix — see its comments and
+# x86_64-linux-gnu/release.nix's for the full story on every flag.
 { lib
 , gcc14Stdenv
 , fetchurl
@@ -31,7 +31,7 @@
 
 let
   # Match GUIX's HOST_CFLAGS/HOST_CXXFLAGS: bare `-O2 -g` plus prefix maps
-  # (see bitcoind.nix for the full map reasoning). NO explicit
+  # (see x86_64-linux-gnu/release.nix for the full map reasoning). NO explicit
   # frame-pointer flags: crossInputs is the NoFp wrapper variant, so the
   # target's -O2 default applies and DW_AT_producer stays flag-free like
   # upstream's (any -m flags recorded there are DRIVER-injected from the
@@ -83,7 +83,7 @@ gcc14Stdenv.mkDerivation {
   cmakeBuildDir = "build";
   # GUIX doesn't pass a build type, so bitcoin's CMakeLists defaults to
   # RelWithDebInfo; nixpkgs' cmake hook would force Release. Visible in
-  # DW_AT_producer (see bitcoind.nix); same effective codegen (-O2).
+  # DW_AT_producer (see x86_64-linux-gnu/release.nix); same effective codegen (-O2).
   cmakeBuildType = "RelWithDebInfo";
   cmakeFlags = [
     "--toolchain=${depends}/toolchain.cmake"
@@ -131,13 +131,13 @@ gcc14Stdenv.mkDerivation {
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection" "fortify" "fortify3"
-    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see bitcoind.nix):
+    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see x86_64-linux-gnu/release.nix):
     # strictflexarrays1 is codegen-affecting; libcxxhardeningfast is libc++-only.
     "strictflexarrays1" "libcxxhardeningfast"
   ];
 
   # Mirror GUIX build.sh's split-debug + .comment handling (same as
-  # bitcoind.nix). Use the CROSS binutils 2.41 (<hostTriple>-* from
+  # x86_64-linux-gnu/release.nix). Use the CROSS binutils 2.41 (<hostTriple>-* from
   # crossInputs) — not nixpkgs' native one — so strip/objcopy behave like
   # upstream's. All .dbg are byte-identical to upstream's (gated below),
   # so objcopy --add-gnu-debuglink computes upstream's CRC naturally —
