@@ -63,13 +63,7 @@
         config.allowUnsupportedSystem = true;
       };
 
-      linuxHeaders61' = pkgsCross.linuxHeaders.overrideAttrs (o: {
-        version = "6.1.119";
-        src = pkgs.fetchurl {
-          url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
-          hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
-        };
-      });
+      linuxHeaders61' = import ./linux-headers-61.nix { inherit pkgs pkgsCross; };
 
       # Stock cross gcc14 wrapper used as the glibc's forced CC — see
       # gcc14X86NoFp/gcc14Aarch64NoFpCC. Only default-PIE is baked (GUIX's
@@ -165,17 +159,7 @@
         '';
       });
 
-      crossBinutils241' = pkgsCross.stdenv.cc.bintools.bintools.overrideAttrs (old: {
-        version = "2.41";
-        src = pkgs.fetchurl {
-          url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
-          sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
-        };
-        patches = [ ];
-        configureFlags =
-          (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
-          ++ [ "--enable-compressed-debug-sections=all" ];
-      });
+      crossBinutils241' = import ./cross-binutils-241.nix { inherit pkgs pkgsCross; };
       crossBintools241' = pkgsCross.stdenv.cc.bintools.override {
         bintools = crossBinutils241';
         libc = crossGlibc231';

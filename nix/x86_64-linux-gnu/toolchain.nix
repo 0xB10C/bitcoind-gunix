@@ -19,25 +19,15 @@ let
   # x86_64-linux-gnu cross binutils 2.41 — same override as the aarch64
   # crossBinutils241: take the build-host cross binutils (runs on the build
   # machine, emits/targets x86_64-linux-gnu) and downgrade it to GUIX's 2.41.
-  crossBinutils241X86 = pkgsCrossX86.stdenv.cc.bintools.bintools.overrideAttrs (old: {
-    version = "2.41";
-    src = pkgs.fetchurl {
-      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
-      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
-    };
-    patches = [ ];
-    # Match GUIX's binutils compression config (gnu/packages/base.scm):
-    # --enable-compressed-debug-sections=all makes gas/ld/objcopy default
-    # to zlib-gabi-compressing debug sections — that's why every .debug_*
-    # section in the upstream .dbg files is SHF_COMPRESSED (split-debug.sh
-    # passes no explicit flag). And GUIX does NOT use --with-system-zlib,
-    # so the deflate bytes come from binutils' bundled zlib — drop
-    # nixpkgs' --with-system-zlib so ours come from the same bundled code
-    # (identical 2.41 tarball ⇒ identical compressed bytes).
-    configureFlags =
-      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
-      ++ [ "--enable-compressed-debug-sections=all" ];
-  });
+  # Match GUIX's binutils compression config (gnu/packages/base.scm):
+  # --enable-compressed-debug-sections=all makes gas/ld/objcopy default
+  # to zlib-gabi-compressing debug sections — that's why every .debug_*
+  # section in the upstream .dbg files is SHF_COMPRESSED (split-debug.sh
+  # passes no explicit flag). And GUIX does NOT use --with-system-zlib,
+  # so the deflate bytes come from binutils' bundled zlib — drop
+  # nixpkgs' --with-system-zlib so ours come from the same bundled code
+  # (identical 2.41 tarball ⇒ identical compressed bytes).
+  crossBinutils241X86 = import ../lib/cross-binutils-241.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
 
   # Stock cross gcc14 wrapper, adjusted on two axes, used as
   # crossGlibc231X86's forced CC. glibc's statically-linked members carry
@@ -63,13 +53,7 @@ let
   # enumerators (RTM_NEWMULTICAST, RTA_FLOWLABEL, …) upstream's 6.1 lacks.
   # Used for glibc's --with-headers (and hence the cross gcc's sys-include
   # copies that bitcoind compiles against). Keep nixpkgs' no-relocs.patch.
-  linuxHeaders61 = pkgsCrossX86.linuxHeaders.overrideAttrs (o: {
-    version = "6.1.119";
-    src = pkgs.fetchurl {
-      url = "mirror://kernel/linux/kernel/v6.x/linux-6.1.119.tar.xz";
-      hash = "sha256-rs2vOdCoRKgc5MZ9na/4l56Ti7aQ309nn7u0lP5CMng=";
-    };
-  });
+  linuxHeaders61 = import ../lib/linux-headers-61.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
 
   gcc14X86NoFpCC = pkgsCrossX86.buildPackages.gcc14.cc.overrideAttrs (o: {
     configureFlags = (o.configureFlags or [ ]) ++ [
