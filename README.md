@@ -32,14 +32,16 @@ nix build .#sha256sums .#noncodesignedSha256sums --print-build-logs
 
 # diff against the real thing
 curl -sLO https://bitcoincore.org/bin/bitcoin-core-31.0/SHA256SUMS
-grep -v -e bitcoin-31.0.tar.gz -e codesignatures SHA256SUMS \
-  | diff - "$(nix path-info .#sha256sums)"
+diff SHA256SUMS "$(nix path-info .#sha256sums)"
 ```
 
-This builds (or fetches from cache) all 26 artifacts and produces
+This builds (or fetches from cache) all 26 build artifacts plus the two
+`git archive` source tarballs (`bitcoin-31.0.tar.gz` re-exported via
+`fetchurl`, `bitcoin-31.0-codesignatures-31.0.tar.gz` generated from
+`bitcoin-detached-sigs` — both byte-identical to upstream's) and produces
 `all.SHA256SUMS` / `noncodesigned.SHA256SUMS` with bare filenames
-(`<sha256>  <name>`), in the same order as upstream's published files —
-the `diff` above should be empty.
+(`<sha256>  <name>`), in the same order as upstream's published files — the
+`diff` above should be empty.
 
 ### Per-target builds
 
