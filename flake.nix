@@ -50,7 +50,8 @@
             bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
             nsisGcc11 nsis310 setupExeMingw codesigningMingw
             osslsigncode25 signedMingw
-            pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
+            pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv
+            sha256sums noncodesignedSha256sums;
           default = drvs.bitcoind;
         });
     };
