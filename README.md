@@ -145,14 +145,25 @@ upstream's with no byte patching anywhere.
 
 - `flake.nix` — entry point. Pins `nixpkgs` to `nixos-26.05` and exposes
   the outputs per build host (`packages.{x86_64,aarch64}-linux`); all
-  toolchain construction lives in `default.nix`.
-- `default.nix` — assembles the five GUIX-exact **cross toolchains**
-  (binutils 2.41, glibc 2.31 from GUIX's git source, gcc 14.3.0 with the
-  `gcc-ssa-generation` patch and GUIX's `linux-base-gcc` flags, rebuilt
-  against glibc 2.31 via `libcCross`): cross-to-self `x86_64-linux-gnu`
-  and cross `aarch64-linux-gnu` / `riscv64-linux-gnu` /
-  `arm-linux-gnueabihf` / `powerpc64-linux-gnu` (the last three via the
-  `mkLinuxCrossTarget` generator). Exposes all targets' outputs.
+  toolchain construction lives under `nix/`, assembled by `default.nix`.
+- `default.nix` — thin orchestrator: defines the shared `version`/`url`/
+  `sha256`/`buildSystem` and the cross-target `detachedSigs` (used by both
+  darwin and win64 signing), imports each `nix/<target>/toolchain.nix`, and
+  re-exports their outputs under the original attribute names.
+- `nix/<target>/toolchain.nix` (one per target: `x86_64-linux-gnu`,
+  `aarch64-linux-gnu`, `riscv64-linux-gnu`, `arm-linux-gnueabihf`,
+  `powerpc64-linux-gnu`, `darwin`, `win64`) — each builds its GUIX-exact
+  **cross toolchain** (binutils 2.41, glibc 2.31 from GUIX's git source, gcc
+  14.3.0 with the `gcc-ssa-generation` patch and GUIX's `linux-base-gcc`
+  flags, rebuilt against glibc 2.31 via `libcCross`; darwin/win64 use their
+  own clang/mingw toolchains) plus its depends/release/tarball/signing
+  outputs. `x86_64-linux-gnu` is cross-to-self; `riscv64-linux-gnu`,
+  `arm-linux-gnueabihf` and `powerpc64-linux-gnu` are thin wrappers around
+  `nix/lib/linux-cross-target.nix`.
+- `nix/lib/linux-cross-target.nix` — the shared `mkLinuxCrossTarget`
+  generator (binutils/glibc/gcc cross toolchain + depends/bitcoind/tarball
+  with the 20-artifact + 2-archive gate), parameterized over the target
+  triple; used by riscv64/armhf/ppc64.
 - `nix/lib/depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the
   full Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves
   every target (`HOST=` puts depends in cross-compile mode, matching
@@ -162,8 +173,8 @@ upstream's with no byte patching anywhere.
   prefixed cross compiler, then split-debug (cross binutils 2.41) and
   `.comment` rewrite, and assert all twenty per-target hashes (10 binaries +
   10 `.dbg`). `nix/lib/release-cross.nix` is parameterized over the target and
-  serves riscv64/armhf/ppc64 (via `mkLinuxCrossTarget` in `default.nix`); the
-  x86_64 and aarch64 files predate it.
+  serves riscv64/armhf/ppc64 (via `mkLinuxCrossTarget` in
+  `nix/lib/linux-cross-target.nix`); the x86_64 and aarch64 files predate it.
 - `nix/lib/tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
   byte-identical to upstream and asserts its hash (parameterized by `arch`).
 - `nix/darwin/` — `release.nix` (the 10 Mach-O binaries for x86_64/arm64),
