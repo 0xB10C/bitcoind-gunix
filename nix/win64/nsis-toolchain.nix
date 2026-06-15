@@ -49,7 +49,7 @@ stdenv.mkDerivation {
 
   # GUIX's patch: SConstruct passes the real os.environ to the build env so
   # PATH / the cross toolchain are visible to the sub-compiles.
-  patches = [ ./patches/nsis-env-passthru.patch ];
+  patches = [ ../patches/nsis-env-passthru.patch ];
 
   nativeBuildInputs = [ scons nsisCC libfaketime ];
   buildInputs = [ zlib ];

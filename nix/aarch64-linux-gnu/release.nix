@@ -1,6 +1,6 @@
 # Cross-build the full Bitcoin Core v31.0 aarch64-linux-gnu release (all 10
 # binaries, incl. the Qt GUI) on an x86_64 machine, byte-for-byte identical
-# to the upstream GUIX release. The aarch64 analog of bitcoind.nix; kept as a
+# to the upstream GUIX release. The aarch64 analog of x86_64-linux-gnu/release.nix; kept as a
 # separate file because the cross build differs structurally (cross compiler
 # via CC export, aarch64 ELF interpreter, cross binutils for split-debug,
 # aarch64 frame-pointer handling, per-binary hashes).
@@ -19,7 +19,7 @@
 
 let
   # Match GUIX's HOST_CFLAGS/HOST_CXXFLAGS: bare `-O2 -g` plus prefix maps,
-  # exactly like bitcoind.nix (see its comment for the full map reasoning).
+  # exactly like x86_64-linux-gnu/release.nix (see its comment for the full map reasoning).
   # NO explicit frame-pointer flags: crossInputs is the NoFp wrapper
   # variant, so the aarch64 -O2 default applies (keep the non-leaf frame
   # pointer, omit the leaf one — what the previously explicit
@@ -42,14 +42,14 @@ gcc14Stdenv.mkDerivation {
   nativeBuildInputs = [ pkg-config cmake ] ++ crossInputs;
 
   # Match GUIX's CONFIGFLAGS (contrib/guix/libexec/build.sh), same as the
-  # x86_64 bitcoind.nix: leave BUILD_TESTS at its default ON (builds
+  # x86_64-linux-gnu/release.nix: leave BUILD_TESTS at its default ON (builds
   # bitcoin-tx/-util/-wallet + test_bitcoin), skip bench/fuzz/gui-tests. The
   # depends toolchain.cmake auto-enables BUILD_GUI + WITH_QRENCODE because the
   # Qt depends are present, so bitcoin-qt / libexec/bitcoin-gui build too.
   cmakeBuildDir = "build";
   # GUIX doesn't pass a build type, so bitcoin's CMakeLists defaults to
   # RelWithDebInfo; nixpkgs' cmake hook would force Release. Visible in
-  # DW_AT_producer (see bitcoind.nix); same effective codegen (-O2).
+  # DW_AT_producer (see x86_64-linux-gnu/release.nix); same effective codegen (-O2).
   cmakeBuildType = "RelWithDebInfo";
   cmakeFlags = [
     "--toolchain=${depends}/toolchain.cmake"
@@ -95,13 +95,13 @@ gcc14Stdenv.mkDerivation {
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection" "fortify" "fortify3"
-    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see bitcoind.nix):
+    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see x86_64-linux-gnu/release.nix):
     # strictflexarrays1 is codegen-affecting; libcxxhardeningfast is libc++-only.
     "strictflexarrays1" "libcxxhardeningfast"
   ];
 
   # Mirror GUIX build.sh's split-debug + .comment handling (same as
-  # x86_64 bitcoind.nix). Use the CROSS binutils 2.41 (aarch64-linux-gnu-*
+  # x86_64-linux-gnu/release.nix). Use the CROSS binutils 2.41 (aarch64-linux-gnu-*
   # from crossInputs) — not nixpkgs' native one — so strip/objcopy behave
   # like upstream's.
   #

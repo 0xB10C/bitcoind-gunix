@@ -180,7 +180,7 @@ let
       "zerocallusedregs" "strictoverflow" "stackprotector"
       "stackclashprotection" "fortify" "fortify3"
       # New nixos-26.05 cross cc-wrapper defaults GUIX doesn't apply (see
-      # bitcoind.nix). strictflexarrays1 is codegen-affecting;
+      # nix/x86_64-linux-gnu/release.nix). strictflexarrays1 is codegen-affecting;
       # libcxxhardeningfast is libc++-only (no-op for us).
       "strictflexarrays1" "libcxxhardeningfast"
       # "pic": see crossGlibc231X86 — the wrapper's default -fPIC injection
@@ -308,7 +308,7 @@ let
         "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
         "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
       ];
-      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      patches = (old.patches or [ ]) ++ [ ./nix/patches/gcc-ssa-generation.patch ];
       # Debug info for libgcc with upstream's exact DW_AT_producer
       # `-g -g -g -O2 -O2 -O2` + GUIX's ephemeral gcc build dir for
       # DW_AT_comp_dir — the aarch64 analog of crossGuixGccX86's preBuild
@@ -385,14 +385,14 @@ let
   # libcCross above) — which makes all 10 cross-built binaries byte-match the
   # upstream aarch64 release (the dynsym GLIBC symbol versions, .text/.eh_frame
   # all line up; see CLAUDE.md's aarch64 section).
-  dependsAarch64 = pkgs.callPackage ./depends.nix {
+  dependsAarch64 = pkgs.callPackage ./nix/lib/depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "aarch64-linux-gnu";
     buildQt = true;
     crossInputs = aarch64CrossInputs;
   };
-  bitcoindAarch64 = pkgs.callPackage ./bitcoind-aarch64.nix {
+  bitcoindAarch64 = pkgs.callPackage ./nix/aarch64-linux-gnu/release.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     depends = dependsAarch64;
@@ -400,7 +400,7 @@ let
     guixGcc = crossGuixGcc.cc;
     linuxHeaders = linuxHeaders61Aarch64;
   };
-  tarballAarch64 = pkgs.callPackage ./tarball.nix {
+  tarballAarch64 = pkgs.callPackage ./nix/lib/tarball.nix {
     inherit version url sha256;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
@@ -408,8 +408,8 @@ let
   };
   # The separate aarch64 -debug.tar.gz with the ten .dbg files —
   # reproducible since 2026-06-11 (byte-identical .dbg, same recipe as
-  # x86_64's; see bitcoind-aarch64.nix).
-  debugTarballAarch64 = pkgs.callPackage ./tarball.nix {
+  # x86_64's; see nix/aarch64-linux-gnu/release.nix).
+  debugTarballAarch64 = pkgs.callPackage ./nix/lib/tarball.nix {
     inherit version url sha256;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
@@ -623,7 +623,7 @@ let
             "--with-as=${crossBinutils241'}/bin/${triple}-as"
             "--with-ld=${crossBinutils241'}/bin/${triple}-ld"
           ] ++ gccArchFlags;
-          patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ] ++ gccExtraPatches;
+          patches = (old.patches or [ ]) ++ [ ./nix/patches/gcc-ssa-generation.patch ] ++ gccExtraPatches;
           nativeBuildInputs = gccNativeInputs ++ (old.nativeBuildInputs or [ ]);
           preBuild = (old.preBuild or "") + ''
             EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"
@@ -660,14 +660,14 @@ let
         crossGuixGccNoFp'.bintools
       ];
 
-      depends' = pkgs.callPackage ./depends.nix {
+      depends' = pkgs.callPackage ./nix/lib/depends.nix {
         inherit version url sha256;
         inherit (pkgs) gcc14Stdenv;
         hostTriple = triple;
         buildQt = true;
         crossInputs = crossInputs';
       };
-      bitcoind' = pkgs.callPackage ./bitcoind-cross.nix {
+      bitcoind' = pkgs.callPackage ./nix/lib/release-cross.nix {
         inherit version url sha256;
         inherit (pkgs) gcc14Stdenv;
         inherit dynamicLinker extraCXXFLAGS expectedHashes debugCanonMap canonDepends;
@@ -678,13 +678,13 @@ let
         guixGcc = crossGuixGcc'.cc;
         linuxHeaders = linuxHeaders61';
       };
-      tarball' = pkgs.callPackage ./tarball.nix {
+      tarball' = pkgs.callPackage ./nix/lib/tarball.nix {
         inherit version url sha256;
         bitcoind = bitcoind';
         arch = triple;
         expectedSha256 = tarballSha256;
       };
-      debugTarball' = if debugTarballSha256 == null then null else pkgs.callPackage ./tarball.nix {
+      debugTarball' = if debugTarballSha256 == null then null else pkgs.callPackage ./nix/lib/tarball.nix {
         inherit version url sha256;
         bitcoind = bitcoind';
         arch = triple;
@@ -718,7 +718,7 @@ let
   #   exist on riscv).
   riscv64Cross = mkLinuxCrossTarget {
     triple = "riscv64-linux-gnu";
-    glibcPatches = [ ./patches/glibc-riscv-jumptarget.patch ];
+    glibcPatches = [ ./nix/patches/glibc-riscv-jumptarget.patch ];
     dynamicLinker = "/lib/ld-linux-riscv64-lp64d.so.1";
     pnameSuffix = "riscv64";
     expectedHashes = {
@@ -813,7 +813,7 @@ let
     #   entry in bitcoin-node/-gui/test_bitcoin/qt). With the canon
     #   rewrite the remaining argv map is GUIX's literal
     #   $DISTSRC/src=., which dups the src/ CUs on both sides equally.
-    gccExtraPatches = [ ./patches/gcc-debug-canon-prefix-map.patch ];
+    gccExtraPatches = [ ./nix/patches/gcc-debug-canon-prefix-map.patch ];
     debugCanonMap = true;
     canonDepends = true;
     dynamicLinker = "/lib/ld-linux-armhf.so.3";
@@ -870,7 +870,7 @@ let
   nixpkgsPpc64 = pkgs.applyPatches {
     name = "nixpkgs-ppc64-gnu-abi";
     src = pkgs.path;
-    patches = [ ./patches/nixpkgs-ppc64-gnu-abi.patch ];
+    patches = [ ./nix/patches/nixpkgs-ppc64-gnu-abi.patch ];
   };
   ppc64Cross = mkLinuxCrossTarget {
     triple = "powerpc64-linux-gnu";
@@ -888,7 +888,7 @@ let
     # file table keys), so the build behaves as if it ran at GUIX's real
     # path and the remaining -fdebug-prefix-map set is spelled exactly
     # like build.sh's. See the patch header; strict no-op when unset.
-    gccExtraPatches = [ ./patches/gcc-debug-canon-prefix-map.patch ];
+    gccExtraPatches = [ ./nix/patches/gcc-debug-canon-prefix-map.patch ];
     # With the canon rewrite active, the source-tree map must be GUIX's
     # literal one (on the POST-canon path), not /build-based.
     debugCanonMap = true;
@@ -1201,7 +1201,7 @@ let
         "--with-as=${crossBinutils241X86}/bin/x86_64-linux-gnu-as"
         "--with-ld=${crossBinutils241X86}/bin/x86_64-linux-gnu-ld"
       ];
-      patches = (old.patches or [ ]) ++ [ ./patches/gcc-ssa-generation.patch ];
+      patches = (old.patches or [ ]) ++ [ ./nix/patches/gcc-ssa-generation.patch ];
       # gcc/common/builder.nix
       # seeds makeFlagsArray with the *_FOR_TARGET flags, so re-appending
       # here wins and gas (2.41, default relaxable) emits non-relaxable
@@ -1264,7 +1264,7 @@ let
   # Wrapper variant for the bitcoind compile that does NOT inject
   # `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer` (nixpkgs' cross
   # cc-wrapper puts those in cc-cflags-before). With the injection gone,
-  # bitcoind.nix no longer needs the explicit -fomit-frame-pointer
+  # nix/x86_64-linux-gnu/release.nix no longer needs the explicit -fomit-frame-pointer
   # override — and that matters for the .dbg: every explicit flag is
   # recorded in DW_AT_producer, while upstream GUIX compiles with bare
   # `-O2 -g` (the x86_64 -O2 default omits both frame pointers), so its
@@ -1284,31 +1284,31 @@ let
   ];
 
   # The canonical x86_64 release build, through the cross-to-self toolchain
-  # like GUIX. depends.nix's hostTriple already defaults to
+  # like GUIX. nix/lib/depends.nix's hostTriple already defaults to
   # "x86_64-linux-gnu" (HOST= forces depends' cross-compile mode either
   # way); passing crossInputs makes the HOST packages use the prefixed
   # cross tools (the native helper tools use the plain gcc14Stdenv, exactly
   # like dependsAarch64).
-  depends = pkgs.callPackage ./depends.nix {
+  depends = pkgs.callPackage ./nix/lib/depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "x86_64-linux-gnu";
     buildQt = true;
     crossInputs = x86CrossInputs;
   };
-  bitcoind = pkgs.callPackage ./bitcoind.nix {
+  bitcoind = pkgs.callPackage ./nix/x86_64-linux-gnu/release.nix {
     inherit version url sha256 depends;
     inherit (pkgs) gcc14Stdenv;
     crossInputs = x86CrossInputsNoFp;
     guixGcc = crossGuixGccX86.cc;
     linuxHeaders = linuxHeaders61;
   };
-  tarball = pkgs.callPackage ./tarball.nix {
+  tarball = pkgs.callPackage ./nix/lib/tarball.nix {
     inherit version url sha256 bitcoind;
   };
   # The separate -debug.tar.gz with the ten .dbg files — reproducible since
-  # 2026-06-11 (the .dbg are byte-identical to upstream's; see bitcoind.nix).
-  debugTarball = pkgs.callPackage ./tarball.nix {
+  # 2026-06-11 (the .dbg are byte-identical to upstream's; see nix/x86_64-linux-gnu/release.nix).
+  debugTarball = pkgs.callPackage ./nix/lib/tarball.nix {
     inherit version url sha256 bitcoind;
     debug = true;
     expectedSha256 = "96e3506195c5cc2ea9ca72fb2ddcbcf5246dd0db0d21d726f3c98eaf0c6b9078";
@@ -1391,14 +1391,14 @@ let
   # clang/llvm-* tools off PATH (crossInputs) and compiles against the
   # SDK; the native helper tools still use the gcc14 stdenv like every
   # other target (GUIX: gcc-toolchain-14 as NATIVE_GCC, build.sh).
-  dependsDarwinX86 = pkgs.callPackage ./depends.nix {
+  dependsDarwinX86 = pkgs.callPackage ./nix/lib/depends.nix {
     inherit version url sha256 darwinSdk;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "x86_64-apple-darwin";
     buildQt = true;
     crossInputs = darwinCrossInputs;
   };
-  dependsDarwinArm64 = pkgs.callPackage ./depends.nix {
+  dependsDarwinArm64 = pkgs.callPackage ./nix/lib/depends.nix {
     inherit version url sha256 darwinSdk;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "arm64-apple-darwin";
@@ -1409,7 +1409,7 @@ let
   # The 10 Mach-O binaries of each darwin release. Reference hashes taken
   # from the published -unsigned.tar.gz (whose archive sha256 is in the
   # upstream SHA256SUMS: 48d34a14… arm64 / d1d0174f… x86_64).
-  bitcoindDarwinX86 = pkgs.callPackage ./bitcoind-darwin.nix {
+  bitcoindDarwinX86 = pkgs.callPackage ./nix/darwin/release.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     depends = dependsDarwinX86;
@@ -1429,7 +1429,7 @@ let
       "libexec/test_bitcoin" = "4f6a85f2ae6b2c5e405865d184cc8c4a2090ef2308c9339e7c7ee2ba162c5d5a";
     };
   };
-  bitcoindDarwinArm64 = pkgs.callPackage ./bitcoind-darwin.nix {
+  bitcoindDarwinArm64 = pkgs.callPackage ./nix/darwin/release.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     depends = dependsDarwinArm64;
@@ -1453,14 +1453,14 @@ let
   # assembled like the linux release archives (build.sh darwin case: no
   # README.md, no .dbg); the -unsigned.zip IS the deploy target's
   # bitcoin-macos-app.zip under its release name (build.sh just mv's it).
-  tarballDarwinX86 = pkgs.callPackage ./tarball.nix {
+  tarballDarwinX86 = pkgs.callPackage ./nix/lib/tarball.nix {
     inherit version url sha256;
     bitcoind = bitcoindDarwinX86;
     arch = "x86_64-apple-darwin";
     darwinUnsigned = true;
     expectedSha256 = "d1d0174f07cf87d9af4318f7072350510fa0f1bf8d3d3b1ee7143ad5967b6bdf";
   };
-  tarballDarwinArm64 = pkgs.callPackage ./tarball.nix {
+  tarballDarwinArm64 = pkgs.callPackage ./nix/lib/tarball.nix {
     inherit version url sha256;
     bitcoind = bitcoindDarwinArm64;
     arch = "arm64-apple-darwin";
@@ -1496,28 +1496,28 @@ let
   # SIGNED .tar.gz/.zip (the UUID-patched unsigned binaries are already
   # upstream-identical, so applying upstream's detached sigs reproduces the
   # signed bytes).
-  signapple = pkgs.callPackage ./signapple.nix { };
+  signapple = pkgs.callPackage ./nix/darwin/signapple.nix { };
   detachedSigs = pkgs.fetchFromGitHub {
     owner = "bitcoin-core";
     repo = "bitcoin-detached-sigs";
     rev = "c88e80d81ef94f7950dbf9a8b8d4b3f4407f150d"; # v31.0
     hash = "sha256-j4vVHmRl61hNmqRdrW6dNZnkAPJqrxd0EQvrVZGFng4=";
   };
-  codesigningDarwinX86 = pkgs.callPackage ./darwin-codesigning.nix {
+  codesigningDarwinX86 = pkgs.callPackage ./nix/darwin/codesigning.nix {
     inherit version url sha256;
     host = "x86_64-apple-darwin";
     bitcoindDarwin = bitcoindDarwinX86;
     unsignedTarball = tarballDarwinX86;
     expectedSha256 = "fccf54f31bd58a3f834add05fa5df36520313d936445c556be8f71ccf314b658";
   };
-  codesigningDarwinArm64 = pkgs.callPackage ./darwin-codesigning.nix {
+  codesigningDarwinArm64 = pkgs.callPackage ./nix/darwin/codesigning.nix {
     inherit version url sha256;
     host = "arm64-apple-darwin";
     bitcoindDarwin = bitcoindDarwinArm64;
     unsignedTarball = tarballDarwinArm64;
     expectedSha256 = "955563c720b4d5fc22a11d4b102940d605f1cb9eb0b564f50deb606412c631e5";
   };
-  signedDarwinX86 = pkgs.callPackage ./darwin-signed.nix {
+  signedDarwinX86 = pkgs.callPackage ./nix/darwin/signed.nix {
     inherit version signapple detachedSigs;
     host = "x86_64-apple-darwin";
     arch = "x86_64";
@@ -1525,7 +1525,7 @@ let
     expectedTarballSha256 = "56824dd705bc2a3b22d42e8aa02ed53498d491ff7c2c8aa96831333871887ead";
     expectedZipSha256 = "8e230f36a2020072763adf742b20d95348cb20aaa0b0a918ca44ecdc83ac4efd";
   };
-  signedDarwinArm64 = pkgs.callPackage ./darwin-signed.nix {
+  signedDarwinArm64 = pkgs.callPackage ./nix/darwin/signed.nix {
     inherit version signapple detachedSigs;
     host = "arm64-apple-darwin";
     arch = "arm64";
@@ -1817,7 +1817,7 @@ let
       url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
       sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
     };
-    patches = [ ./patches/binutils-unaligned-default.patch ];
+    patches = [ ./nix/patches/binutils-unaligned-default.patch ];
     # NO --enable-compressed-debug-sections: GUIX's mingw binutils does NOT
     # default-compress (its .obj carry plain .debug_*, verified in the local
     # guix-build). With compression ON gas emits PE .zdebug_frame$<mangled> for
@@ -1867,8 +1867,8 @@ let
       # (see canonDepends in mkLinuxCrossTarget). v6 also hooks remap_macro_filename
       # so the depends __FILE__ macros still rewrite (no raw store path in .rodata).
       patches = (old.patches or [ ]) ++ [
-        ./patches/gcc-ssa-generation.patch
-        ./patches/gcc-debug-canon-prefix-map.patch
+        ./nix/patches/gcc-ssa-generation.patch
+        ./nix/patches/gcc-debug-canon-prefix-map.patch
       ];
       dontStrip = true;
       # gcc's configure decides HAVE_GAS_CFI_DIRECTIVE by running the CROSS
@@ -1937,7 +1937,7 @@ let
   # win64 depends tree (Qt included; no X11 — Windows Qt). Package set
   # (depends packages.mk *_mingw32_packages): boost libevent qrencode qt
   # sqlite zeromq capnp + native_{capnp,libmultiprocess,qt}.
-  dependsMingw = pkgs.callPackage ./depends.nix {
+  dependsMingw = pkgs.callPackage ./nix/lib/depends.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = mingwTriple;
@@ -1964,7 +1964,7 @@ let
     "bin/bitcoin-qt.exe.dbg" = "9300dd4c45da542c4778968184df192b3cf778bf8eddb1c8e5af01ab1234e0dc";
     "libexec/test_bitcoin.exe.dbg" = "99f9f8bf85fb2b9a1d65c480eda196623ddc07fdf4bc3e7dc98d3ef31c26f16a";
   };
-  bitcoindMingw = pkgs.callPackage ./bitcoind-win.nix {
+  bitcoindMingw = pkgs.callPackage ./nix/win64/release.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
     depends = dependsMingw;
@@ -1981,12 +1981,12 @@ let
   bitcoindMingwNoGate = bitcoindMingw.override { expectedHashes = { }; };
 
   # The published win64 .zip archives (build.sh mingw case).
-  unsignedZipMingw = pkgs.callPackage ./win-zip.nix {
+  unsignedZipMingw = pkgs.callPackage ./nix/win64/zip.nix {
     inherit version url sha256;
     bitcoind = bitcoindMingw;
     expectedSha256 = "5ecd365b53a2896850178f90302375480933e6c85ef81bb8abe8675fd44e1d9c";
   };
-  debugZipMingw = pkgs.callPackage ./win-zip.nix {
+  debugZipMingw = pkgs.callPackage ./nix/win64/zip.nix {
     inherit version url sha256;
     bitcoind = bitcoindMingw;
     debug = true;
@@ -2075,7 +2075,7 @@ let
   # inject nixpkgs' -fno-omit-frame-pointer, so strip it (x86_64 -O2 omits FP).
   nsisGcc11 = stripMingwFpFlags pkgsCrossMingwNsis.buildPackages.gcc11;
 
-  nsis310 = pkgs.callPackage ./nsis310.nix {
+  nsis310 = pkgs.callPackage ./nix/win64/nsis-toolchain.nix {
     nsisCC = nsisGcc11;
     mingwInclude = "${pkgsCrossMingwNsis.windows.mingw_w64.dev}/include";
     mingwLib = "${pkgsCrossMingwNsis.windows.mingw_w64}/lib";
@@ -2086,7 +2086,7 @@ let
     libfaketime = pkgs2405.libfaketime;
   };
 
-  setupExeMingw = pkgs.callPackage ./win-nsis.nix {
+  setupExeMingw = pkgs.callPackage ./nix/win64/setup.nix {
     inherit version url sha256 mingwBinutils241;
     inherit (pkgs) libfaketime;
     bitcoind = bitcoindMingw;
@@ -2096,7 +2096,7 @@ let
   };
 
   # ---- win64-codesigning.tar.gz ---------------------------------------------
-  codesigningMingw = pkgs.callPackage ./win-codesigning.nix {
+  codesigningMingw = pkgs.callPackage ./nix/win64/codesigning.nix {
     inherit version url sha256;
     bitcoind = bitcoindMingw;
     setupExe = setupExeMingw;
@@ -2118,7 +2118,7 @@ let
     doCheck = false;
   });
 
-  signedMingw = pkgs.callPackage ./win-signed.nix {
+  signedMingw = pkgs.callPackage ./nix/win64/signed.nix {
     inherit version detachedSigs;
     osslsigncode = osslsigncode25;
     codesigningTarball = codesigningMingw;

@@ -2,8 +2,8 @@
 # — the 8 PE binaries (bitcoin{,-cli,-tx,-util,-wallet,-qt,d}.exe +
 # libexec/test_bitcoin.exe; NO bitcoin-node/-gui, ENABLE_IPC is OFF for WIN32)
 # — byte-for-byte identical to the upstream GUIX release. Mirrors
-# bitcoind-cross.nix; the mingw-specific deltas are noted inline. See
-# bitcoind.nix / bitcoind-cross.nix for the full reasoning behind each flag.
+# lib/release-cross.nix; the mingw-specific deltas are noted inline. See
+# x86_64-linux-gnu/release.nix / lib/release-cross.nix for the full reasoning behind each flag.
 { lib
 , gcc14Stdenv
 , fetchurl
@@ -45,7 +45,7 @@ let
     # Toolchain headers → GUIX's /usr layout (its /gnu/store→/usr maps): the
     # libstdc++ headers map VERSION-LESS (gcc's --with-gxx-include-dir), the
     # mingw CRT headers (copied into sys-include) → /usr/include, gcc builtins
-    # → /usr/lib/gcc. Same scheme as bitcoind-cross.nix.
+    # → /usr/lib/gcc. Same scheme as lib/release-cross.nix.
     + " -ffile-prefix-map=${guixGcc}/include/c++/14.3.0=/usr/include/c++"
     + " -ffile-prefix-map=${guixGcc}/${hostTriple}/sys-include=/usr/include"
     + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"

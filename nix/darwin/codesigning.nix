@@ -8,7 +8,7 @@
 #   ./bitcoin-<version>/...             (the install tree — byte-for-byte
 #                                        the same files as -unsigned.tar.gz)
 # with the same deterministic packaging as the release archive
-# (find|sort|tar --mode=… --null | gzip -9n); see tarball.nix.
+# (find|sort|tar --mode=… --null | gzip -9n); see lib/tarball.nix.
 { lib
 , runCommandLocal
 , gnutar

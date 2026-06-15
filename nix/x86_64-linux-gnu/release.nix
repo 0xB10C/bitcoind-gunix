@@ -1,7 +1,7 @@
 # Build the full Bitcoin Core v31.0 x86_64-linux-gnu release through the
 # GUIX-style cross-to-self toolchain (default.nix's crossGuixGccX86 — the
 # x86_64-linux-gnu-triple cross gcc/glibc/binutils), byte-for-byte identical
-# to the upstream GUIX release. The x86_64 sibling of bitcoind-aarch64.nix.
+# to the upstream GUIX release. The x86_64 sibling of aarch64-linux-gnu/release.nix.
 #
 # This replaced the original native-stdenv bitcoind.nix on 2026-06-10 (it
 # produces the same 10 upstream hashes; the cross-to-self triple is also
@@ -12,7 +12,7 @@
 # - split-debug uses the explicit prefixed cross binutils 2.41 (the
 #   unprefixed objcopy/strip on PATH belong to the plain build stdenv =
 #   binutils 2.46, whose behavior diverges);
-# - vs bitcoind-aarch64.nix: x86_64 frame pointers (omit BOTH at -O2 — see
+# - vs aarch64-linux-gnu/release.nix: x86_64 frame pointers (omit BOTH at -O2 — see
 #   the aarch64 file's note), the x86-64 ELF interpreter, and the x86_64
 #   per-binary CRCs/hashes.
 { gcc14Stdenv # plain native build stdenv (native helper tools only)
@@ -144,7 +144,7 @@ gcc14Stdenv.mkDerivation {
   ];
 
   # Mirror GUIX build.sh's split-debug + .comment handling (same as
-  # bitcoind-aarch64.nix). Use the CROSS binutils 2.41 (x86_64-linux-gnu-*
+  # aarch64-linux-gnu/release.nix). Use the CROSS binutils 2.41 (x86_64-linux-gnu-*
   # from crossInputs) — the unprefixed objcopy on PATH is the plain build
   # stdenv's 2.46.
   #

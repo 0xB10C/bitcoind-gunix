@@ -153,20 +153,27 @@ upstream's with no byte patching anywhere.
   and cross `aarch64-linux-gnu` / `riscv64-linux-gnu` /
   `arm-linux-gnueabihf` / `powerpc64-linux-gnu` (the last three via the
   `mkLinuxCrossTarget` generator). Exposes all targets' outputs.
-- `depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the full
-  Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves
+- `nix/lib/depends.nix` — builds Bitcoin Core's `depends/` tree (incl. the
+  full Qt6 GUI dependencies); parameterized by `hostTriple`, so it serves
   every target (`HOST=` puts depends in cross-compile mode, matching
   GUIX either way).
-- `bitcoind.nix` / `bitcoind-aarch64.nix` / `bitcoind-cross.nix` —
-  build all of Bitcoin Core via CMake with the prefixed cross compiler,
-  then split-debug (cross binutils 2.41) and `.comment` rewrite, and
-  assert all twenty per-target hashes (10 binaries + 10 `.dbg`).
-  `bitcoind-cross.nix` is parameterized over the target and serves
-  riscv64/armhf/ppc64 (via `mkLinuxCrossTarget` in `default.nix`); the
+- `nix/x86_64-linux-gnu/release.nix` / `nix/aarch64-linux-gnu/release.nix` /
+  `nix/lib/release-cross.nix` — build all of Bitcoin Core via CMake with the
+  prefixed cross compiler, then split-debug (cross binutils 2.41) and
+  `.comment` rewrite, and assert all twenty per-target hashes (10 binaries +
+  10 `.dbg`). `nix/lib/release-cross.nix` is parameterized over the target and
+  serves riscv64/armhf/ppc64 (via `mkLinuxCrossTarget` in `default.nix`); the
   x86_64 and aarch64 files predate it.
-- `tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
+- `nix/lib/tarball.nix` — assembles `bitcoin-31.0-<arch>-linux-gnu.tar.gz`
   byte-identical to upstream and asserts its hash (parameterized by `arch`).
-- `patches/` — patch files applied via the .nix derivations.
+- `nix/darwin/` — `release.nix` (the 10 Mach-O binaries for x86_64/arm64),
+  `codesigning.nix` / `signed.nix` (the `-codesigning.tar.gz` and
+  signapple-signed artifacts), `signapple.nix` (the signing toolchain).
+- `nix/win64/` — `release.nix` (the 8 PE binaries), `zip.nix`
+  (unsigned/debug `.zip`), `nsis-toolchain.nix` + `setup.nix` (NSIS 3.10 and
+  `setup-unsigned.exe`), `codesigning.nix` / `signed.nix` (the
+  `-codesigning.tar.gz` and osslsigncode-signed artifacts).
+- `nix/patches/` — patch files applied via the .nix derivations.
 - `CLAUDE.md` — design notes and the reproducibility methodology playbook.
 
 ## License
