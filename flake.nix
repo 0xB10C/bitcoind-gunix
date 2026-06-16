@@ -52,7 +52,7 @@
             osslsigncode25 signedMingw
             pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv
             sha256sums noncodesignedSha256sums;
-          default = drvs.bitcoind;
+          default = drvs.sha256sums;
         });
     };
 }
