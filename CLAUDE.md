@@ -6,6 +6,37 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-20): aarch64-on-aarch64 trivial-cross fix in flight — `--disable-fixincludes` overlay, CI un-pinned
+
+The aarch64-host build path (the `build-on-aarch64-host` arm CI job that
+was `continue-on-error: true` since 2026-06-11 — the only POSTPONED gap
+on issue #6, see that status section below) gets a one-derivation fix:
+`nix/aarch64-linux-gnu/toolchain.nix` now imports `pkgsCrossAarch64`
+with a `fixincludesOverlay` that appends `--disable-fixincludes` to
+`gccWithoutTargetLibc.cc` (the bootstrap nolibc cross-stage-static
+gcc 15.2 that fails first), `gcc14.cc` (our `crossGuixGcc` base), and
+`gcc15.cc` (the libc-aware cross gcc nixpkgs builds before our gcc-14.3
+override applies). Gated on `buildSystem == "aarch64-linux"` so x86_64
+build-host drvs are byte-identical pre/post.
+
+Why: gcc-15.2 `gcc/configure.ac:2595` sets `STMP_FIXINC=stmp-fixinc`
+unconditionally, zeroed only by `--disable-fixincludes` (line 2606); on
+an aarch64 build host both our target `aarch64-linux-gnu` and the
+host's `aarch64-unknown-linux-gnu` canonicalize to the same internal
+triple (unlike x86_64's `pc` default vendor — which is why the x86
+cross-to-self never hit this), gcc's build system sees build == target,
+runs fixinc.sh against /usr/include, fails in the sandbox. The overlay
+catches every gcc that would hit this; verified at eval level (x86 drvs
+unchanged) and that the flag survives our
+`.override { libcCross = crossGlibc231 }` + `.overrideAttrs` layering
+into `crossGuixGcc`.
+
+CI's `continue-on-error: true` is removed; final byte-proof comes from
+the green `build-on-aarch64-host` run. Local qemu-emulated build of the
+bootstrap nolibc gcc on x86_64 (via `boot.binfmt.emulatedSystems` set
+on the NixOS host so the nspawn container inherits the registration)
+runs in parallel as a sanity check.
+
 ## Status (2026-06-14, darwin LC_UUID): root-caused — zero byte/UUID patching anywhere in the project
 
 The darwin `bitcoin-qt`/`bitcoin-gui` LC_UUID divergence (the project's

@@ -8,9 +8,36 @@ let
   # `aarch64-linux-gnu-gcc`, which is what Bitcoin's depends Makefile
   # invokes for HOST packages. (On an aarch64-linux build host this is a
   # cross-to-self, the exact mirror of pkgsCrossX86 on x86_64.)
+  #
+  # On an aarch64-linux build host (the trivial cross), gcc's own build
+  # system sees build == target after config.sub canonicalization (both
+  # `aarch64-linux-gnu` and the build-host's `aarch64-unknown-linux-gnu`
+  # collapse to the same internal triple) and tries to run fixincludes
+  # against /usr/include — absent in the Nix sandbox → `stmp-fixinc` fails
+  # in the BOOTSTRAP `aarch64-linux-gnu-nolibc-gcc`. The overlay below
+  # appends `--disable-fixincludes` to every gcc derivation we touch (the
+  # bootstrap nolibc cross-stage-static gcc 15.2 via `gccWithoutTargetLibc`,
+  # nixpkgs' libc-aware cross gcc 15.2 via `gcc15`, and our gcc 14.3.0 base
+  # via `gcc14`), so each one short-circuits the stmp-fixinc target. Gated
+  # to aarch64-linux build hosts: on x86_64-linux build hosts (the
+  # routinely exercised path) the overlay is empty, so every drv hash on
+  # that path stays identical.
+  fixincludesOverlay = final: prev:
+    let
+      fixInner = pkg: pkg.override (old: {
+        cc = old.cc.overrideAttrs (oldCC: {
+          configureFlags = (oldCC.configureFlags or [ ]) ++ [ "--disable-fixincludes" ];
+        });
+      });
+    in {
+      gccWithoutTargetLibc = fixInner prev.gccWithoutTargetLibc;
+      gcc14 = fixInner prev.gcc14;
+      gcc15 = fixInner prev.gcc15;
+    };
   pkgsCrossAarch64 = import pkgs.path {
     localSystem = buildSystem;
     crossSystem = { config = "aarch64-linux-gnu"; };
+    overlays = pkgs.lib.optionals (buildSystem == "aarch64-linux") [ fixincludesOverlay ];
   };
 
   # Kernel headers pinned to GUIX's 6.1.119 for the aarch64 target — same
