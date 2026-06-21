@@ -50,6 +50,30 @@ let
         postPatch = (oldCC.postPatch or "") + ''
           sed -i '/^: \''${inhibit_libc=false}$/a if test "x$with_headers" = xno; then inhibit_libc=true; fi' gcc/configure.ac
         '';
+        # Third trivial-cross collision: gcc thinks build == target after
+        # canonicalization → installs libgcc_s.so* via the native libdir
+        # (which lands in `$out/lib/` after `preInstall`'s `lib64 -> lib`
+        # compatibility symlink resolves) instead of the cross-style
+        # `$out/aarch64-linux-gnu/lib/`. nixpkgs' postInstall
+        # (`moveToOutput "$targetLibDir/lib*.so*" ...`) +
+        # preFixupLibGccPhase (`mv $lib/aarch64-linux-gnu/lib/libgcc_s.so
+        # ...`) both assume the cross layout because `targetConfig` is
+        # set, so they don't find the files and fail. Reshuffle BEFORE
+        # nixpkgs' postInstall runs: move the two target shared libs
+        # `libgcc_s.so` / `libgcc_s.so.1` (which postInstall's
+        # `moveToOutput "$targetLibDir/lib*.so*"` and the libgcc
+        # preFixupLibGccPhase glob for) from the native `$out/lib/` to
+        # the cross `$out/aarch64-linux-gnu/lib/`. libgcc.a is already at
+        # the cross-style `lib/gcc/<target>/<ver>/` location via gcc's
+        # normal install — only the .so* needs moving. Do NOT touch the
+        # `$out/lib64 -> lib` compatibility symlinks; nixpkgs' own
+        # postInstall removes those.
+        postInstall = ''
+          if [ -f "$out/lib/libgcc_s.so.1" ] && [ ! -e "$out/aarch64-linux-gnu/lib/libgcc_s.so.1" ]; then
+            mkdir -p "$out/aarch64-linux-gnu/lib"
+            mv "$out/lib/libgcc_s.so" "$out/lib/libgcc_s.so.1" "$out/aarch64-linux-gnu/lib/"
+          fi
+        '' + (oldCC.postInstall or "");
       });
     });
   };
