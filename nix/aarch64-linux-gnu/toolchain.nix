@@ -15,25 +15,29 @@ let
   # collapse to the same internal triple) and tries to run fixincludes
   # against /usr/include — absent in the Nix sandbox → `stmp-fixinc` fails
   # in the BOOTSTRAP `aarch64-linux-gnu-nolibc-gcc`. The overlay below
-  # appends `--disable-fixincludes` to every gcc derivation we touch (the
-  # bootstrap nolibc cross-stage-static gcc 15.2 via `gccWithoutTargetLibc`,
-  # nixpkgs' libc-aware cross gcc 15.2 via `gcc15`, and our gcc 14.3.0 base
-  # via `gcc14`), so each one short-circuits the stmp-fixinc target. Gated
-  # to aarch64-linux build hosts: on x86_64-linux build hosts (the
-  # routinely exercised path) the overlay is empty, so every drv hash on
-  # that path stays identical.
-  fixincludesOverlay = final: prev:
-    let
-      fixInner = pkg: pkg.override (old: {
-        cc = old.cc.overrideAttrs (oldCC: {
-          configureFlags = (oldCC.configureFlags or [ ]) ++ [ "--disable-fixincludes" ];
-        });
+  # appends `--disable-fixincludes` to *only* `gccWithoutTargetLibc` —
+  # the cross-stage-static nolibc gcc 15.2, which is configured with
+  # `--without-headers` and therefore has no `--with-native-system-header-dir`
+  # to redirect fixinc.sh away from /usr/include. The libc-aware cross
+  # gccs (the gcc 15.2 nixpkgs builds after the nolibc one, and our
+  # gcc 14.3.0 `crossGuixGcc` built with `libcCross = crossGlibc231`)
+  # both DO set `--with-native-system-header-dir` to a valid store path,
+  # so fixinc.sh finds real headers and succeeds — they don't need the
+  # flag. Scoping the override to just the nolibc one keeps the hash of
+  # build-host stdenv components (gcc15, gcc14, the cc-wrappers, the
+  # stdenv chain itself) unchanged, so `nix build` can substitute them
+  # from cache.nixos.org instead of rebuilding native helpers like patch
+  # — one of whose 49 tests deterministically fails when rebuilt on
+  # aarch64 runners. Gated to aarch64-linux build hosts: on x86_64-linux
+  # the overlay is empty, so every drv hash on the routinely-exercised
+  # x86 path stays identical.
+  fixincludesOverlay = final: prev: {
+    gccWithoutTargetLibc = prev.gccWithoutTargetLibc.override (old: {
+      cc = old.cc.overrideAttrs (oldCC: {
+        configureFlags = (oldCC.configureFlags or [ ]) ++ [ "--disable-fixincludes" ];
       });
-    in {
-      gccWithoutTargetLibc = fixInner prev.gccWithoutTargetLibc;
-      gcc14 = fixInner prev.gcc14;
-      gcc15 = fixInner prev.gcc15;
-    };
+    });
+  };
   pkgsCrossAarch64 = import pkgs.path {
     localSystem = buildSystem;
     crossSystem = { config = "aarch64-linux-gnu"; };
