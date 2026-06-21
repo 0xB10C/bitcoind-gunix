@@ -35,6 +35,21 @@ let
     gccWithoutTargetLibc = prev.gccWithoutTargetLibc.override (old: {
       cc = old.cc.overrideAttrs (oldCC: {
         configureFlags = (oldCC.configureFlags or [ ]) ++ [ "--disable-fixincludes" ];
+        # Second trivial-cross collision: gcc/configure.ac (gcc-15.2 lines
+        # 2577-2582) only flips `inhibit_libc=true` when host != target OR
+        # newlib. After config.sub canonicalizes both build-host and target
+        # to `aarch64-unknown-linux-gnu`, host == target → inhibit_libc
+        # stays false even with `--without-headers`. Result:
+        # INHIBIT_LIBC_CFLAGS comes out empty, libgcc2.c compiles tsystem.h
+        # without `-Dinhibit_libc`, and the `#include <stdio.h>` at
+        # tsystem.h:95 fails (no /usr/include in sandbox). Force the flag
+        # whenever `--without-headers` was passed. Patches configure.ac
+        # because nixpkgs' preConfigure runs `autoconf -f` over every
+        # `*/configure.ac` (regenerating gcc/configure from the .ac);
+        # sedding gcc/configure directly would be overwritten.
+        postPatch = (oldCC.postPatch or "") + ''
+          sed -i '/^: \''${inhibit_libc=false}$/a if test "x$with_headers" = xno; then inhibit_libc=true; fi' gcc/configure.ac
+        '';
       });
     });
   };
