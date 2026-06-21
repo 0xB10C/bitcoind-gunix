@@ -76,6 +76,45 @@ let
         '' + (oldCC.postInstall or "");
       });
     });
+    # Fourth trivial-cross collision: TOP-level `configure.ac:2743-2747`
+    # bails with `*** --with-headers is only supported when cross
+    # compiling` + `exit 1` when `is_cross_compiler = no` (build == host
+    # == target post config.sub canonicalization). Tripped by nixpkgs'
+    # cc-wrapper for ANY cross gcc whose libc is set to a separate
+    # store path (i.e., every cross gcc) — both the base nixpkgs cross
+    # gcc14 (used by `crossGlibc231`'s `gcc14Stdenv`) and our
+    # `crossGuixGcc` (= `gcc14Aarch64NoFpCC.override { libcCross =
+    # crossGlibc231 }`). Delete the `exit 1` only; the warning stays.
+    # The copy-headers logic below runs and target headers land in
+    # `$tooldir/sys-include` like cross compiles expect. Apply via
+    # overlay only to gcc14 (NOT gcc15 — overriding gcc15 polluted the
+    # build-host gcc-15.2 stdenv, triggering a multi-hour rebuild of
+    # the whole world from source under qemu). The top-level
+    # configure.ac is NOT auto-regen'd by nixpkgs' preConfigure (which
+    # only autoreconfs `*/configure.ac`), so the sed on configure is
+    # sufficient — we patch both for safety.
+    gcc14 = prev.gcc14.override (old: {
+      cc = old.cc.overrideAttrs (oldCC: {
+        postPatch = (oldCC.postPatch or "") + ''
+          sed -i '/echo 1>&2.*--with-headers is only supported when cross compiling/{n;/^[[:space:]]*exit 1$/d}' configure configure.ac
+          # Fifth trivial-cross collision: gcc/configure.ac:2526-2533
+          # only sets `CROSS=-DCROSS_DIRECTORY_STRUCTURE` when host !=
+          # target (canonical). With CROSS unset, gcc's
+          # gcc/cppdefault.cc:31-36 `#undef CROSS_INCLUDE_DIR`s →
+          # gcc's preprocessor search list NEVER includes
+          # `$(prefix)/$(target_alias)/sys-include/` (where --with-
+          # headers' copy-dirs landed glibc headers). Cc-wrapper's
+          # `-idirafter $libcCross/include` then provides the headers
+          # instead → DWARF .debug_line_str records the un-mapped
+          # `$libcCross/include/{sys,bits,bits/types}` paths instead of
+          # the prefix-mapped `$guixGcc/aarch64-linux-gnu/sys-include`
+          # → `/usr/include`. Force CROSS regardless of host==target
+          # when --with-headers is given. ALL=all.cross + SYSTEM_HEADER_DIR
+          # override matches real cross's behavior.
+          sed -i 's#^  if test x$host != x$target$#  if test x$host != x$target || ( test x"''${with_headers}" != x \&\& test x"''${with_headers}" != xno )#' gcc/configure.ac gcc/configure
+        '';
+      });
+    });
   };
   pkgsCrossAarch64 = import pkgs.path {
     localSystem = buildSystem;
@@ -112,6 +151,21 @@ let
       "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
       "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
     ];
+    # Fourth trivial-cross collision (aarch64-linux build host only):
+    # TOP-level `configure.ac:2743-2747` bails with
+    # `*** --with-headers is only supported when cross compiling` +
+    # `exit 1` when `is_cross_compiler = no` (build == host == target
+    # post config.sub canonicalization). Tripped by our cc-wrapper
+    # passing `--with-headers=<crossGlibc231>/include`. Delete the
+    # `exit 1`; the copy-headers logic below runs and target headers
+    # land in $tooldir/sys-include like cross expects. Duplicated by the
+    # gcc14-overlay above (which covers the base nixpkgs cross gcc14
+    # used by crossGlibc231's gcc14Stdenv); sed is idempotent (second
+    # invocation finds nothing to delete). Gated to aarch64-linux build
+    # host so x86 drv hashes are byte-identical.
+    postPatch = (o.postPatch or "") + pkgs.lib.optionalString (buildSystem == "aarch64-linux") ''
+      sed -i '/echo 1>&2.*--with-headers is only supported when cross compiling/{n;/^[[:space:]]*exit 1$/d}' configure configure.ac
+    '';
   });
   gcc14Aarch64NoFp = (pkgsCrossAarch64.buildPackages.gcc14.override {
     cc = gcc14Aarch64NoFpCC;
