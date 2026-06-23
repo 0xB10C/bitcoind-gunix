@@ -1,4 +1,4 @@
-{ pkgs, pkgs2405, version, url, sha256, buildSystem, detachedSigs }:
+{ pkgs, pkgs2405, version, url, sha256, buildSystem, sourceDateEpoch, detachedSigs }:
 
 let
   # === win64 (x86_64-w64-mingw32) cross-compile ============================
@@ -413,25 +413,9 @@ let
     crossInputs = mingwCrossInputs;
   };
 
-  # win64 reference hashes (from the upstream -unsigned.zip / -debug.zip).
-  mingwExpectedHashes = {
-    "bin/bitcoin.exe" = "a652b9a581162afe8b57be0b5cbd7154ed00e4575036b71e19829bff0092fdd7";
-    "bin/bitcoin-cli.exe" = "47a464a6d1092c0f11c6b0875b0d6097746802193afbb20d8d87d5939ba87fc0";
-    "bin/bitcoind.exe" = "32f9367808d81d01c2b20c153485d0399c32201e6be8a65f9456ea7b2766862c";
-    "bin/bitcoin-tx.exe" = "b05233bd855f197d14687baa98f0f419eee43f16d332a04e438da68ef0b2a7b9";
-    "bin/bitcoin-util.exe" = "28e3977269ad9c2cb404d2ca3fc3b05f1489b64894ccf132494e104db5e3ccd3";
-    "bin/bitcoin-wallet.exe" = "0f567a09f23976ed01dc5bb70fb59ec8a1fa7c6a884a3e37b34ace76900a48ec";
-    "bin/bitcoin-qt.exe" = "c7978302fb4e92879663f6b4bae501e08dcf95d705164dda6995ce6c61ec11a9";
-    "libexec/test_bitcoin.exe" = "4f7722bb07084e13c6c603e3d2f1da440c3fd52f34f27d31894e2f175478bc22";
-    "bin/bitcoin.exe.dbg" = "dbbca99548c957abed922db75787587e53bf45f207300ef87aa32fd894dcc856";
-    "bin/bitcoin-cli.exe.dbg" = "a36ebcb1c6515ae24d43dd63eca608340029274c143582636a1f4621079f29ce";
-    "bin/bitcoind.exe.dbg" = "07c56841a0671c94dc8f6bb4ac7eb5d9d288a2259e76abb7cd5fe5c5da5bc06d";
-    "bin/bitcoin-tx.exe.dbg" = "17261bcec7fe93787bcb4230920b537516394751cba2c01c086c1d1bd3689114";
-    "bin/bitcoin-util.exe.dbg" = "92fd2266e436ace8b42c9592112b48d46b9faf7bb5a5b9878f361bc58137d406";
-    "bin/bitcoin-wallet.exe.dbg" = "d33ee25bc416d8351b06fdd38a98b5652142d13d1914d2e1cdd72fe038f0f87b";
-    "bin/bitcoin-qt.exe.dbg" = "9300dd4c45da542c4778968184df192b3cf778bf8eddb1c8e5af01ab1234e0dc";
-    "libexec/test_bitcoin.exe.dbg" = "99f9f8bf85fb2b9a1d65c480eda196623ddc07fdf4bc3e7dc98d3ef31c26f16a";
-  };
+  # rc1: no upstream SHA256SUMS — empty expectedHashes triggers the
+  # release.nix gate-bypass. v31.0 hashes live in git history at commit
+  # af4bce22b63b for when v31.1 ships.
   bitcoindMingw = pkgs.callPackage ./release.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
@@ -442,23 +426,24 @@ let
     mingwPthreads = pkgsCrossMingw.windows.pthreads;
     hostTriple = mingwTriple;
     pname = "bitcoind-win64";
-    expectedHashes = mingwExpectedHashes;
+    expectedHashes = { };
   };
-  # Dev variant: skip the byte-match gate (empty expectedHashes) so the
-  # binaries can be extracted and diffed against upstream during iteration.
-  bitcoindMingwNoGate = bitcoindMingw.override { expectedHashes = { }; };
+  # Alias kept for backwards compatibility with the previous "with-gate /
+  # no-gate" split. rc1: identical to bitcoindMingw (no gate either way).
+  bitcoindMingwNoGate = bitcoindMingw;
 
-  # The published win64 .zip archives (build.sh mingw case).
+  # The published win64 .zip archives (build.sh mingw case). rc1: pass
+  # null expectedSha256 (zip.nix gate-bypasses on null).
   unsignedZipMingw = pkgs.callPackage ./zip.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindMingw;
-    expectedSha256 = "5ecd365b53a2896850178f90302375480933e6c85ef81bb8abe8675fd44e1d9c";
+    expectedSha256 = null;
   };
   debugZipMingw = pkgs.callPackage ./zip.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindMingw;
     debug = true;
-    expectedSha256 = "df3f8c2f6ce8fde8d2661d3c01f5265f90f938019d52e2f94acf2a9001af70ae";
+    expectedSha256 = null;
   };
 
   # ---- NSIS 3.10 installer (win64-setup-unsigned.exe) ----------------------
@@ -560,44 +545,18 @@ let
     bitcoind = bitcoindMingw;
     nsis = nsis310;
     hostTriple = mingwTriple;
-    expectedSha256 = "ad31d4d82a0ddcf1340a447575ca958ee664656ca2e77282737898e1b8209ec8";
+    # rc1: setup.nix already defaults expectedSha256 to null and gates
+    # accordingly — pass null explicitly for clarity.
+    expectedSha256 = null;
   };
 
-  # ---- win64-codesigning.tar.gz ---------------------------------------------
-  codesigningMingw = pkgs.callPackage ./codesigning.nix {
-    inherit version url sha256;
-    bitcoind = bitcoindMingw;
-    setupExe = setupExeMingw;
-    expectedSha256 = "62baf547357029ac557d6fbbe91742c4ba6c1461c19ed4fab5131d4300b74d93";
-  };
-
-  # ---- signed win64-setup.exe + win64.zip -----------------------------------
-  # GUIX's osslsigncode is 2.5 (manifest.scm); nixpkgs ships 2.13. attach-
-  # signature's PE-patching changed between versions, so pin the version for
-  # byte-identical output.
-  osslsigncode25 = pkgs.osslsigncode.overrideAttrs (old: {
-    version = "2.5";
-    src = pkgs.fetchFromGitHub {
-      owner = "mtrojnar";
-      repo = "osslsigncode";
-      rev = "2.5";
-      sha256 = "sha256-33uT9PFD1YEIMzifZkpbl2EAoC98IsM72K4rRjDfh8g=";
-    };
-    doCheck = false;
-  });
-
-  signedMingw = pkgs.callPackage ./signed.nix {
-    inherit version detachedSigs;
-    osslsigncode = osslsigncode25;
-    codesigningTarball = codesigningMingw;
-    expectedSetupSha256 = "1893e819d7554ca43e6e812dc642bd1fb4570a4077b07a03180ad1041e74e223";
-    expectedZipSha256 = "82fd2c504a0f20a31d4d13bd407783d6fc7bf17622d0ce85228a9b92694e03f0";
-  };
+  # rc1: codesigningMingw / signedMingw need v31.1 detached signatures
+  # (not published yet). Restore from git history at commit af4bce22b63b
+  # when v31.1 ships.
 in {
   inherit mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw dependsMingw
     mingwCrtStdenv mingwCrt
     bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-    nsisGcc11 nsis310 setupExeMingw codesigningMingw
-    osslsigncode25 signedMingw
+    nsisGcc11 nsis310 setupExeMingw
     pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
 }

@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem }:
+{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch }:
 
 let
   # --- x86_64 cross-to-self toolchain ---
@@ -360,14 +360,13 @@ let
     linuxHeaders = linuxHeaders61;
   };
   tarball = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256 bitcoind;
+    inherit version url sha256 sourceDateEpoch bitcoind;
   };
-  # The separate -debug.tar.gz with the ten .dbg files — reproducible since
-  # 2026-06-11 (the .dbg are byte-identical to upstream's; see nix/x86_64-linux-gnu/release.nix).
+  # rc1: tarball + debugTarball pass null expectedSha256 — no upstream
+  # SHA256SUMS to gate against yet.
   debugTarball = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256 bitcoind;
+    inherit version url sha256 sourceDateEpoch bitcoind;
     debug = true;
-    expectedSha256 = "96e3506195c5cc2ea9ca72fb2ddcbcf5246dd0db0d21d726f3c98eaf0c6b9078";
   };
 in {
   inherit depends bitcoind tarball debugTarball

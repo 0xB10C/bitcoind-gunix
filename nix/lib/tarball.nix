@@ -36,13 +36,16 @@
 # rules, but build.sh ships NO README.md for darwin (its per-host case
 # copies it for linux only) and there are no .dbg files at all.
 , darwinUnsigned ? false
-, expectedSha256 ? "d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074"
+# rc1 NOTE: defaults to null — no upstream SHA256SUMS to gate against.
+# Pass a string sha to re-enable the byte-match gate once available.
+, expectedSha256 ? null
+# rc1 NOTE: SOURCE_DATE_EPOCH passes through from default.nix (the
+# v31.1rc1 tag commit time). v31.0 hard-coded 1776286524 inline.
+, sourceDateEpoch
 }:
 
 let
   src = fetchurl { inherit url sha256; };
-  # SOURCE_DATE_EPOCH = `git log --format=%at -1` of the v31.0 tag.
-  sourceDateEpoch = "1776286524";
   archiveName = "bitcoin-${version}-${arch}${lib.optionalString darwinUnsigned "-unsigned"}${lib.optionalString debug "-debug"}.tar.gz";
 in
 runCommandLocal archiveName
@@ -100,15 +103,18 @@ runCommandLocal archiveName
 
   find "$D" ${if debug then "-name '*.dbg'" else "-not -name '*.dbg'"} -print0 | LC_ALL=C sort -z \
     | tar --create --no-recursion --mode='u+rw,go+r-w,a+X' --null --files-from=- \
-          --mtime=@${sourceDateEpoch} --owner=0 --group=0 --numeric-owner \
+          --mtime=@${toString sourceDateEpoch} --owner=0 --group=0 --numeric-owner \
     | gzip -9n > "$out"
 
   actual=$(sha256sum "$out" | cut -d' ' -f1)
+'' + (if expectedSha256 == null then ''
+  echo "BUILT: ${archiveName} ($actual) — no upstream gate (rc1)"
+'' else ''
   if [ "$actual" != "${expectedSha256}" ]; then
-    echo "FAIL: tarball sha256 does not match upstream GUIX v31.0 release"
+    echo "FAIL: tarball sha256 does not match upstream GUIX release"
     echo "  expected: ${expectedSha256}"
     echo "  actual:   $actual"
     exit 1
   fi
   echo "OK: ${archiveName} matches upstream ($actual)"
-'')
+''))

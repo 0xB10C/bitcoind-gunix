@@ -25,7 +25,10 @@
 , canonDepends ? false # rewrite depends→/bitcoin via the canon env var instead of -ffile-prefix-map
                        # (an argv map that FIRES ggc-allocates each rewrite and flips var-tracking
                        # loclists in big CUs — GUIX fires no map on its real-/bitcoin depends)
-, expectedHashes # rel path -> upstream sha256 for every asserted artifact (all 10 binaries + all 10 .dbg)
+# rc1 NOTE: defaults to `{}` — no upstream SHA256SUMS to gate against.
+# Pass an attrset {bin/bitcoind=…; …} to re-enable per-binary byte-match
+# gates once available.
+, expectedHashes ? { }
 , pname # e.g. "bitcoind-riscv64"
 }:
 
@@ -156,9 +159,17 @@ gcc14Stdenv.mkDerivation {
   '';
 
   # Reproducibility gate: assert every shipped binary AND every .dbg debug
-  # file byte-matches the upstream GUIX v31.0 release for this target
+  # file byte-matches the upstream GUIX release for this target
   # (the .dbg are what ship in the separate -debug.tar.gz).
-  postFixup = ''
+  # rc1: when `expectedHashes` is empty, the gate is skipped and the
+  # binaries are merely listed — no upstream SHA256SUMS published yet.
+  postFixup = if expectedHashes == { } then ''
+    echo "BUILT (rc1, no upstream gate): ${hostTriple}"
+    for rel in ${toString binaries}; do
+      f="$out/$rel"
+      [ -f "$f" ] && echo "  $rel  $(sha256sum "$f" | cut -d' ' -f1)"
+    done
+  '' else ''
     declare -A expected=(
 ${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: h: "      [${rel}]=${h}") expectedHashes)}
     )
@@ -174,8 +185,8 @@ ${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: h: "      [${rel}]=${h}") 
         fail=1
       fi
     done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries/.dbg diverged from upstream GUIX v31.0"; exit 1; }
-    echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} artifacts match upstream GUIX v31.0"
+    [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries/.dbg diverged from upstream GUIX release"; exit 1; }
+    echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} artifacts match upstream"
   '';
 
   dontStrip = true;

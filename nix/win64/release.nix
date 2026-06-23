@@ -18,7 +18,8 @@
 , mingwCrt         # the mingw-w64 CRT (msvcrt) store path — prefix-mapped → /usr
 , mingwPthreads    # the winpthreads store path — prefix-mapped → /usr
 , hostTriple       # "x86_64-w64-mingw32"
-, expectedHashes   # rel path -> upstream sha256 (8 binaries + 8 .dbg)
+# rc1: defaults to {} — no upstream SHA256SUMS yet.
+, expectedHashes ? { }   # rel path -> upstream sha256 (8 binaries + 8 .dbg)
 , pname
 }:
 
@@ -138,7 +139,14 @@ gcc14Stdenv.mkDerivation {
     done
   '';
 
-  postFixup = ''
+  postFixup = if expectedHashes == { } then ''
+    echo "BUILT (rc1, no upstream gate): ${hostTriple}"
+    for rel in ${toString binaries}; do
+      f="$out/$rel"
+      [ -f "$f" ] && echo "  $rel       $(sha256sum "$f" | cut -d' ' -f1)"
+      [ -f "$f.dbg" ] && echo "  $rel.dbg   $(sha256sum "$f.dbg" | cut -d' ' -f1)"
+    done
+  '' else ''
     declare -A expected=(
 ${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: h: "      [${rel}]=${h}") expectedHashes)}
     )
@@ -154,8 +162,8 @@ ${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: h: "      [${rel}]=${h}") 
         fail=1
       fi
     done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries/.dbg diverged from upstream GUIX v31.0"; exit 1; }
-    echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} artifacts match upstream GUIX v31.0"
+    [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries/.dbg diverged from upstream GUIX"; exit 1; }
+    echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} artifacts match upstream"
   '';
 
   dontStrip = true;

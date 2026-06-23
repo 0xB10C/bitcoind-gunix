@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem }:
+{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch }:
 
   # --- generic linux-gnu cross target generator ---
   # The aarch64/riscv64 recipe parameterized over the target triple: cross
@@ -48,8 +48,11 @@
     , dynamicLinker
     , extraCXXFLAGS ? ""
     , pnameSuffix
-    , expectedHashes
-    , tarballSha256
+    # rc1: all upstream-hash gates default off — pass an attrset / non-
+    # null sha to re-enable per-target gating once v31.1 SHA256SUMS is
+    # published.
+    , expectedHashes ? { }
+    , tarballSha256 ? null
     , debugTarballSha256 ? null # null = the -debug.tar.gz is not byte-reproducible (yet); no attr
     }:
     let
@@ -245,13 +248,16 @@
         linuxHeaders = linuxHeaders61';
       };
       tarball' = pkgs.callPackage ./tarball.nix {
-        inherit version url sha256;
+        inherit version url sha256 sourceDateEpoch;
         bitcoind = bitcoind';
         arch = triple;
         expectedSha256 = tarballSha256;
       };
-      debugTarball' = if debugTarballSha256 == null then null else pkgs.callPackage ./tarball.nix {
-        inherit version url sha256;
+      # rc1: -debug.tar.gz is built unconditionally (no upstream gate);
+      # debugTarballSha256 was previously the "is it byte-reproducible?"
+      # signal but with the gate removed we can always assemble it.
+      debugTarball' = pkgs.callPackage ./tarball.nix {
+        inherit version url sha256 sourceDateEpoch;
         bitcoind = bitcoind';
         arch = triple;
         debug = true;

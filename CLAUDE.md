@@ -6,6 +6,74 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-23, later): bumped to v31.1rc1 — upstream-hash gates + codesigning OFF until v31.1 ships
+
+Version bumped from v31.0 (RELEASED) to v31.1rc1 (RELEASE CANDIDATE).
+The full toolchain + depends + binaries + tarballs still build; only
+the upstream-byte-match gates and the signing pipeline are turned off,
+because the inputs they need (SHA256SUMS, bitcoin-detached-sigs at
+v31.1rc1) don't exist yet.
+
+What changed:
+
+- **`version = "31.1rc1"`** in `default.nix`. Source switched to the
+  GitHub archive tarball
+  `https://github.com/bitcoin/bitcoin/archive/refs/tags/v31.1rc1.tar.gz`
+  (bitcoincore.org/bin has no v31.1rc1 release dir yet — once v31.1
+  final ships, switch back to the canonical bitcoincore.org URL).
+  Archive prefix is `bitcoin-31.1rc1/` — the same shape as upstream's
+  GUIX-style `git archive --prefix=…`, so `tarball.nix`'s source-tree
+  extraction works unchanged.
+- **`sourceDateEpoch = 1782133862`** at the top of `default.nix` (the
+  v31.1rc1 tag commit time, `efde6234… = 2026-06-22T13:11:02Z`).
+  Plumbed through every target's `toolchain.nix` → `tarball.nix`,
+  replacing the v31.0 hard-coded `1776286524`. `nix/win64/zip.nix`
+  keeps its own `sourceDateEpoch ? 1776286524` fallback (the rc1
+  wiring doesn't pass it yet — the win64 zips would gain reproducible
+  rc1 mtimes if we plumbed it, but no upstream comparison exists either
+  way for the rc).
+- **All upstream-hash gates OFF**: no SHA256SUMS published, so every
+  `expectedSha256` / `expectedHashes` defaults to `null` / `{}` and
+  the gate logic skips with a `BUILT (rc1, no upstream gate)` line.
+  Affects `nix/lib/tarball.nix` (the linux release archives),
+  `nix/lib/release-cross.nix` (per-binary for riscv64/armhf/ppc64),
+  inline gates in `nix/{x86_64,aarch64}-linux-gnu/release.nix` and
+  `nix/win64/{release,zip,setup}.nix` and `nix/darwin/release.nix`.
+  v31.0 reference hashes are preserved in git history at commit
+  `af4bce22b63b` (the last v31.0-only commit) for restoration.
+- **Codesigning / signed artifacts dropped**: bitcoin-detached-sigs
+  has no v31.1rc1 tag (only v31.0), so `detachedSigs = null` is
+  passed through and the entire signing pipeline (darwin
+  `codesigningDarwin{X86,Arm64}` / `signedDarwin{X86,Arm64}`, win64
+  `codesigningMingw` / `signedMingw` / `osslsigncode25`) is removed
+  from `default.nix`'s outputs and the per-toolchain `in { … }`
+  rec. The unsigned/-debug artifacts + the NSIS `setupExeMingw`
+  (the unsigned win64 setup.exe, no detached-sigs needed) still
+  build.
+- **SHA256SUMS aggregator dropped**: `noncodesignedSha256sums` /
+  `sha256sums` only make sense when upstream's `SHA256SUMS` exists
+  to diff against. The default flake output (`packages.default`)
+  is now `drvs.bitcoind` (x86_64 linux release) instead of
+  `drvs.sha256sums`.
+
+When v31.1 final ships:
+1. Restore `version = "31.1"`, the bitcoincore.org URL + tarball
+   sha256, and the v31.1 tag commit time as `sourceDateEpoch`.
+2. Restore the `detachedSigs` / `detachedSigsGit` /
+   `codesignaturesArchive` / `sourceDistArchive` machinery (v31.0
+   versions at commit `af4bce22b63b`).
+3. Restore every `expectedSha256` / `expectedHashes` with the
+   v31.1 binary/tarball hashes from upstream's SHA256SUMS (v31.0
+   hashes also at `af4bce22b63b`).
+4. Restore the `codesigningDarwin*` / `signedDarwin*` /
+   `codesigningMingw` / `signedMingw` / `osslsigncode25` derivations
+   and the `noncodesignedSha256sums` / `sha256sums` aggregators.
+
+Eval-clean for all linux + darwin + win64 targets. Local x86_64
+`nix build .#bitcoind` build kicked off as the first end-to-end
+sanity check (depends/toolchain should be cache hits from the v31.0
+work; only the bitcoind compile + tarball assembly rebuild).
+
 ## Status (2026-06-23): aarch64-on-aarch64 trivial-cross chain BUILDS end-to-end under qemu — 10/20 artifacts byte-match, libzmq codegen diverges
 
 After commits e56088fa…c610b8cc (5 trivial-cross fixes), the local

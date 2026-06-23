@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem }:
+{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch }:
 
 let
   # --- aarch64 cross-compile ---
@@ -539,20 +539,16 @@ let
     linuxHeaders = linuxHeaders61Aarch64;
   };
   tarballAarch64 = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
-    expectedSha256 = "4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112";
   };
-  # The separate aarch64 -debug.tar.gz with the ten .dbg files —
-  # reproducible since 2026-06-11 (byte-identical .dbg, same recipe as
-  # x86_64's; see nix/aarch64-linux-gnu/release.nix).
+  # rc1: no upstream SHA256SUMS — both tarball + debugTarball ungated.
   debugTarballAarch64 = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
     debug = true;
-    expectedSha256 = "91917647aaf50965fc834e048256fce17e8f5590658c7e8de2879fb66cdc9a73";
   };
 
 in {

@@ -170,48 +170,21 @@ gcc14Stdenv.mkDerivation {
     done
   '';
 
-  # Reproducibility gate: assert every shipped binary AND every .dbg debug
-  # file byte-matches the upstream GUIX v31.0 x86_64-linux-gnu release
-  # (the .dbg are what ship in the separate -debug.tar.gz). Any divergence
-  # (or a missing file) fails the build — this derivation is a
-  # reproducibility test, not a best-effort build.
+  # rc1: no upstream SHA256SUMS yet — list what built and move on. The
+  # v31.0 per-binary gate (20 hashes) lives in git history at commit
+  # af4bce22b63b; restore once v31.1 ships.
   postFixup = ''
-    declare -A expected=(
-      [bin/bitcoin]=eb5670aebd2b32c79215e578d2a7162fd1c98181bc558cfb8d29a4240e736521
-      [bin/bitcoin-cli]=3e92883f97850bc445ac033d26d55902dcb035fdf64f78c2c03c83216f083c5d
-      [bin/bitcoind]=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
-      [bin/bitcoin-tx]=ce3b159c9985eca941b3071c4dc573a4cf92ed9ee27fc1cf68a28d8afe893b6c
-      [bin/bitcoin-util]=1d18ee4b1539110f784288462b8173d2d35d3b768ecbc3df83ebaa2781eb4306
-      [bin/bitcoin-wallet]=7d8382b86cce7fde4214f295f7e134a873f176556ee98bc6dcbf9b347a25acaf
-      [bin/bitcoin-qt]=3480af8fad820759a6299ea94bb3bb66f490b87c10ba44b1d0f671af382ff178
-      [libexec/bitcoin-node]=01c212ee592f4ecc649b7a13c8fc0976f2d823900c66cd11460edaa59bba21ca
-      [libexec/bitcoin-gui]=416e79bbebec5506ac786557519f3f5fc3fb1936a4a6074685d5f0aa24e01801
-      [libexec/test_bitcoin]=c7a2a9062256920fa4b92e330857dc12e7f89882f8a3930ecdc3350acf922f8f
-      [bin/bitcoin.dbg]=1384716d43d5ef52c3eaecb403a0444234e6a4ae0d267df91ddbe38670be98c4
-      [bin/bitcoin-cli.dbg]=4bdbc47dd91a3e91ab123941685ede45781df639db46239dc503612e8c32a241
-      [bin/bitcoind.dbg]=901020a02b461d240ed9cf7414a8471611dc165c75a11fac7485aa99d68395ca
-      [bin/bitcoin-tx.dbg]=1195f5acc2833d85c304bafb968fa4b49137df0803a2ba7c4a98435f53504832
-      [bin/bitcoin-util.dbg]=6eca7984de4ca310006b63f5a2880abf66361dc115cf0fb0a4bdaf34ed212bce
-      [bin/bitcoin-wallet.dbg]=940cc698354eb7a19fa0430744ecc628eae34f7e4bfe5c90d201e9c1c1426d58
-      [bin/bitcoin-qt.dbg]=7ad32394e2b1523ba0a8ffb46467d88d62fac48807129456da47e45545ce3d14
-      [libexec/bitcoin-node.dbg]=feb4c6c54bd77eabc4cda2c54026a347b2dd738d1099d3257814ef1bb99d917d
-      [libexec/bitcoin-gui.dbg]=b044673d04bf6a078541e52aa73cac910e18a74f5561ac485ac74213f11b9992
-      [libexec/test_bitcoin.dbg]=1e01a9acd06e0ecb8190d39797730695e9ef47b941ace7f62dbd24b951714d9a
-    )
-    fail=0
-    for rel in "''${!expected[@]}"; do
+    echo "BUILT (rc1, no upstream gate): x86_64-linux-gnu"
+    for rel in \
+      bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-tx \
+      bin/bitcoin-util bin/bitcoin-wallet bin/bitcoin-qt \
+      libexec/bitcoin-node libexec/bitcoin-gui libexec/test_bitcoin; do
       f="$out/$rel"
-      if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
-      actual=$(sha256sum "$f" | cut -d' ' -f1)
-      if [ "$actual" = "''${expected[$rel]}" ]; then
-        echo "OK:   $rel matches upstream"
-      else
-        echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
-        fail=1
+      if [ -f "$f" ]; then
+        echo "  $rel       $(sha256sum "$f" | cut -d' ' -f1)"
+        [ -f "$f.dbg" ] && echo "  $rel.dbg   $(sha256sum "$f.dbg" | cut -d' ' -f1)"
       fi
     done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more binaries/.dbg diverged from upstream GUIX v31.0"; exit 1; }
-    echo "OK: all 10 binaries and all 10 .dbg files match upstream GUIX v31.0"
   '';
 
   dontStrip = true;

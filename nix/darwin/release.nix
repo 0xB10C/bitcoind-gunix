@@ -60,7 +60,8 @@
 , depends # the target's darwin depends tree (Qt included)
 , crossInputs # clangDarwin/lldDarwin/llvmDarwin — bare tools on PATH
 , hostTriple # "x86_64-apple-darwin" | "arm64-apple-darwin"
-, expectedHashes # rel path -> upstream sha256 for all 10 binaries
+# rc1: defaults to {} — no upstream SHA256SUMS yet.
+, expectedHashes ? { }
 , withGate ? true # disable to keep diverging outputs for diffing
 , pname
 }:
@@ -184,28 +185,40 @@ gcc14Stdenv.mkDerivation {
   '';
 
   # Reproducibility gate: assert every shipped binary byte-matches the
-  # upstream GUIX v31.0 -unsigned release tarball for this target. (The
-  # app zip is gated downstream once assembled into the named artifact.)
-  postFixup = lib.optionalString withGate ''
-    declare -A expected=(
+  # upstream GUIX release -unsigned tarball for this target. rc1: when
+  # `expectedHashes` is empty (default), the gate is skipped and the
+  # binaries are merely listed.
+  postFixup =
+    if expectedHashes == { } || !withGate then ''
+      echo "BUILT (rc1, no upstream gate): ${hostTriple}"
+      for rel in \
+        bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-qt bin/bitcoin-tx \
+        bin/bitcoin-util bin/bitcoin-wallet \
+        libexec/bitcoin-gui libexec/bitcoin-node libexec/test_bitcoin; do
+        f="$out/$rel"
+        [ -f "$f" ] && echo "  $rel  $(sha256sum "$f" | cut -d' ' -f1)"
+      done
+      echo "INFO: bitcoin-macos-app.zip sha256: $(sha256sum $dist/bitcoin-macos-app.zip | cut -d' ' -f1)"
+    '' else ''
+      declare -A expected=(
 ${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: h: "      [${rel}]=${h}") expectedHashes)}
-    )
-    fail=0
-    for rel in "''${!expected[@]}"; do
-      f="$out/$rel"
-      if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
-      actual=$(sha256sum "$f" | cut -d' ' -f1)
-      if [ "$actual" = "''${expected[$rel]}" ]; then
-        echo "OK:   $rel matches upstream"
-      else
-        echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
-        fail=1
-      fi
-    done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries diverged from upstream GUIX v31.0"; exit 1; }
-    echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} binaries match upstream GUIX v31.0"
-    echo "INFO: bitcoin-macos-app.zip sha256: $(sha256sum $dist/bitcoin-macos-app.zip | cut -d' ' -f1)"
-  '';
+      )
+      fail=0
+      for rel in "''${!expected[@]}"; do
+        f="$out/$rel"
+        if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
+        actual=$(sha256sum "$f" | cut -d' ' -f1)
+        if [ "$actual" = "''${expected[$rel]}" ]; then
+          echo "OK:   $rel matches upstream"
+        else
+          echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
+          fail=1
+        fi
+      done
+      [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries diverged from upstream GUIX"; exit 1; }
+      echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} binaries match upstream GUIX"
+      echo "INFO: bitcoin-macos-app.zip sha256: $(sha256sum $dist/bitcoin-macos-app.zip | cut -d' ' -f1)"
+    '';
 
   dontStrip = true;
   doCheck = false;
