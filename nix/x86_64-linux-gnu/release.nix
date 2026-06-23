@@ -56,8 +56,18 @@ let
   # subdir (--with-gxx-include-dir), so /usr/include/c++ maps our
   # include/c++/14.3.0; glibc headers resolve from the cross gcc's baked
   # sys-include copy, upstream spells them /usr/include.
+  # rc1: route the depends rewrite through the canon mechanism
+  # (gcc-debug-canon-prefix-map.patch, applied to crossGuixGccX86 in
+  # the toolchain.nix) instead of -ffile-prefix-map: gcc ggc-allocates
+  # every fired argv map rewrite, and the depends rewrite fires on every
+  # header → flips var-tracking's loclist representative choice in
+  # blockmanager_tests.cpp's CU (test_bitcoin-only, hence why only
+  # test_bitcoin.dbg diverged). canon rewrites are malloc'd (GGC-neutral)
+  # so the depends path is observed-canonical AS IF the build ran at
+  # GUIX's literal /bitcoin/depends/<triple> — no ggc poisoning. The
+  # other prefix-maps stay on argv: they fire on disjoint per-CU header
+  # sets and don't flip anything (riscv64/aarch64/armhf/ppc64 confirm).
   cflags = "-O2 -g"
-    + " -ffile-prefix-map=${depends}=/bitcoin/depends/x86_64-linux-gnu"
     + " -ffile-prefix-map=${guixGcc}/include/c++/14.3.0=/usr/include/c++"
     + " -ffile-prefix-map=${guixGcc}/x86_64-linux-gnu/sys-include=/usr/include"
     + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"
@@ -131,6 +141,13 @@ gcc14Stdenv.mkDerivation {
     CXXFLAGS = cflags;
     NIX_DONT_SET_RPATH = "1";
     NIX_NO_SELF_RPATH = "1";
+    # canon-prefix-map pair (consumed by gcc-debug-canon-prefix-map.patch):
+    # rewrite the depends path AS IF the build observed the canonical
+    # GUIX prefix throughout — argv -ffile-prefix-map fires on the
+    # canonicalized name (matches nothing → no ggc allocations on header
+    # rewrites), the macro/file tables record the canon path, and DWARF
+    # comes out spelled exactly like upstream's.
+    NIX_DEBUG_CANON_PREFIX_MAP = "${depends}=/bitcoin/depends/x86_64-linux-gnu";
   };
 
   # Drop the nixpkgs hardenings GUIX's toolchain doesn't apply (full

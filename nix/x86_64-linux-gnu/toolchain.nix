@@ -257,7 +257,17 @@ let
         "--with-as=${crossBinutils241X86}/bin/x86_64-linux-gnu-as"
         "--with-ld=${crossBinutils241X86}/bin/x86_64-linux-gnu-ld"
       ];
-      patches = (old.patches or [ ]) ++ [ ../patches/gcc-ssa-generation.patch ];
+      # rc1: canon-prefix-map patch lets release.nix route the depends
+      # rewrite through NIX_DEBUG_CANON_PREFIX_MAP (env, malloc'd, GGC-
+      # neutral) instead of -ffile-prefix-map (argv, ggc-allocated). The
+      # argv map fired on every depends header and shifted gcc's ggc
+      # arena enough to flip var-tracking's loclists representative in
+      # blockmanager_tests.cpp (= test_bitcoin.dbg's 9-byte divergence).
+      # Same patch armhf/ppc64 already use; see release-cross.nix.
+      patches = (old.patches or [ ]) ++ [
+        ../patches/gcc-ssa-generation.patch
+        ../patches/gcc-debug-canon-prefix-map.patch
+      ];
       # gcc/common/builder.nix
       # seeds makeFlagsArray with the *_FOR_TARGET flags, so re-appending
       # here wins and gas (2.41, default relaxable) emits non-relaxable
