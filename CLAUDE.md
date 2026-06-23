@@ -6,6 +6,99 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-06-23): aarch64-on-aarch64 trivial-cross chain BUILDS end-to-end under qemu — 10/20 artifacts byte-match, libzmq codegen diverges
+
+After commits e56088fa…c610b8cc (5 trivial-cross fixes), the local
+qemu-emulated `nix build .#packages.aarch64-linux.bitcoindAarch64`
+runs the full chain — bootstrap nolibc gcc, glibc 2.31, cross gcc14,
+the entire depends tree (boost/libevent/sqlite/zeromq/capnp/Qt6/the
+X11 stack), and all 10 bitcoin binaries + their `.dbg` files — to
+completion. Of the 20 artifacts:
+
+- **10/20 byte-match upstream** (the 5 CLI tools + their `.dbg`):
+  `bin/bitcoin`, `bin/bitcoin-cli`, `bin/bitcoin-tx`, `bin/bitcoin-util`,
+  `bin/bitcoin-wallet` (and `.dbg` for each).
+- **10/20 diverge** — exactly the 5 binaries that statically link
+  libzmq (bitcoind, bitcoin-qt, libexec/{bitcoin-node, bitcoin-gui,
+  test_bitcoin}) + their `.dbg` files.
+
+`addr2line` on the first byte divergence in bitcoind localizes it to
+**libzmq's `src/ctx.cpp`** (`zmq::ctx_t::connect_inproc_sockets`,
+`zmq::thread_ctx_t::set`, `zmq::ctx_t::find_endpoint`,
+`zmq::ctx_t::connect_pending`, etc.); ours allocates a smaller stack
+frame (`sub sp, sp, #0xf0`) than upstream (`sub sp, sp, #0x110`) for
+the same function. Same total binary size, same `.comment` (gcc 14.3.0),
+same section layout — a register-allocation/spilling difference, not
+a path or debug-info flip. The 5 non-zmq-linking binaries match
+exactly, so the divergence is contained to libzmq's object files.
+
+Most likely cause: **qemu-vs-native nondeterminism in gcc's
+host-arithmetic-dependent codegen heuristics**. gcc's `genoutput`/
+`genrecog` and the register-allocator cost model use floating-point;
+qemu-user emulation's fp can round differently than native aarch64,
+shifting allocation decisions in some functions. The successful
+non-zmq binaries are simpler and don't trigger the flip; libzmq's
+`ctx.cpp` does. Definitive proof requires building on a real aarch64
+host (the `ubuntu-24.04-arm` CI runner is what byte-validates).
+
+### The 5 trivial-cross fixes (in commit order)
+
+1. **`gccWithoutTargetLibc.cc` `--disable-fixincludes`**
+   (e56088fa, narrowed to gccWithoutTargetLibc in 6bb3ffb7).
+   gcc-15.2 unconditionally sets `STMP_FIXINC=stmp-fixinc`; on aarch64
+   build-host, target `aarch64-linux-gnu` canonicalizes to the same
+   internal triple as host `aarch64-unknown-linux-gnu` (unlike x86's
+   `pc` vendor default), gcc sees build==target, runs `fixinc.sh`
+   against `/usr/include`, fails in the sandbox.
+2. **`gccWithoutTargetLibc.cc` `inhibit_libc` when `--without-headers`**
+   (695264c7). `gcc/configure.ac:2577-2582` only sets `inhibit_libc`
+   when host!=target OR newlib; for trivial-cross's bootstrap (no
+   target libc yet), inject `if test "x$with_headers" = xno; then
+   inhibit_libc=true; fi` after the existing `:${inhibit_libc=false}`
+   so libgcc doesn't try to `#include <stdio.h>`.
+3. **`gccWithoutTargetLibc.cc` libgcc install-layout**
+   (b8d233c0). The nolibc bootstrap installs `libgcc_s.so{,*.1}` at
+   `$out/lib/` instead of `$out/aarch64-linux-gnu/lib/`. nixpkgs'
+   `preFixupLibGccPhase` expects the cross layout. Relocate explicitly.
+4. **TOP-level `configure.ac` `--with-headers` exit 1 deletion**
+   (af4bce22). `configure.ac:2743-2747` bails with `*** --with-headers
+   is only supported when cross compiling` and `exit 1` when
+   `is_cross_compiler=no`. nixpkgs' cc-wrapper always passes
+   `--with-headers`. Delete the `exit 1` (keep the warning) via sed on
+   both `configure` and `configure.ac`.
+5. **gcc14 `CROSS=-DCROSS_DIRECTORY_STRUCTURE` injection** (af4bce22
+   broad version, c610b8cc narrow version — replaces broad).
+   `gcc/configure.ac:2526-2533` only sets `CROSS` when host!=target.
+   With `CROSS` unset, `gcc/cppdefault.cc:31-36` `#undef
+   CROSS_INCLUDE_DIR`s → gcc's preprocessor search NEVER includes
+   `$(prefix)/$(target_alias)/sys-include/` (where `--with-headers`
+   copied glibc headers) → cc-wrapper's `-idirafter $libcCross/include`
+   provides them → DWARF records the un-mapped store paths.
+   *Narrow* version (c610b8cc): append a fallback `if test
+   x"${with_headers}" != x && ... ; then CROSS="-DCROSS_DIRECTORY_
+   STRUCTURE"; fi` AFTER the closing `fi` of the existing host!=target
+   gate, instead of broadening the gate itself. The broad version
+   also forced `ALL=all.cross`, which skips lang.all.cross's target
+   libstdc++ build path → boost link fails with `cannot find -lstdc++`.
+6. **gcc14 install layout + pkgconfig stub** (c610b8cc). On trivial-
+   cross, `--enable-shared` installs `libstdc++.so*`, `libgcc_s.so*`,
+   `libstdc++*.a`, `libsupc++.a` at `$out/lib/` instead of
+   `$out/aarch64-linux-gnu/lib/`. nixpkgs' gcc `moveToOutput
+   "$targetConfig/lib/lib*.so*" $lib` finds nothing → cross
+   `$lib/aarch64-linux-gnu/lib/` empty → boost link fails. Pre-
+   relocate `.so*` AND `.a` archives (bitcoind uses `-static-libstdc++
+   -static-libgcc`, needs the .a there too) before nixpkgs'
+   postInstall runs. Gate on derivation name `*aarch64-linux-gnu-gcc-*`
+   so the build-host NATIVE gcc14 (no triple prefix) is not disturbed.
+   Also stub `$out/{lib,share}/pkgconfig/gcc-trivial-cross-stub.pc`
+   so nixpkgs' `_multioutDevs` sed loop (`multiple-outputs.sh:176`,
+   no nullglob) finds at least one `.pc` to iterate.
+
+CI's `continue-on-error: true` on `build-on-aarch64-host` was removed
+in af4bce22-era prep but the byte-equality of zmq-linked binaries
+remains an aarch64-runner-only proof. The qemu-emulated local build
+runs to completion and asserts what it can.
+
 ## Status (2026-06-20): aarch64-on-aarch64 trivial-cross fix in flight — `--disable-fixincludes` overlay, CI un-pinned
 
 The aarch64-host build path (the `build-on-aarch64-host` arm CI job that
