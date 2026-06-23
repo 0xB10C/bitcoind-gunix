@@ -95,23 +95,89 @@ let
     # sufficient — we patch both for safety.
     gcc14 = prev.gcc14.override (old: {
       cc = old.cc.overrideAttrs (oldCC: {
+        # Sixth trivial-cross collision: libstdc++.so* + libgcc_s.so*
+        # install to `$out/lib/` (gcc's normal cross install assumes
+        # `--enable-shared` puts target runtime in `$out/$target/lib`
+        # via `$(target_alias)/lib/`, but on trivial-cross the make
+        # logic shortcuts target == host and uses `$out/lib`). nixpkgs'
+        # gcc postInstall does `moveToOutput "$targetConfig/lib/lib*.so*"
+        # $lib` — since the .so files are NOT under that path,
+        # nothing moves and `$lib/aarch64-linux-gnu/lib/` ends up
+        # empty. cc-wrapper's link search dir = `$lib/lib/` (or
+        # `$lib/$target/lib`); boost's `aarch64-linux-gnu-ld` then
+        # fails: `cannot find -lstdc++ / -lgcc_s`. Reshuffle .so*
+        # ONLY (the static archives are at `lib/gcc/<target>/<ver>/`
+        # already) so nixpkgs' moveToOutput picks them up next.
+        #
+        # GATE on derivation name: the overlay also applies to the
+        # build-host native gcc14 (`pkgsCrossAarch64.buildPackages.gcc14`,
+        # name `gcc-14.3.0` without triple prefix); for native gcc the
+        # move would displace libstdc++.so* to a nonexistent triple
+        # subdir AND break nixpkgs' standard postInstall (which then
+        # can't find libstdc++-gdb.py next to the .so to patch its
+        # paths).
+        #
+        # Also pre-create empty `$out/lib/pkgconfig/` and a stub
+        # `.pc` so nixpkgs' `_multioutDevs` sed loop in
+        # `multiple-outputs.sh:176` (`for f in $dev/lib/pkgconfig/*.pc;
+        # do sed -i ... $f; done` — no nullglob) doesn't iterate over
+        # the literal glob and run sed against a nonexistent file.
+        # Without fix #6 in place the same loop runs but the build
+        # tolerates its failure (sed's nonzero exit is apparently
+        # swallowed somewhere); with fix #6 it isn't tolerated.
+        # Simpler than reasoning about the exact tolerance change:
+        # ensure the glob always matches.
+        postInstall = ''
+          case "$(basename $out)" in *aarch64-linux-gnu-gcc-*)
+            if [ -d "$out/lib" ] && [ ! -e "$out/aarch64-linux-gnu/lib/libstdc++.so" ]; then
+              mkdir -p "$out/aarch64-linux-gnu/lib"
+              shopt -s nullglob
+              # Shared runtime (cc-wrapper / boost-style dynamic links)
+              for f in "$out/lib/"libstdc++.so* "$out/lib/"libgcc_s.so*; do
+                mv "$f" "$out/aarch64-linux-gnu/lib/"
+              done
+              # Static archives (bitcoind's CMake uses
+              # `-static-libstdc++ -static-libgcc`; cross ld then
+              # needs libstdc++.a / libsupc++.a / libstdc++fs.a /
+              # libstdc++exp.a at the cross subdir too)
+              for f in "$out/lib/"libstdc++*.a "$out/lib/"libsupc++.a; do
+                mv "$f" "$out/aarch64-linux-gnu/lib/"
+              done
+              shopt -u nullglob
+            fi
+            # Stub a `.pc` in BOTH lib/pkgconfig and share/pkgconfig
+            # — the `_multioutDevs` sed loop iterates both subdirs
+            # (`$dev/{lib,share}/pkgconfig/*.pc`). Stub names MUST NOT
+            # begin with `.` (bash glob `*.pc` skips dotfiles).
+            for d in "$out/lib/pkgconfig" "$out/share/pkgconfig"; do
+              mkdir -p "$d"
+              : > "$d/gcc-trivial-cross-stub.pc"
+            done
+          ;; esac
+        '' + (oldCC.postInstall or "");
         postPatch = (oldCC.postPatch or "") + ''
           sed -i '/echo 1>&2.*--with-headers is only supported when cross compiling/{n;/^[[:space:]]*exit 1$/d}' configure configure.ac
           # Fifth trivial-cross collision: gcc/configure.ac:2526-2533
           # only sets `CROSS=-DCROSS_DIRECTORY_STRUCTURE` when host !=
-          # target (canonical). With CROSS unset, gcc's
-          # gcc/cppdefault.cc:31-36 `#undef CROSS_INCLUDE_DIR`s →
-          # gcc's preprocessor search list NEVER includes
-          # `$(prefix)/$(target_alias)/sys-include/` (where --with-
-          # headers' copy-dirs landed glibc headers). Cc-wrapper's
-          # `-idirafter $libcCross/include` then provides the headers
-          # instead → DWARF .debug_line_str records the un-mapped
+          # target (canonical). With CROSS unset, gcc/cppdefault.cc:31-36
+          # `#undef CROSS_INCLUDE_DIR`s → gcc's preprocessor search list
+          # NEVER includes `$(prefix)/$(target_alias)/sys-include/`
+          # (where --with-headers' copy-dirs landed glibc headers).
+          # cc-wrapper's `-idirafter $libcCross/include` then provides
+          # them instead → DWARF .debug_line_str records the un-mapped
           # `$libcCross/include/{sys,bits,bits/types}` paths instead of
           # the prefix-mapped `$guixGcc/aarch64-linux-gnu/sys-include`
-          # → `/usr/include`. Force CROSS regardless of host==target
-          # when --with-headers is given. ALL=all.cross + SYSTEM_HEADER_DIR
-          # override matches real cross's behavior.
-          sed -i 's#^  if test x$host != x$target$#  if test x$host != x$target || ( test x"''${with_headers}" != x \&\& test x"''${with_headers}" != xno )#' gcc/configure.ac gcc/configure
+          # → `/usr/include`. Inject a fallback that sets CROSS when
+          # --with-headers is given, without touching ALL or
+          # SYSTEM_HEADER_DIR — broadening the original `if` would
+          # also force `ALL=all.cross`, which skips lang.all.cross's
+          # target libstdc++ build path that the wrapper later expects
+          # to find when linking C++ depends like boost. Append after
+          # the closing `fi` of the existing host!=target gate.
+          sed -i '/^    SYSTEM_HEADER_DIR='"'"'\$(CROSS_SYSTEM_HEADER_DIR)'"'"'$/,/^  fi$/{
+          /^  fi$/a\
+            if test x"''${with_headers}" != x && test x"''${with_headers}" != xno && test -z "$CROSS"; then CROSS="-DCROSS_DIRECTORY_STRUCTURE"; fi
+          }' gcc/configure.ac
         '';
       });
     });
