@@ -304,6 +304,33 @@ gcc14Stdenv.mkDerivation (rec {
     sed -i '/^\$(package)_patches += no_librt\.patch$/a\$(package)_patches += zeromq-disable-tipc.patch' \
       ${dependsDir}/packages/zeromq.mk
 
+    # Force ZMQ_CACHELINE_SIZE = 64 unconditionally. libzmq's
+    # CMakeLists.txt detects it at configure time via
+    # `getconf LEVEL1_DCACHE_LINESIZE` (which runs on the build host).
+    # In our nix sandbox the aarch64 cross build of depends had this
+    # come back as something other than 64, so command_t and other
+    # `__attribute__((aligned(ZMQ_CACHELINE_SIZE)))` types ended up
+    # 32-byte aligned instead of 64. That alignment difference reached
+    # gcc's register-allocator cost model for `std::_Rb_tree<endpoint_t>`
+    # instantiations in 8 of 101 libzmq objects (ctx.cpp.o,
+    # io_thread.cpp.o, mailbox.cpp.o, mailbox_safe.cpp.o, object.cpp.o,
+    # pipe.cpp.o, reaper.cpp.o, socket_base.cpp.o) — different stack-
+    # frame size (`sub sp, sp, #0xf0` vs upstream's `#0x110` in
+    # `connect_inproc_sockets`), same function size. The 5 aarch64
+    # binaries that statically link libzmq (bitcoind, bitcoin-qt,
+    # bitcoin-gui, bitcoin-node, test_bitcoin) all diverged from
+    # upstream as a result; the other 5 CLI tools matched.
+    # GUIX's container has /sys mounted and getconf returns 64 there,
+    # so they get the right value; forcing 64 explicitly matches that
+    # outcome on every host, and verified byte-equivalent on x86_64
+    # (where the detection happened to return 64 anyway).
+    cp ${../patches/zeromq-force-cacheline-64.patch} \
+      ${dependsDir}/patches/zeromq/zeromq-force-cacheline-64.patch
+    sed -i 's|^  patch -p1 < \$(\$(package)_patch_dir)/zeromq-disable-tipc\.patch$|& \&\& \\\n  patch -p1 < $($(package)_patch_dir)/zeromq-force-cacheline-64.patch|' \
+      ${dependsDir}/packages/zeromq.mk
+    sed -i '/^\$(package)_patches += zeromq-disable-tipc\.patch$/a\$(package)_patches += zeromq-force-cacheline-64.patch' \
+      ${dependsDir}/packages/zeromq.mk
+
     # fontconfig's configure detects freetype via pkg-config ("FREETYPE
     # yes"), but in our Nix build env the resulting FREETYPE_CFLAGS don't
     # reach the compile, so fcfreetype.c fails to find <ft2build.h>. Add the

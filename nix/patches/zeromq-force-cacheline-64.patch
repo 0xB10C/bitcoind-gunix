@@ -1,0 +1,32 @@
+Force ZMQ_CACHELINE_SIZE to 64 unconditionally.
+
+zmq's CMakeLists.txt detects the L1 D-cache line size via `getconf
+LEVEL1_DCACHE_LINESIZE`. In our nix-sandboxed depends build that
+returns a value other than 64 (the compiled libzmq .o files show
+32-byte alignment in the affected functions, vs GUIX's 64), causing
+divergent codegen on every libzmq object that uses cacheline-aligned
+templates (ctx.cpp.o, io_thread.cpp.o, mailbox*.cpp.o, object.cpp.o,
+pipe.cpp.o, reaper.cpp.o, socket_base.cpp.o).
+
+Force the value to 64 (the same baseline GUIX's container uses).
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -471,16 +471,5 @@ if (NOT WIN32 AND HAVE_PSELECT)
+ endif()
+
+ # special alignment settings
+-execute_process(
+-  COMMAND getconf LEVEL1_DCACHE_LINESIZE
+-  OUTPUT_VARIABLE CACHELINE_SIZE
+-  ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+-if(CACHELINE_SIZE STREQUAL ""
+-   OR CACHELINE_SIZE EQUAL 0
+-   OR CACHELINE_SIZE EQUAL -1
+-   OR CACHELINE_SIZE STREQUAL "undefined")
+-  set(ZMQ_CACHELINE_SIZE 64)
+-else()
+-  set(ZMQ_CACHELINE_SIZE ${CACHELINE_SIZE})
+-endif()
++set(ZMQ_CACHELINE_SIZE 64)
+ message(STATUS "Using ${ZMQ_CACHELINE_SIZE} bytes alignment for lock-free data structures")
