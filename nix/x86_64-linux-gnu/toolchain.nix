@@ -371,12 +371,13 @@ let
   };
   tarball = pkgs.callPackage ../lib/tarball.nix {
     inherit version url sha256 sourceDateEpoch bitcoind;
+    expectedSha256 = "26bdfbeeea4330ea67e56edcb58b183c3fbfeb4d5bc32f75b0e7d7b8d6b14ffa";
   };
-  # rc1: tarball + debugTarball pass null expectedSha256 — no upstream
-  # SHA256SUMS to gate against yet.
+  # The separate -debug.tar.gz with the ten .dbg files — also gated.
   debugTarball = pkgs.callPackage ../lib/tarball.nix {
     inherit version url sha256 sourceDateEpoch bitcoind;
     debug = true;
+    expectedSha256 = "bb8d3d00f2fdc410c985135197f6d61290fdb07793b7171494d4b9ae1479dc84";
   };
 in {
   inherit depends bitcoind tarball debugTarball

@@ -95,7 +95,8 @@ let
     crossInputs = darwinCrossInputs;
   };
 
-  # rc1: no per-binary expectedHashes — see release.nix's gate.
+  # The 10 Mach-O binaries of each darwin release. Reference hashes taken
+  # from the published -unsigned.tar.gz (per achow101's all.SHA256SUMS).
   bitcoindDarwinX86 = pkgs.callPackage ./release.nix {
     inherit version url sha256;
     inherit (pkgs) gcc14Stdenv;
@@ -103,6 +104,18 @@ let
     crossInputs = darwinCrossInputs;
     hostTriple = "x86_64-apple-darwin";
     pname = "bitcoind-darwin-x86_64";
+    expectedHashes = {
+      "bin/bitcoin" = "09fce95d0c8667cf896164ccaab3550b0d38332e2900311675bda851d878f754";
+      "bin/bitcoin-cli" = "bcd48926ee344073f4a7e911941aa38e495bbb3c8cd572aa01cac3d5f3d65628";
+      "bin/bitcoind" = "52089f2ed3e435f4390af39dd5cd94837e75a3a0ca055cdb997f10bd4165f02d";
+      "bin/bitcoin-qt" = "a6131bbae00092f2bfd52749d47a32c5bf7862614c93c8074e8d69a5291b734a";
+      "bin/bitcoin-tx" = "a6f24392c4843b7f8542f047814e70257c624981497bbb016312367e045819e4";
+      "bin/bitcoin-util" = "71ed0b8df68db34473110efc3c25f81034a4679d6f1bcd3c108bb780acc645c5";
+      "bin/bitcoin-wallet" = "45df0e4f4f0ee29e36b93a02cd1527e0c0e14d414ec46a3fc254ad99e966dce2";
+      "libexec/bitcoin-gui" = "c91cbe028c1d5786ec9a8fe1e27140d17ae88a224e11d1e7b72367b9bbf10236";
+      "libexec/bitcoin-node" = "9d447fdf8263cf63292a4e98ebac1ddf423c4f08fee07199dfaa7f0203015e5d";
+      "libexec/test_bitcoin" = "af5f03063963f4002d1ebaed9b0c707e09f9794d139363e2dc08e9f0ac79e2a3";
+    };
   };
   bitcoindDarwinArm64 = pkgs.callPackage ./release.nix {
     inherit version url sha256;
@@ -111,6 +124,18 @@ let
     crossInputs = darwinCrossInputs;
     hostTriple = "arm64-apple-darwin";
     pname = "bitcoind-darwin-arm64";
+    expectedHashes = {
+      "bin/bitcoin" = "27f82ab5645937ac118efe6510936bd9df56bbded2fbd09befd948653a1a9bcb";
+      "bin/bitcoin-cli" = "6cd8103fe1657b3eef6855fbcd950d02f3bcbb2f39fcf44490e416ca62713f6b";
+      "bin/bitcoind" = "e20bf28941733b7e6a4817995f2433e86bb19fd37c666a6fc269add8e95e5219";
+      "bin/bitcoin-qt" = "bfd2eac9f16e64e9e71da20f10a365a49e04e17c0d59845f706690d1eba928d3";
+      "bin/bitcoin-tx" = "f018ab5e9d621faeac5d04c4d37046f4a7a754a44b9cf1930e2287e74b0bda84";
+      "bin/bitcoin-util" = "4aa6a063b4f0f1de41df88f987bfa2a0b57717309d397ef7645202063f67069d";
+      "bin/bitcoin-wallet" = "0afe5c41673cfb5b6678d27f07bc92727fa1af7c2e43311e3bd87cf0dc6c85dc";
+      "libexec/bitcoin-gui" = "be610eec55155c772128d0fc4b504001c472c94a8aae78158662724574a56c3e";
+      "libexec/bitcoin-node" = "825d8aacafb8d2d2f9b0016cf6993ac8c4629f6b57f7756af930167bde59d7ff";
+      "libexec/test_bitcoin" = "87fba26b10a3154d155dd188135fd8deae04ba7043f808f617d74a37f047e87f";
+    };
   };
   # The published darwin -unsigned artifacts. The -unsigned.tar.gz is
   # assembled like the linux release archives (build.sh darwin case: no
@@ -121,35 +146,76 @@ let
     bitcoind = bitcoindDarwinX86;
     arch = "x86_64-apple-darwin";
     darwinUnsigned = true;
+    expectedSha256 = "c3d4318855349f2d931154473671de780f2643d8e1e1ecc4ed97b0cfa6c50db8";
   };
   tarballDarwinArm64 = pkgs.callPackage ../lib/tarball.nix {
     inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindDarwinArm64;
     arch = "arm64-apple-darwin";
     darwinUnsigned = true;
+    expectedSha256 = "6ddf76fa6eab9bd032ba7a293b55286d9a57f4566025f7f216eb41159a864398";
   };
-  mkDarwinUnsignedZip = { bitcoindDarwin, arch }:
+  mkDarwinUnsignedZip = { bitcoindDarwin, arch, expectedSha256 }:
     pkgs.runCommandLocal "bitcoin-${version}-${arch}-unsigned.zip" {} ''
       cp ${bitcoindDarwin.dist}/bitcoin-macos-app.zip "$out"
-      echo "BUILT (rc1, no upstream gate): bitcoin-${version}-${arch}-unsigned.zip $(sha256sum "$out" | cut -d' ' -f1)"
+      actual=$(sha256sum "$out" | cut -d' ' -f1)
+      if [ "$actual" != "${expectedSha256}" ]; then
+        echo "FAIL: unsigned zip sha256 does not match upstream GUIX v31.1rc1 release"
+        echo "  expected: ${expectedSha256}"
+        echo "  actual:   $actual"
+        exit 1
+      fi
+      echo "OK: bitcoin-${version}-${arch}-unsigned.zip matches upstream ($actual)"
     '';
   zipDarwinX86 = mkDarwinUnsignedZip {
     bitcoindDarwin = bitcoindDarwinX86;
     arch = "x86_64-apple-darwin";
+    expectedSha256 = "31bb7c87c5dbea60b81c49ee43206be459fd54342f421d9c221f0ae508582183";
   };
   zipDarwinArm64 = mkDarwinUnsignedZip {
     bitcoindDarwin = bitcoindDarwinArm64;
     arch = "arm64-apple-darwin";
+    expectedSha256 = "b428a2c07c9fb44b70f0ded0868adfe34e00d79d2f96293c7507802298fa549e";
   };
 
-  # rc1: signapple stays in case someone wants to inspect it, but the
-  # codesigningDarwin* / signedDarwin* derivations need v31.1 detached
-  # signatures (not published yet). When v31.1 ships, restore them from
-  # git history at commit af4bce22b63b.
+  # --- darwin signed artifacts -------------------------------------------
+  # signapple (+ its elfesteem) pinned to GUIX's manifest, and the v31.1rc1
+  # detached signatures. These reproduce the -codesigning.tar.gz and the
+  # SIGNED .tar.gz/.zip.
   signapple = pkgs.callPackage ./signapple.nix { };
+  codesigningDarwinX86 = pkgs.callPackage ./codesigning.nix {
+    inherit version url sha256;
+    host = "x86_64-apple-darwin";
+    bitcoindDarwin = bitcoindDarwinX86;
+    unsignedTarball = tarballDarwinX86;
+    expectedSha256 = "e3bb6be108847b36567203dcab1482abb6ffc20d1fe2acc2357404fbc54ae018";
+  };
+  codesigningDarwinArm64 = pkgs.callPackage ./codesigning.nix {
+    inherit version url sha256;
+    host = "arm64-apple-darwin";
+    bitcoindDarwin = bitcoindDarwinArm64;
+    unsignedTarball = tarballDarwinArm64;
+    expectedSha256 = "7d29c298421461dd843e5326d652464e0f11f376112972a42f0c42cb03aba624";
+  };
+  signedDarwinX86 = pkgs.callPackage ./signed.nix {
+    inherit version signapple detachedSigs;
+    host = "x86_64-apple-darwin";
+    arch = "x86_64";
+    codesigningTarball = codesigningDarwinX86;
+    expectedTarballSha256 = "9e12bb6abf800b210cab2ff356a76ace787661bf6fc438726520d174b527aae8";
+    expectedZipSha256 = "c4186905f172a6b3bc21afa8d8e8e97c2f75578fc023a50d5091f80aef14a816";
+  };
+  signedDarwinArm64 = pkgs.callPackage ./signed.nix {
+    inherit version signapple detachedSigs;
+    host = "arm64-apple-darwin";
+    arch = "arm64";
+    codesigningTarball = codesigningDarwinArm64;
+    expectedTarballSha256 = "eea402015458eb42f635614a098c61365d2a77a5d54f8ce4ff65225f642da67f";
+    expectedZipSha256 = "afa1048477c0db2a34cf5889c6558f47dcfcd67dbbd0aee3703203a9e0980a58";
+  };
 in {
   inherit llvmPackages1914 clangDarwin lldDarwin llvmDarwin darwinSdk
     dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
     tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
-    signapple;
+    signapple codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64;
 }

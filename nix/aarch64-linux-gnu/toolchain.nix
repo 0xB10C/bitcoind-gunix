@@ -542,13 +542,14 @@ let
     inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
+    expectedSha256 = "4846f0e6feeef19025ebcc31dfd14339ef45f078bde7e1a758786f06b1167185";
   };
-  # rc1: no upstream SHA256SUMS — both tarball + debugTarball ungated.
   debugTarballAarch64 = pkgs.callPackage ../lib/tarball.nix {
     inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindAarch64;
     arch = "aarch64-linux-gnu";
     debug = true;
+    expectedSha256 = "73c8ebe00fc84c0e9a6e17a44f94533c7d8fdd81d71d84084e03047fbb3e0493";
   };
 
 in {
