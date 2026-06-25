@@ -24,14 +24,14 @@
 , osslsigncode
 , cacert
 , version
+, sourceDateEpoch    # release tag commit epoch (== GUIX SOURCE_DATE_EPOCH)
 , codesigningTarball # win64-codesigning.tar.gz drv (codesigningMingw)
-, detachedSigs       # bitcoin-core/bitcoin-detached-sigs @ v31.0 (win/ tree)
-, expectedSetupSha256
-, expectedZipSha256
+, detachedSigs       # bitcoin-core/bitcoin-detached-sigs (win/ tree)
+, expectedSetupSha256 ? null
+, expectedZipSha256 ? null
 }:
 
 let
-  sourceDateEpoch = "1776286524";
   distname = "bitcoin-${version}";
   exes = [ "bitcoin" "bitcoin-cli" "bitcoind" "bitcoin-tx" "bitcoin-util" "bitcoin-wallet" "bitcoin-qt" ];
 in
@@ -75,7 +75,7 @@ runCommand "bitcoin-${version}-win64-signed"
   mv "$WORKDIR/${distname}-win64-setup.exe" "$out/"
 
   find "$WORKDIR/${distname}" -print0 \
-    | xargs -0r touch --no-dereference --date="@${sourceDateEpoch}"
+    | xargs -0r touch --no-dereference --date="@${toString sourceDateEpoch}"
   ( cd "$WORKDIR" && find "${distname}" | LC_ALL=C sort | zip -X@ "$out/${distname}-win64.zip" )
 
   fail=0
@@ -83,14 +83,16 @@ runCommand "bitcoin-${version}-win64-signed"
     local f="$1" want="$2"
     local got
     got=$(sha256sum "$f" | cut -d' ' -f1)
-    if [ "$got" = "$want" ]; then
+    if [ -z "$want" ]; then
+      echo "BUILT (rc1, no upstream gate): $(basename "$f") $got"
+    elif [ "$got" = "$want" ]; then
       echo "OK:   $(basename "$f") matches upstream ($got)"
     else
       echo "FAIL: $(basename "$f")  expected $want  actual $got"
       fail=1
     fi
   }
-  check "$out/${distname}-win64-setup.exe" "${expectedSetupSha256}"
-  check "$out/${distname}-win64.zip" "${expectedZipSha256}"
-  [ "$fail" = "0" ] || { echo "FAIL: signed win64 artifacts diverged from upstream GUIX v31.0"; exit 1; }
+  check "$out/${distname}-win64-setup.exe" "${toString expectedSetupSha256}"
+  check "$out/${distname}-win64.zip" "${toString expectedZipSha256}"
+  [ "$fail" = "0" ] || { echo "FAIL: signed win64 artifacts diverged from expected"; exit 1; }
 ''

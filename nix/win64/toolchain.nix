@@ -555,7 +555,7 @@ let
   };
 
   setupExeMingw = pkgs.callPackage ./setup.nix {
-    inherit version url sha256 mingwBinutils241;
+    inherit version url sha256 sourceDateEpoch mingwBinutils241;
     inherit (pkgs) libfaketime;
     bitcoind = bitcoindMingw;
     nsis = nsis310;
@@ -565,7 +565,7 @@ let
 
   # ---- win64-codesigning.tar.gz ---------------------------------------------
   codesigningMingw = pkgs.callPackage ./codesigning.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     bitcoind = bitcoindMingw;
     setupExe = setupExeMingw;
     expectedSha256 = "09fcd5a9852912bea2df931781e57265a2218cce35b6b70eba8c8f47cf7e5c3b";
@@ -587,7 +587,7 @@ let
   });
 
   signedMingw = pkgs.callPackage ./signed.nix {
-    inherit version detachedSigs;
+    inherit version sourceDateEpoch detachedSigs;
     osslsigncode = osslsigncode25;
     codesigningTarball = codesigningMingw;
     expectedSetupSha256 = "5b6fb8e34b936157b12a4da2d3fbcff8027e8274b4c1c07a1928d1a8415a2ada";

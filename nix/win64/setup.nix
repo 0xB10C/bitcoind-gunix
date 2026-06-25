@@ -26,12 +26,12 @@
 , mingwBinutils241  # final cross binutils 2.41 (objcopy for the release/ exes)
 , libfaketime       # freeze time(NULL) for objcopy's PE TimeDateStamp regen
 , hostTriple        # "x86_64-w64-mingw32"
+, sourceDateEpoch   # release tag commit epoch (== GUIX SOURCE_DATE_EPOCH)
 , expectedSha256 ? null  # null → don't gate (iteration)
 }:
 
 let
   src = fetchurl { inherit url sha256; };
-  sourceDateEpoch = "1776286524"; # v31.0 commit epoch (== GUIX SOURCE_DATE_EPOCH)
   outName = "bitcoin-${version}-win64-setup-unsigned.exe";
   # release/<name>.exe binaries the .nsi packages (NOT bitcoin-util — the .nsi
   # strips it into release/ but never File's it).
@@ -45,7 +45,7 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    export SOURCE_DATE_EPOCH=${sourceDateEpoch}
+    export SOURCE_DATE_EPOCH=${toString sourceDateEpoch}
 
     # Stage GUIX's distsrc layout: abs_top_srcdir = $S, abs_top_builddir = $S/build.
     S=$PWD/stage
@@ -62,8 +62,8 @@ stdenv.mkDerivation {
     #
     # binutils 2.41's objcopy ALWAYS regenerates the PE TimeDateStamp via
     # time(NULL) (ignores SOURCE_DATE_EPOCH and any existing value), so freeze
-    # the clock with faketime to get upstream's ${sourceDateEpoch} (0x69dffb3c).
-    FAKETIME_DATE=$(date -u -d "@${sourceDateEpoch}" '+%Y-%m-%d %H:%M:%S')
+    # the clock with faketime to get upstream's ${toString sourceDateEpoch} (0x69dffb3c).
+    FAKETIME_DATE=$(date -u -d "@${toString sourceDateEpoch}" '+%Y-%m-%d %H:%M:%S')
     stripRelease() {
       chmod u+w "$1"
       TZ=UTC ${libfaketime}/bin/faketime -f "$FAKETIME_DATE" \
@@ -102,9 +102,9 @@ stdenv.mkDerivation {
       --replace-quiet '@CLIENT_URL@'             "https://bitcoincore.org/" \
       --replace-quiet '@CLIENT_TARNAME@'         "bitcoin" \
       --replace-quiet '@CLIENT_VERSION_MAJOR@'   "31" \
-      --replace-quiet '@CLIENT_VERSION_MINOR@'   "0" \
+      --replace-quiet '@CLIENT_VERSION_MINOR@'   "1" \
       --replace-quiet '@CLIENT_VERSION_BUILD@'   "0" \
-      --replace-quiet '@CLIENT_VERSION_STRING@'  "31.0.0" \
+      --replace-quiet '@CLIENT_VERSION_STRING@'  "31.1.0rc1" \
       --replace-quiet '@COPYRIGHT_YEAR@'         "2026" \
       --replace-quiet '@COPYRIGHT_HOLDERS_FINAL@' "The Bitcoin Core developers" \
       --replace-quiet '@BITCOIN_WRAPPER_NAME@'     "bitcoin" \

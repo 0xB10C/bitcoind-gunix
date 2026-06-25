@@ -20,14 +20,14 @@
 , version
 , url
 , sha256
+, sourceDateEpoch  # release tag commit epoch (== GUIX SOURCE_DATE_EPOCH)
 , bitcoind   # bitcoindMingw (8 .exe + .dbg + man pages)
 , setupExe   # setupExeMingw output (the setup-unsigned.exe file)
-, expectedSha256
+, expectedSha256 ? null
 }:
 
 let
   src = fetchurl { inherit url sha256; };
-  sourceDateEpoch = "1776286524";
   archiveName = "bitcoin-${version}-win64-codesigning.tar.gz";
   exes = [ "bitcoin" "bitcoin-cli" "bitcoind" "bitcoin-tx" "bitcoin-util" "bitcoin-wallet" "bitcoin-qt" ];
 in
@@ -78,15 +78,19 @@ runCommandLocal archiveName
 
   find . -print0 | LC_ALL=C sort -z \
     | tar --create --no-recursion --mode='u+rw,go+r-w,a+X' --null --files-from=- \
-          --mtime=@${sourceDateEpoch} --owner=0 --group=0 --numeric-owner \
+          --mtime=@${toString sourceDateEpoch} --owner=0 --group=0 --numeric-owner \
     | gzip -9n > "$out"
 
   actual=$(sha256sum "$out" | cut -d' ' -f1)
-  if [ "$actual" != "${expectedSha256}" ]; then
-    echo "FAIL: ${archiveName} sha256 does not match upstream GUIX v31.0 release"
-    echo "  expected: ${expectedSha256}"
-    echo "  actual:   $actual"
-    exit 1
-  fi
-  echo "OK: ${archiveName} matches upstream ($actual)"
+  ${if expectedSha256 == null then ''
+    echo "BUILT (rc1, no upstream gate): ${archiveName} $actual"
+  '' else ''
+    if [ "$actual" != "${expectedSha256}" ]; then
+      echo "FAIL: ${archiveName} sha256 does not match expected"
+      echo "  expected: ${expectedSha256}"
+      echo "  actual:   $actual"
+      exit 1
+    fi
+    echo "OK: ${archiveName} matches expected ($actual)"
+  ''}
 ''
