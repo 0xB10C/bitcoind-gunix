@@ -35,8 +35,8 @@ jobs:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       # The derivations' postFixup gates compare every produced binary's
-      # sha256 (bitcoind.nix: all 10 binaries) and the assembled archive's
-      # sha256 (tarball.nix) against the upstream GUIX v31.0 release and
+      # sha256 (release.nix: all 10 binaries) and the assembled archive's
+      # sha256 (tarball.nix) against the upstream GUIX v31.1rc1 release and
       # fail the build on mismatch — so a successful `nix build` IS the
       # reproducibility test. Building .#tarball also builds .#bitcoind.
       # The steps below re-assert the hashes externally for CI-log
@@ -44,19 +44,19 @@ jobs:
       # Cachix cache makes subsequent runs fast.)
       - run: nix build .#bitcoind -o result-bitcoind --print-build-logs
       - run: nix build .#tarball -o result-tarball --print-build-logs
-      - name: Verify all 10 binaries match upstream GUIX v31.0
+      - name: Verify all 10 binaries match upstream GUIX v31.1rc1
         run: |
           declare -A expected=(
-            [bin/bitcoin]=eb5670aebd2b32c79215e578d2a7162fd1c98181bc558cfb8d29a4240e736521
-            [bin/bitcoin-cli]=3e92883f97850bc445ac033d26d55902dcb035fdf64f78c2c03c83216f083c5d
-            [bin/bitcoind]=dae69848ae9aaadcc3aa697d1c92b1283273a59c8d87b220b29ddc2813e25eb6
-            [bin/bitcoin-tx]=ce3b159c9985eca941b3071c4dc573a4cf92ed9ee27fc1cf68a28d8afe893b6c
-            [bin/bitcoin-util]=1d18ee4b1539110f784288462b8173d2d35d3b768ecbc3df83ebaa2781eb4306
-            [bin/bitcoin-wallet]=7d8382b86cce7fde4214f295f7e134a873f176556ee98bc6dcbf9b347a25acaf
-            [bin/bitcoin-qt]=3480af8fad820759a6299ea94bb3bb66f490b87c10ba44b1d0f671af382ff178
-            [libexec/bitcoin-node]=01c212ee592f4ecc649b7a13c8fc0976f2d823900c66cd11460edaa59bba21ca
-            [libexec/bitcoin-gui]=416e79bbebec5506ac786557519f3f5fc3fb1936a4a6074685d5f0aa24e01801
-            [libexec/test_bitcoin]=c7a2a9062256920fa4b92e330857dc12e7f89882f8a3930ecdc3350acf922f8f
+            [bin/bitcoin]=caa9c4cb517df25ce634542ef93823632641a063c96beb2d1544dfbaab160ca7
+            [bin/bitcoin-cli]=6abd14456bd756226ac9b104301f024e162432b0ef25eac81a64df52b7e61b08
+            [bin/bitcoind]=6affd25017d18116746f3a99a96162ed93c3b138ce0d5cc54095563dc9637b21
+            [bin/bitcoin-tx]=7d614b4ba22ffdd8934fbf49fa0fbdb5eea051addfaaede38a785d5d00c9d412
+            [bin/bitcoin-util]=2d0b1828cac470db1f574525f9df21f904cb6fb314dbe28a2ce531d20b77f4a3
+            [bin/bitcoin-wallet]=d04185a69379e1dd06c547982908402532fe71549d6aaf01febdfc8fa7044bbb
+            [bin/bitcoin-qt]=161d9b2dd1dfcd579bbdd0a1192ed224aa1233347c5a7330566cddbd1b7bd89b
+            [libexec/bitcoin-node]=720ca74ddea34791719f2843f60b7f09b5c54d28512a7d1f6534fbd3c44d11c9
+            [libexec/bitcoin-gui]=4ddd713b632ca9872a8e4e73458742134001264829bcdac51f6c18c869490579
+            [libexec/test_bitcoin]=d891b01337f5ec686b8bd5c4e6a17b41abd046699f94e4af48652064f67b4d2e
           )
           rc=0
           for rel in "${!expected[@]}"; do
@@ -68,9 +68,9 @@ jobs:
             fi
           done
           exit $rc
-      - name: Verify bitcoin-31.0-x86_64-linux-gnu.tar.gz matches upstream GUIX v31.0
+      - name: Verify bitcoin-31.1rc1-x86_64-linux-gnu.tar.gz matches upstream GUIX v31.1rc1
         run: |
-          expected=d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074
+          expected=26bdfbeeea4330ea67e56edcb58b183c3fbfeb4d5bc32f75b0e7d7b8d6b14ffa
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "expected: $expected"
           echo "actual:   $actual"
@@ -98,25 +98,25 @@ jobs:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       # bitcoind-aarch64.nix's postFixup gates all 10 aarch64 binaries and
-      # tarball.nix gates the archive sha256 against the upstream GUIX v31.0
+      # tarball.nix gates the archive sha256 against the upstream GUIX v31.1rc1
       # aarch64-linux-gnu release, so a successful build IS the reproducibility
       # test. Building .#tarballAarch64 also builds .#bitcoindAarch64. The
       # steps below re-assert the hashes externally for CI-log visibility.
       - run: nix build .#bitcoindAarch64 -o result-bitcoind --print-build-logs
       - run: nix build .#tarballAarch64 -o result-tarball --print-build-logs
-      - name: Verify all 10 aarch64 binaries match upstream GUIX v31.0
+      - name: Verify all 10 aarch64 binaries match upstream GUIX v31.1rc1
         run: |
           declare -A expected=(
-            [bin/bitcoin]=c793384c78c11b2125d0b68cc62b05fab7a96d6438f005f9e375f7d4a41bfe4c
-            [bin/bitcoin-cli]=25c2743efb90ccaccbaea9f481e0a0357310af04b04f78b2320c0cc65ce12bf6
-            [bin/bitcoind]=6f66822a44b4d4edd2a8ae1a11f63dd4db8d070e219c8eb54a3e2faa536409c2
-            [bin/bitcoin-tx]=b41284232c62323a890bb8ba3befba1e1c4d197155461766a19618a0aaccda87
-            [bin/bitcoin-util]=3a0daa1c1f840fc7f9ac18a29619aab071230ee5f9ef2690fd7f93f3b9003488
-            [bin/bitcoin-wallet]=b7c2bb47030c7fb7e652c70a68c4c012cdd2e3562396423fc6c9ef01e0b589ac
-            [bin/bitcoin-qt]=760c3de5ff9a54edfc6bf0c769df6dfe610aa9055d8ea0fa99edca4a62dc14d4
-            [libexec/bitcoin-node]=f213271f7cec156be3d155c3c1012f4c226e2b9216a40215355a190105d1fad5
-            [libexec/bitcoin-gui]=f85193a8b7f4323f612b92a5b7e19cda977f90bb9c26543d3f5277bf10c59291
-            [libexec/test_bitcoin]=940fd792624130b36c1aef4fb4fc61723e622635478e7301bf37827caac9f1c5
+            [bin/bitcoin]=347ca9d7291dccb728f5f5ae79228106c8d97b63237f6bf928aa4e35add33079
+            [bin/bitcoin-cli]=93eed022dba9e1c2de1630931d2a3ed61d6476ef72dc4a3840833832cb5eb3f3
+            [bin/bitcoind]=7df45d8bf3b013ec0b7a9c617f2007ad33fb220449e03e69ffcfccc1943b5116
+            [bin/bitcoin-tx]=fd1844e290149ae3c7dadf3ef8afbf3a95ca4f08554716c73ce6c07eb34fea56
+            [bin/bitcoin-util]=37ae6248570deb0f838ff391d1339757dc455fdd88cda45b1eb52bdf7dd81f48
+            [bin/bitcoin-wallet]=d6f2bfcf96716de133a24bff46555fcbf37257dd56a9f87a1ee45499f09745c7
+            [bin/bitcoin-qt]=d0b5b571ee4f9817eb1d61e3eaa2247c8c4c92d40944b53bee22d71446778d2c
+            [libexec/bitcoin-node]=e20aab227423625a498316d929ced4ec8fb68afdcf3953823da574fe69463ed9
+            [libexec/bitcoin-gui]=937b9128a6a61c30b0791fb750fa88be340bc573317ba356530a508306573550
+            [libexec/test_bitcoin]=e6489ead290b4dc6eb07a6f7365659341ca460208c5da2c58ecf835bef41065b
           )
           rc=0
           for rel in "${!expected[@]}"; do
@@ -128,9 +128,9 @@ jobs:
             fi
           done
           exit $rc
-      - name: Verify bitcoin-31.0-aarch64-linux-gnu.tar.gz matches upstream GUIX v31.0
+      - name: Verify bitcoin-31.1rc1-aarch64-linux-gnu.tar.gz matches upstream GUIX v31.1rc1
         run: |
-          expected=4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112
+          expected=4846f0e6feeef19025ebcc31dfd14339ef45f078bde7e1a758786f06b1167185
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "expected: $expected"
           echo "actual:   $actual"
@@ -157,19 +157,19 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#bitcoindRiscv64 -o result-bitcoind --print-build-logs
       - run: nix build .#tarballRiscv64 -o result-tarball --print-build-logs
-      - name: Verify all 10 riscv64 binaries match upstream GUIX v31.0
+      - name: Verify all 10 riscv64 binaries match upstream GUIX v31.1rc1
         run: |
           declare -A expected=(
-            [bin/bitcoin]=d28d634c82878263fc4878072fa132b1b518381e768081d7639da664b1b5da07
-            [bin/bitcoin-cli]=bb5ecc78581cd0f2361f25884520af76c40cde505444a8670f933d3492ea811e
-            [bin/bitcoind]=2c868a6a4d401269432a92f542bf833ce3622cd5caf7828016a7b61de64d0cc3
-            [bin/bitcoin-tx]=e4d682e57827e1299e52a104341c66484adbd16fc5600c26a5aa3e8a562385e7
-            [bin/bitcoin-util]=a33638e29496f0aec56aa53f930687919c24c87d1e49378d23512c14c125d9b1
-            [bin/bitcoin-wallet]=22d3c59167c3686a011b6ec5a9c85a0fd0515b6db3e570beee8141437f83dfd3
-            [bin/bitcoin-qt]=b348aa9d4fb2ccc5c0271a9ef072d196b85721de252e1cf65af6aca4f1eaaaec
-            [libexec/bitcoin-node]=2d28a094263960c361cf901e1a43cf44d26ec99c0ea6f9005ef88137591c79fd
-            [libexec/bitcoin-gui]=213838af6f99da64c635219505a635fbeac616c24691f64190457bfc97fa74c8
-            [libexec/test_bitcoin]=6086d424a21967d8e8bf6e2e5f9f74de4b9c5495cbf3d5f0c6d80c42ae1f83bf
+            [bin/bitcoin]=c4adbb9e0ea0f533c339ccbb5868133326042b57c475c618041b9bceef175bb9
+            [bin/bitcoin-cli]=69429977982b4aead59a5d0bada4af95871356c54a97d142393ccc049f49a82d
+            [bin/bitcoind]=ba897542f7cccc5a32db4061a64286afb90496469596e9aa866ffd4f3708e567
+            [bin/bitcoin-tx]=e1cbe800a0d165c3058213541d23e66ef11552a83da393040b9eed411d8c4fad
+            [bin/bitcoin-util]=004a1914df58f087f1e4ca015a8ba74aef4b901f6e299fe7d1281f6f1a947169
+            [bin/bitcoin-wallet]=2a73242d858aa12b197290bdc4591930a31e37255648575229ed9524e1b4286b
+            [bin/bitcoin-qt]=d56e6a0a78a51dd21bd76ab72169ab013cae1b9663acf6464069ab9739b8179d
+            [libexec/bitcoin-node]=a39c3c13d7d48c67ca45358d41d835266de09f723be71a774aade6b781f4c4b0
+            [libexec/bitcoin-gui]=969e06fc297ad11f6dcf66b00a63a0aa9cc0288a202b552c859819ba655aadeb
+            [libexec/test_bitcoin]=33b1590eea803601b58b49209ce51166996f8c73d035bff995f2d78082e8cfb0
           )
           rc=0
           for rel in "${!expected[@]}"; do
@@ -181,9 +181,9 @@ jobs:
             fi
           done
           exit $rc
-      - name: Verify bitcoin-31.0-riscv64-linux-gnu.tar.gz matches upstream GUIX v31.0
+      - name: Verify bitcoin-31.1rc1-riscv64-linux-gnu.tar.gz matches upstream GUIX v31.1rc1
         run: |
-          expected=7ece4ea365bba9b2008b27f0717ef6a518598a572edaa2815e775faadc53c136
+          expected=727ae87288b171ba748106217e5d57bc18dd1dbc2bab53b8a9aaebb94d9f4d7d
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "expected: $expected"
           echo "actual:   $actual"
@@ -209,14 +209,14 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballArmhf -o result-tarball --print-build-logs
       - run: nix build .#debugTarballArmhf -o result-debug-tarball --print-build-logs
-      - name: Verify bitcoin-31.0-arm-linux-gnueabihf{,-debug}.tar.gz match upstream GUIX v31.0
+      - name: Verify bitcoin-31.1rc1-arm-linux-gnueabihf{,-debug}.tar.gz match upstream GUIX v31.1rc1
         run: |
-          expected=8c19d007bfc73502625095ea4073af3a98ceb722d500556ab173bac5bcadd0d6
+          expected=f7341de046f9f799b67a343b9ee8e9be5c13770b9dd2375148af1d3f4db820e1
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "release expected: $expected"
           echo "release actual:   $actual"
           [ "$actual" = "$expected" ]
-          expected=fc17562b66707d0c8d1863af0cd40d7c6818a8d7d7b360b8d43276b1593924d9
+          expected=0e7c6104046f009ee25d365bcd4b1899192400ae1245d0b04ebf3ce2e4026a58
           actual=$(sha256sum result-debug-tarball | cut -d' ' -f1)
           echo "debug expected: $expected"
           echo "debug actual:   $actual"
@@ -239,14 +239,14 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballPpc64 -o result-tarball --print-build-logs
       - run: nix build .#debugTarballPpc64 -o result-debug-tarball --print-build-logs
-      - name: Verify bitcoin-31.0-powerpc64-linux-gnu{,-debug}.tar.gz match upstream GUIX v31.0
+      - name: Verify bitcoin-31.1rc1-powerpc64-linux-gnu{,-debug}.tar.gz match upstream GUIX v31.1rc1
         run: |
-          expected=1d9c865aa0ccf675fc068e79d9fa57a5a70b59132fca38bb322a7d44ce2f0ff2
+          expected=dc7ba69a377bf0f1965e6938054642a0d779886d83f96e8bbf63471f478ca7c6
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "release expected: $expected"
           echo "release actual:   $actual"
           [ "$actual" = "$expected" ]
-          expected=efe3e7d0383d54e5d79ac47911be0100b99872fa5205510a2a22d1194a0212d8
+          expected=50b00415baa8c877bfd814f31139bfc454b79b0a06999272e71bc4d5377bd6ef
           actual=$(sha256sum result-debug-tarball | cut -d' ' -f1)
           echo "debug expected: $expected"
           echo "debug actual:   $actual"
@@ -257,7 +257,7 @@ jobs:
   # bitcoincore.org mirror). Each job builds the full chain for one host —
   # all five published artifacts (-unsigned.tar.gz/.zip, -codesigning.tar.gz,
   # signed .tar.gz/.zip) — every one self-gating against the upstream GUIX
-  # v31.0 hashes, then re-asserts them externally for log visibility. The
+  # v31.1rc1 hashes, then re-asserts them externally for log visibility. The
   # bitcoind step builds inside an unshare/userns chroot (for byte-identical
   # LC_UUIDs), which needs CLONE_NEWUSER; Ubuntu 24.04+'s AppArmor
   # unprivileged_userns_restriction blocks that for unconfined processes
@@ -286,14 +286,14 @@ jobs:
       - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
       - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
-      - name: Verify all 5 x86_64-apple-darwin artifacts match upstream GUIX v31.0
+      - name: Verify all 5 x86_64-apple-darwin artifacts match upstream GUIX v31.1rc1
         run: |
           declare -A expected=(
-            [result-unsigned-tar]=d1d0174f07cf87d9af4318f7072350510fa0f1bf8d3d3b1ee7143ad5967b6bdf
-            [result-unsigned-zip]=b8d9b9915a1871ee12a3a9883fd47860028454fcd192864735f2e0d3a88b4735
-            [result-codesigning]=fccf54f31bd58a3f834add05fa5df36520313d936445c556be8f71ccf314b658
-            [result-signed/bitcoin-31.0-x86_64-apple-darwin.tar.gz]=56824dd705bc2a3b22d42e8aa02ed53498d491ff7c2c8aa96831333871887ead
-            [result-signed/bitcoin-31.0-x86_64-apple-darwin.zip]=8e230f36a2020072763adf742b20d95348cb20aaa0b0a918ca44ecdc83ac4efd
+            [result-unsigned-tar]=c3d4318855349f2d931154473671de780f2643d8e1e1ecc4ed97b0cfa6c50db8
+            [result-unsigned-zip]=31bb7c87c5dbea60b81c49ee43206be459fd54342f421d9c221f0ae508582183
+            [result-codesigning]=e3bb6be108847b36567203dcab1482abb6ffc20d1fe2acc2357404fbc54ae018
+            [result-signed/bitcoin-31.1rc1-x86_64-apple-darwin.tar.gz]=9e12bb6abf800b210cab2ff356a76ace787661bf6fc438726520d174b527aae8
+            [result-signed/bitcoin-31.1rc1-x86_64-apple-darwin.zip]=c4186905f172a6b3bc21afa8d8e8e97c2f75578fc023a50d5091f80aef14a816
           )
           rc=0
           for f in "${!expected[@]}"; do
@@ -327,14 +327,14 @@ jobs:
       - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
       - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
-      - name: Verify all 5 arm64-apple-darwin artifacts match upstream GUIX v31.0
+      - name: Verify all 5 arm64-apple-darwin artifacts match upstream GUIX v31.1rc1
         run: |
           declare -A expected=(
-            [result-unsigned-tar]=48d34a140aeaacd63a4bd37c24ed1876df4b077c98a7e0dd9a4483d1032839f4
-            [result-unsigned-zip]=b639946d343114cca5d87b218aaece04d0d111374b725d90dffc7e2d1d3b99f5
-            [result-codesigning]=955563c720b4d5fc22a11d4b102940d605f1cb9eb0b564f50deb606412c631e5
-            [result-signed/bitcoin-31.0-arm64-apple-darwin.tar.gz]=a2d7a13b4da53d4a3e4c517f3a0269e2429813417bb320d3b268993cfdc545d0
-            [result-signed/bitcoin-31.0-arm64-apple-darwin.zip]=fc119a34915daac57e5fbdf181c9295d862d6843d52a9380e39dc0d0ac69cf20
+            [result-unsigned-tar]=6ddf76fa6eab9bd032ba7a293b55286d9a57f4566025f7f216eb41159a864398
+            [result-unsigned-zip]=b428a2c07c9fb44b70f0ded0868adfe34e00d79d2f96293c7507802298fa549e
+            [result-codesigning]=7d29c298421461dd843e5326d652464e0f11f376112972a42f0c42cb03aba624
+            [result-signed/bitcoin-31.1rc1-arm64-apple-darwin.tar.gz]=eea402015458eb42f635614a098c61365d2a77a5d54f8ce4ff65225f642da67f
+            [result-signed/bitcoin-31.1rc1-arm64-apple-darwin.zip]=afa1048477c0db2a34cf5889c6558f47dcfcd67dbbd0aee3703203a9e0980a58
           )
           rc=0
           for f in "${!expected[@]}"; do
@@ -373,15 +373,15 @@ jobs:
       - run: nix build .#setupExeMingw -o result-setup-unsigned --print-build-logs
       - run: nix build .#codesigningMingw -o result-codesigning --print-build-logs
       - run: nix build .#signedMingw -o result-signed --print-build-logs
-      - name: Verify all 6 win64 archive/installer artifacts match upstream GUIX v31.0
+      - name: Verify all 6 win64 archive/installer artifacts match upstream GUIX v31.1rc1
         run: |
           declare -A expected=(
-            [result-unsigned-zip]=5ecd365b53a2896850178f90302375480933e6c85ef81bb8abe8675fd44e1d9c
-            [result-debug-zip]=df3f8c2f6ce8fde8d2661d3c01f5265f90f938019d52e2f94acf2a9001af70ae
-            [result-setup-unsigned]=ad31d4d82a0ddcf1340a447575ca958ee664656ca2e77282737898e1b8209ec8
-            [result-codesigning]=62baf547357029ac557d6fbbe91742c4ba6c1461c19ed4fab5131d4300b74d93
-            [result-signed/bitcoin-31.0-win64-setup.exe]=1893e819d7554ca43e6e812dc642bd1fb4570a4077b07a03180ad1041e74e223
-            [result-signed/bitcoin-31.0-win64.zip]=82fd2c504a0f20a31d4d13bd407783d6fc7bf17622d0ce85228a9b92694e03f0
+            [result-unsigned-zip]=b91c7ce1ecf12e537cd349acfcce414ad6a50cc869fddbdf547342566c791ba4
+            [result-debug-zip]=1469a0ad6b593ef1386e6ea81ff29337faf0b369657fefa2893797a1c71fe281
+            [result-setup-unsigned]=4426d631faa956b7bbd17711bc4e8d5bc903e00658b35e981ace859c6e90d0ea
+            [result-codesigning]=09fcd5a9852912bea2df931781e57265a2218cce35b6b70eba8c8f47cf7e5c3b
+            [result-signed/bitcoin-31.1rc1-win64-setup.exe]=5b6fb8e34b936157b12a4da2d3fbcff8027e8274b4c1c07a1928d1a8415a2ada
+            [result-signed/bitcoin-31.1rc1-win64.zip]=dc383827a7af97db04a3cf0cee4231b880308e204c723235388323c65a1c7c2b
           )
           rc=0
           for f in "${!expected[@]}"; do
@@ -421,7 +421,7 @@ jobs:
       - run: nix build .#tarballAarch64 -o result-tarball --print-build-logs
       - name: Verify aarch64-on-aarch64 (cross-to-self) tarball matches upstream
         run: |
-          expected=4de1d568dedd48604f75132421bc0abeca432639589b49a3909c81db3a813112
+          expected=4846f0e6feeef19025ebcc31dfd14339ef45f078bde7e1a758786f06b1167185
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "expected: $expected"
           echo "actual:   $actual"
@@ -444,7 +444,7 @@ jobs:
       - run: nix build .#tarball -o result-tarball --print-build-logs
       - name: Verify x86_64-from-aarch64 tarball matches upstream
         run: |
-          expected=d3e4c58a35b1d0a97a457462c94f55501ad167c660c245cb1ffa565641c65074
+          expected=26bdfbeeea4330ea67e56edcb58b183c3fbfeb4d5bc32f75b0e7d7b8d6b14ffa
           actual=$(sha256sum result-tarball | cut -d' ' -f1)
           echo "expected: $expected"
           echo "actual:   $actual"
