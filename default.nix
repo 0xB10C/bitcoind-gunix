@@ -59,14 +59,17 @@ let
   #
   # bitcoin-${version}.tar.gz: build.sh's `git archive --prefix=
   # bitcoin-${version}/ HEAD` of the bitcoin/bitcoin repo at the
-  # v${version} tag. For v31.1rc1 we don't fetch upstream's published
-  # release tarball (none exists yet on bitcoincore.org), but we DO
-  # reproduce GUIX's dist-archive output BYTE-FOR-BYTE by generating the
-  # `git archive` ourselves from a fresh fetchgit clone — see
-  # nix/lib/source-dist-archive.nix.
-  sourceDistArchive = import ./nix/lib/source-dist-archive.nix
-    { inherit (pkgs) runCommand gcc git zlib fetchgit; }
-    { inherit version; };
+  # v${version} tag. We reproduce GUIX's dist-archive output BYTE-FOR-
+  # BYTE by gunzip+regzip-ing GitHub's own tag archive (which is
+  # itself a `git archive` of the same commit with the same prefix —
+  # its inner tar is byte-identical to GUIX's; only the gzip parameters
+  # differ). See nix/lib/source-dist-archive.nix.
+  sourceDistArchive = pkgs.callPackage ./nix/lib/source-dist-archive.nix { }
+    {
+      inherit version;
+      src = pkgs.fetchurl { inherit url sha256; };
+      expectedSha256 = "50c152942bf842346360a3905d4221ce841c3493ac98f323d921714e385e4b4e";
+    };
 
   # bitcoin-${version}-codesignatures-${version}.tar.gz: codesign.sh's
   # `git archive HEAD` of the bitcoin-detached-sigs repo at the v${version}
