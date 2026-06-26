@@ -16,7 +16,7 @@
 # zlib 1.3 output exactly (verified byte-for-byte against the published
 # artifact) via gzip6.c.
 { runCommand, gcc, git, zlib }:
-{ name, src }:
+{ name, src, expectedSha256 ? null }:
 runCommand name
 {
   nativeBuildInputs = [ gcc git ];
@@ -28,4 +28,17 @@ runCommand name
 
   $CC -O2 ${./gzip6.c} -I${zlib.dev}/include -L${zlib}/lib -lz -Wl,-rpath,${zlib}/lib -o gzip6
   ./gzip6 archive.tar "$out"
+
+  ${if expectedSha256 == null then ''
+    echo "BUILT (no upstream gate): ${name} $(sha256sum "$out" | cut -d' ' -f1)"
+  '' else ''
+    actual=$(sha256sum "$out" | cut -d' ' -f1)
+    if [ "$actual" != "${expectedSha256}" ]; then
+      echo "FAIL: ${name} sha256 does not match upstream guix.sigs"
+      echo "  expected: ${expectedSha256}"
+      echo "  actual:   $actual"
+      exit 1
+    fi
+    echo "OK: ${name} matches upstream ($actual)"
+  ''}
 ''

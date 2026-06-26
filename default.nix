@@ -85,7 +85,11 @@ let
   };
   codesignaturesArchive = import ./nix/lib/codesignatures.nix
     { inherit (pkgs) runCommand gcc git zlib; }
-    { name = "bitcoin-${version}-codesignatures-${version}.tar.gz"; src = detachedSigsGit; };
+    {
+      name = "bitcoin-${version}-codesignatures-${version}.tar.gz";
+      src = detachedSigsGit;
+      expectedSha256 = "8da460b12d420c9bc4ef7cda46ed686db559efff8aa9417724883ed735e17c05";
+    };
 
   aarch64 = import ./nix/aarch64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
   riscv64 = import ./nix/riscv64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
