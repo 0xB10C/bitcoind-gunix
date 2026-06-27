@@ -184,21 +184,21 @@ let
   # SIGNED .tar.gz/.zip.
   signapple = pkgs.callPackage ./signapple.nix { };
   codesigningDarwinX86 = pkgs.callPackage ./codesigning.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     host = "x86_64-apple-darwin";
     bitcoindDarwin = bitcoindDarwinX86;
     unsignedTarball = tarballDarwinX86;
     expectedSha256 = "e3bb6be108847b36567203dcab1482abb6ffc20d1fe2acc2357404fbc54ae018";
   };
   codesigningDarwinArm64 = pkgs.callPackage ./codesigning.nix {
-    inherit version url sha256;
+    inherit version url sha256 sourceDateEpoch;
     host = "arm64-apple-darwin";
     bitcoindDarwin = bitcoindDarwinArm64;
     unsignedTarball = tarballDarwinArm64;
     expectedSha256 = "7d29c298421461dd843e5326d652464e0f11f376112972a42f0c42cb03aba624";
   };
   signedDarwinX86 = pkgs.callPackage ./signed.nix {
-    inherit version signapple detachedSigs;
+    inherit version sourceDateEpoch signapple detachedSigs;
     host = "x86_64-apple-darwin";
     arch = "x86_64";
     codesigningTarball = codesigningDarwinX86;
@@ -206,7 +206,7 @@ let
     expectedZipSha256 = "c4186905f172a6b3bc21afa8d8e8e97c2f75578fc023a50d5091f80aef14a816";
   };
   signedDarwinArm64 = pkgs.callPackage ./signed.nix {
-    inherit version signapple detachedSigs;
+    inherit version sourceDateEpoch signapple detachedSigs;
     host = "arm64-apple-darwin";
     arch = "arm64";
     codesigningTarball = codesigningDarwinArm64;

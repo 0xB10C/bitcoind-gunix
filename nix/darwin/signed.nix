@@ -17,12 +17,13 @@
 , findutils
 , signapple
 , version
+, sourceDateEpoch
 , host # "x86_64-apple-darwin" | "arm64-apple-darwin"
 , arch # "x86_64" | "arm64" (the .<arch>sign suffix)
 , codesigningTarball # the -codesigning.tar.gz drv (signer input)
-, detachedSigs # bitcoin-core/bitcoin-detached-sigs @ v31.0 (osx/ tree)
-, expectedTarballSha256
-, expectedZipSha256
+, detachedSigs # bitcoin-core/bitcoin-detached-sigs @ v31.1rc1 (osx/ tree)
+, expectedTarballSha256 ? null
+, expectedZipSha256 ? null
 }:
 
 runCommand "bitcoin-${version}-${host}-signed"
@@ -30,7 +31,7 @@ runCommand "bitcoin-${version}-${host}-signed"
   nativeBuildInputs = [ gnutar gzip zip coreutils findutils signapple ];
 } ''
   export LC_ALL=C TZ=UTC
-  SDE=${"1776286524"}
+  SDE=${toString sourceDateEpoch}
   umask 0022
 
   mkdir distsrc && cd distsrc
@@ -68,14 +69,16 @@ runCommand "bitcoin-${version}-${host}-signed"
     local f="$1" want="$2"
     local got
     got=$(sha256sum "$f" | cut -d' ' -f1)
-    if [ "$got" = "$want" ]; then
+    if [ -z "$want" ]; then
+      echo "BUILT (rc1, no upstream gate): $(basename "$f") $got"
+    elif [ "$got" = "$want" ]; then
       echo "OK:   $(basename "$f") matches upstream ($got)"
     else
       echo "FAIL: $(basename "$f")  expected $want  actual $got"
       fail=1
     fi
   }
-  check "$out/bitcoin-${version}-${host}.tar.gz" "${expectedTarballSha256}"
-  check "$out/bitcoin-${version}-${host}.zip" "${expectedZipSha256}"
-  [ "$fail" = "0" ] || { echo "FAIL: signed ${host} artifacts diverged from upstream GUIX v31.0"; exit 1; }
+  check "$out/bitcoin-${version}-${host}.tar.gz" "${if expectedTarballSha256 == null then "" else expectedTarballSha256}"
+  check "$out/bitcoin-${version}-${host}.zip" "${if expectedZipSha256 == null then "" else expectedZipSha256}"
+  [ "$fail" = "0" ] || { echo "FAIL: signed ${host} artifacts diverged from upstream guix.sigs"; exit 1; }
 ''
