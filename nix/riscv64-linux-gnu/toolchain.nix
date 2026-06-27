@@ -23,6 +23,21 @@ let
     glibcPatches = [ ../patches/glibc-riscv-jumptarget.patch ];
     dynamicLinker = "/lib/ld-linux-riscv64-lp64d.so.1";
     pnameSuffix = "riscv64";
+    # Full canon wiring like armhf/ppc64. v31.0 reproduced without it
+    # (big CUs sat below the GGC-allocation flip threshold), but
+    # v31.1rc1 trips it: bitcoind.dbg `.debug_loclists` is +129 bytes
+    # vs upstream while every other section (incl. the stripped
+    # binary) is byte-identical — the classic var-tracking
+    # representative flip caused by the depends `-ffile-prefix-map`
+    # ggc-allocating its rewrites (see CLAUDE.md armhf finding;
+    # GUIX fires no map on depends — real /bitcoin path). Route
+    # depends→/bitcoin via the canon env var so its rewrites are
+    # malloc'd (GGC-neutral), and use GUIX's literal /build→DISTSRC
+    # argv map so generated CUs (mpgen capnp, qt moc) don't dup
+    # their main-file table entry.
+    gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
+    debugCanonMap = true;
+    canonDepends = true;
     expectedHashes = {
       "bin/bitcoin" = "c4adbb9e0ea0f533c339ccbb5868133326042b57c475c618041b9bceef175bb9";
       "bin/bitcoin-cli" = "69429977982b4aead59a5d0bada4af95871356c54a97d142393ccc049f49a82d";
