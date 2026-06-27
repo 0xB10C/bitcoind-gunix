@@ -449,3 +449,54 @@ jobs:
           echo "expected: $expected"
           echo "actual:   $actual"
           [ "$actual" = "$expected" ]
+
+  # The aggregator — `.#sha256sums` builds all.SHA256SUMS from every
+  # released artifact (28 entries total: 7 linux/win64 targets ×
+  # tarball+debug + 2 darwin × {unsigned tar/zip, codesigning, signed
+  # tar/zip} + win64 × {setup-unsigned, setup-signed, signed zip,
+  # codesigning} + source dist + codesignatures wrapper). Each sub-
+  # derivation already self-gates against the upstream guix.sigs
+  # value, so a successful aggregator build IS the project-wide
+  # reproducibility proof. This job depends on every per-target build
+  # job so all sub-drvs are cache hits via Cachix; the only fresh work
+  # is the aggregator file itself.
+  build-sha256sums:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - build-aarch64
+      - build-riscv64
+      - build-armhf
+      - build-ppc64
+      - build-darwin-x86
+      - build-darwin-arm64
+      - build-win64
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: cachix/cachix-action@v17
+        with:
+          name: 0xb10c-bitcoind-gunix
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      # The darwin unsigned tarballs build inside an unshare/userns
+      # chroot (LC_UUID byte-identity); if anything below the aggregator
+      # is a Cachix miss the rebuild needs CLONE_NEWUSER, blocked by
+      # Ubuntu 24.04+'s AppArmor unprivileged_userns_restriction.
+      - name: Allow unprivileged user namespaces (darwin sub-drv rebuild fallback)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: nix build .#sha256sums -o result-sha256sums --print-build-logs
+      - name: Show all.SHA256SUMS contents
+        run: cat result-sha256sums
+      - name: Verify aggregator matches upstream GUIX v31.1rc1
+        run: |
+          expected=d580f87cb11a225a45827eeac6ef0816da8da72a8b8f646cfa786cb2b7c69410
+          actual=$(sha256sum result-sha256sums | cut -d' ' -f1)
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$actual" = "$expected" ]
