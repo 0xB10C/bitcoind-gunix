@@ -104,7 +104,7 @@ stdenv.mkDerivation {
       --replace-quiet '@CLIENT_VERSION_MAJOR@'   "31" \
       --replace-quiet '@CLIENT_VERSION_MINOR@'   "1" \
       --replace-quiet '@CLIENT_VERSION_BUILD@'   "0" \
-      --replace-quiet '@CLIENT_VERSION_STRING@'  "31.1.0rc1" \
+      --replace-quiet '@CLIENT_VERSION_STRING@'  "31.1.0" \
       --replace-quiet '@COPYRIGHT_YEAR@'         "2026" \
       --replace-quiet '@COPYRIGHT_HOLDERS_FINAL@' "The Bitcoin Core developers" \
       --replace-quiet '@BITCOIN_WRAPPER_NAME@'     "bitcoin" \

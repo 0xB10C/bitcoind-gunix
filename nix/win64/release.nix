@@ -18,7 +18,8 @@
 , mingwCrt         # the mingw-w64 CRT (msvcrt) store path — prefix-mapped → /usr
 , mingwPthreads    # the winpthreads store path — prefix-mapped → /usr
 , hostTriple       # "x86_64-w64-mingw32"
-# rc1: defaults to {} — no upstream SHA256SUMS yet.
+# {} = no per-binary upstream hashes published (upstream's SHA256SUMS
+# covers only the assembled archives, gated in zip.nix) — gate skipped.
 , expectedHashes ? { }   # rel path -> upstream sha256 (8 binaries + 8 .dbg)
 , pname
 }:
@@ -140,7 +141,7 @@ gcc14Stdenv.mkDerivation {
   '';
 
   postFixup = if expectedHashes == { } then ''
-    echo "BUILT (rc1, no upstream gate): ${hostTriple}"
+    echo "BUILT (no per-binary upstream gate — archive gates in zip.nix): ${hostTriple}"
     for rel in ${toString binaries}; do
       f="$out/$rel"
       [ -f "$f" ] && echo "  $rel       $(sha256sum "$f" | cut -d' ' -f1)"

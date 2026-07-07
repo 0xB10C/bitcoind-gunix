@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch }:
+{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch, upstreamSha256 }:
 
 let
   mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
@@ -53,30 +53,12 @@ let
     canonDepends = true;
     dynamicLinker = "/lib64/ld64.so.1";
     pnameSuffix = "ppc64";
-    expectedHashes = {
-      "bin/bitcoin" = "f510983d2728f274a275682f8dba788d3bdc62cd7eb0f04342892fdbb6e3ef07";
-      "bin/bitcoin-cli" = "63d76c4853614e813fb74be1356e95ad6045fa879013ec73216aa1ef86cdc443";
-      "bin/bitcoind" = "145e03593731c7e9c88f907254e0eff4c5aeb529eb8dc43878493021f0ce9e62";
-      "bin/bitcoin-tx" = "43614fbf1d7e8b0d1b4107836f64971ef99a69cb3fffae23ef265e6fbb1ba9a5";
-      "bin/bitcoin-util" = "d11bf2a80648878cbfd33ad19c8ea93ed89579bedfa0fcabf2a64df9e9ee382b";
-      "bin/bitcoin-wallet" = "2e03eb179b99d31d853e0b158a4729010978f902a8a6722d34a397382e85165f";
-      "bin/bitcoin-qt" = "659a8f2487229c64213b16577bef59ec601bcd4b5b61d438cdd79adbb4788d44";
-      "libexec/bitcoin-node" = "8feb70ca0d1840faac6eacd093cbad5302cb76b3525bcfec69e8b45dc4e6d68d";
-      "libexec/bitcoin-gui" = "1249562c1bdf36f739d4d93e18d9564fb681a915e9f94397189adc716aef97a7";
-      "libexec/test_bitcoin" = "fe4ff54cc9a2bef3c2e0048875e24e6489f05b990c972703c5a2a59f0348d352";
-      "bin/bitcoin.dbg" = "92bd5521238accf018199ed9a15ccd21e579c6f007ccd22ae424d56608aa888a";
-      "bin/bitcoin-cli.dbg" = "94664fbe4f5b984897641e2a6a491e9e4417499dee05cdb86f91c211bbcd125d";
-      "bin/bitcoind.dbg" = "becc8b966529ad7d237df55dccf7447debcdb4ee29f4a6fffaeead9e69db245c";
-      "bin/bitcoin-tx.dbg" = "50e1086d605eb6f11107183baf0a2b22b1cd105db85f4a4c0ef206255aee2779";
-      "bin/bitcoin-util.dbg" = "35f09fe2f4d51c922e8c65eb53bdc2d8472f6a55e8dd8fda27f7584ce0d2c38c";
-      "bin/bitcoin-wallet.dbg" = "9ea50c5f9a51221f40b5cd846a54211e71f35948afd0deb552116e73a4927b66";
-      "bin/bitcoin-qt.dbg" = "1b9db7e743a89eb31b8d4ac49ffd174a06076cf5b3322250438298102c5c0d53";
-      "libexec/bitcoin-node.dbg" = "cd4d46cf9517fab0860fdd7692da1348b6c8dfa1d669a3b4dfb9d77ae8bfe222";
-      "libexec/bitcoin-gui.dbg" = "25425093d82727f9f351803ce147fb3a0b4262697364b99e5388c58b39140bc6";
-      "libexec/test_bitcoin.dbg" = "8187ea5df74d5edb321511e81c9ed90c760d0a3dede3a2a69d6d815334625a06";
-    };
-    tarballSha256 = "dc7ba69a377bf0f1965e6938054642a0d779886d83f96e8bbf63471f478ca7c6";
-    debugTarballSha256 = "50b00415baa8c877bfd814f31139bfc454b79b0a06999272e71bc4d5377bd6ef";
+    # Per-binary reference hashes are not published for v31.1 (upstream's
+    # noncodesigned.SHA256SUMS covers only the assembled archives, gated
+    # below); the release build prints the per-file hashes for the log.
+    expectedHashes = { };
+    tarballSha256 = upstreamSha256 "bitcoin-${version}-powerpc64-linux-gnu.tar.gz";
+    debugTarballSha256 = upstreamSha256 "bitcoin-${version}-powerpc64-linux-gnu-debug.tar.gz";
   };
   dependsPpc64 = ppc64Cross.depends;
   bitcoindPpc64 = ppc64Cross.bitcoind;

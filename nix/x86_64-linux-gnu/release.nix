@@ -170,7 +170,7 @@ gcc14Stdenv.mkDerivation {
   # triple + GUIX .drv-0 debug-prefix-maps + store→/usr header maps +
   # kernel headers 6.1.119 + unstripped toolchain members + compressed
   # debug sections), so objcopy --add-gnu-debuglink computes upstream's
-  # CRC naturally. The postFixup gate asserts the .dbg hashes too.
+  # CRC naturally. postFixup prints the per-file hashes for the log.
   postInstall = ''
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
     for rel in \
@@ -187,48 +187,23 @@ gcc14Stdenv.mkDerivation {
     done
   '';
 
-  # Reproducibility gate: assert every shipped binary AND every .dbg debug
-  # file byte-matches the upstream GUIX v31.1rc1 x86_64-linux-gnu release
-  # (the .dbg are what ship in the separate -debug.tar.gz). Any divergence
-  # (or a missing file) fails the build — this derivation is a
-  # reproducibility test, not a best-effort build.
+  # Per-binary reference hashes are not published for v31.1 — upstream's
+  # noncodesigned.SHA256SUMS covers only the assembled archives, which
+  # tarball.nix gates against it. Print the per-file hashes for the log
+  # (they localize a tarball-gate failure to the diverging binary); the
+  # per-binary gate can be re-added once reference hashes exist (e.g.
+  # captured from a matched release archive).
   postFixup = ''
-    declare -A expected=(
-      [bin/bitcoin]=caa9c4cb517df25ce634542ef93823632641a063c96beb2d1544dfbaab160ca7
-      [bin/bitcoin-cli]=6abd14456bd756226ac9b104301f024e162432b0ef25eac81a64df52b7e61b08
-      [bin/bitcoind]=6affd25017d18116746f3a99a96162ed93c3b138ce0d5cc54095563dc9637b21
-      [bin/bitcoin-tx]=7d614b4ba22ffdd8934fbf49fa0fbdb5eea051addfaaede38a785d5d00c9d412
-      [bin/bitcoin-util]=2d0b1828cac470db1f574525f9df21f904cb6fb314dbe28a2ce531d20b77f4a3
-      [bin/bitcoin-wallet]=d04185a69379e1dd06c547982908402532fe71549d6aaf01febdfc8fa7044bbb
-      [bin/bitcoin-qt]=161d9b2dd1dfcd579bbdd0a1192ed224aa1233347c5a7330566cddbd1b7bd89b
-      [libexec/bitcoin-node]=720ca74ddea34791719f2843f60b7f09b5c54d28512a7d1f6534fbd3c44d11c9
-      [libexec/bitcoin-gui]=4ddd713b632ca9872a8e4e73458742134001264829bcdac51f6c18c869490579
-      [libexec/test_bitcoin]=d891b01337f5ec686b8bd5c4e6a17b41abd046699f94e4af48652064f67b4d2e
-      [bin/bitcoin.dbg]=2eef35daa53d1c00bbca4d60d60cbaf8269064311d26b34b25b48a9d61cec60f
-      [bin/bitcoin-cli.dbg]=9608165f11519daf158c74b03da482233694766cde5d8b43cf75ed0fd627ae4b
-      [bin/bitcoind.dbg]=2fcbbf09b000e1c1ca1b691828aa8db1053798b0eb168917803420571b177bb7
-      [bin/bitcoin-tx.dbg]=abdcbd55707b1576bbf2832a75413c5d992a6df7170e2f714e1086f044becb11
-      [bin/bitcoin-util.dbg]=a32afd02c42e20c9aa4d6121d5b7be6188641f5aa3ef829ab1ff5d1236cf085f
-      [bin/bitcoin-wallet.dbg]=76e775c8143569f1bbe0f3c3bf647a6860c1332a3f37e4b61092be1f8c6efd68
-      [bin/bitcoin-qt.dbg]=70975de048d64f9509847976d272cbe34f85edd50bcb8eb3578bf183acd1e56c
-      [libexec/bitcoin-node.dbg]=a9446c27d432a9974ffde4cd35899a75b361ed9b5245da6152d212747a8f9240
-      [libexec/bitcoin-gui.dbg]=4c193356b96c6fa7199d69d5f85d1ae2b0d1598a996616f3a3634f244928a603
-      [libexec/test_bitcoin.dbg]=025542e41cdbcc6c09e503e8b3ef07e60483622f3f09fe259f1c30e8ea0e4b1b
-    )
-    fail=0
-    for rel in "''${!expected[@]}"; do
-      f="$out/$rel"
-      if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
-      actual=$(sha256sum "$f" | cut -d' ' -f1)
-      if [ "$actual" = "''${expected[$rel]}" ]; then
-        echo "OK:   $rel matches upstream"
-      else
-        echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
-        fail=1
-      fi
+    echo "BUILT (no per-binary upstream gate — archive gates in tarball.nix):"
+    for rel in \
+      bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-tx \
+      bin/bitcoin-util bin/bitcoin-wallet bin/bitcoin-qt \
+      libexec/bitcoin-node libexec/bitcoin-gui libexec/test_bitcoin; do
+      for f in "$out/$rel" "$out/$rel.dbg"; do
+        if [ ! -f "$f" ]; then echo "FAIL: ''${f#$out/} was not built"; exit 1; fi
+        echo "  ''${f#$out/}  $(sha256sum "$f" | cut -d' ' -f1)"
+      done
     done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more binaries/.dbg diverged from upstream GUIX v31.1rc1"; exit 1; }
-    echo "OK: all 10 binaries and all 10 .dbg files match upstream GUIX v31.1rc1"
   '';
 
   dontStrip = true;

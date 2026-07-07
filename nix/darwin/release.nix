@@ -60,7 +60,8 @@
 , depends # the target's darwin depends tree (Qt included)
 , crossInputs # clangDarwin/lldDarwin/llvmDarwin — bare tools on PATH
 , hostTriple # "x86_64-apple-darwin" | "arm64-apple-darwin"
-# rc1: defaults to {} — no upstream SHA256SUMS yet.
+# {} = no per-binary upstream hashes published (upstream's SHA256SUMS
+# covers only the assembled archives, gated downstream) — gate skipped.
 , expectedHashes ? { }
 , withGate ? true # disable to keep diverging outputs for diffing
 , pname
@@ -185,12 +186,12 @@ gcc14Stdenv.mkDerivation {
   '';
 
   # Reproducibility gate: assert every shipped binary byte-matches the
-  # upstream GUIX release -unsigned tarball for this target. rc1: when
+  # upstream GUIX release -unsigned tarball for this target. When
   # `expectedHashes` is empty (default), the gate is skipped and the
   # binaries are merely listed.
   postFixup =
     if expectedHashes == { } || !withGate then ''
-      echo "BUILT (rc1, no upstream gate): ${hostTriple}"
+      echo "BUILT (no per-binary upstream gate — archive gates downstream): ${hostTriple}"
       for rel in \
         bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-qt bin/bitcoin-tx \
         bin/bitcoin-util bin/bitcoin-wallet \

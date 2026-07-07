@@ -52,7 +52,9 @@
             osslsigncode25 signedMingw
             pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv
             sha256sums noncodesignedSha256sums;
-          default = drvs.sha256sums;
+          # noncodesigned.SHA256SUMS is the project-wide proof while
+          # upstream's all.SHA256SUMS (signed artifacts) is unpublished.
+          default = drvs.noncodesignedSha256sums;
         });
     };
 }

@@ -110,8 +110,8 @@ gcc14Stdenv.mkDerivation {
   # byte-identical to upstream's (same recipe as x86_64 — see CLAUDE.md —
   # plus the aarch64-only --with-arch=armv8-a removal and the
   # kernel-header map for libgcc's unwind-dw2.c), so objcopy
-  # --add-gnu-debuglink computes upstream's CRC naturally. The postFixup
-  # gate asserts the .dbg hashes too.
+  # --add-gnu-debuglink computes upstream's CRC naturally. postFixup
+  # prints the per-file hashes for the log.
   postInstall = ''
     printf 'GCC: (GNU) 14.3.0\0' > comment.bin
     for rel in \
@@ -128,45 +128,23 @@ gcc14Stdenv.mkDerivation {
     done
   '';
 
-  # Reproducibility gate: assert every shipped binary AND every .dbg debug
-  # file byte-matches the upstream GUIX v31.1rc1 aarch64-linux-gnu release.
+  # Per-binary reference hashes are not published for v31.1 — upstream's
+  # noncodesigned.SHA256SUMS covers only the assembled archives, which
+  # tarball.nix gates against it. Print the per-file hashes for the log
+  # (they localize a tarball-gate failure to the diverging binary); the
+  # per-binary gate can be re-added once reference hashes exist (e.g.
+  # captured from a matched release archive).
   postFixup = ''
-    declare -A expected=(
-      [bin/bitcoin]=347ca9d7291dccb728f5f5ae79228106c8d97b63237f6bf928aa4e35add33079
-      [bin/bitcoin-cli]=93eed022dba9e1c2de1630931d2a3ed61d6476ef72dc4a3840833832cb5eb3f3
-      [bin/bitcoind]=7df45d8bf3b013ec0b7a9c617f2007ad33fb220449e03e69ffcfccc1943b5116
-      [bin/bitcoin-tx]=fd1844e290149ae3c7dadf3ef8afbf3a95ca4f08554716c73ce6c07eb34fea56
-      [bin/bitcoin-util]=37ae6248570deb0f838ff391d1339757dc455fdd88cda45b1eb52bdf7dd81f48
-      [bin/bitcoin-wallet]=d6f2bfcf96716de133a24bff46555fcbf37257dd56a9f87a1ee45499f09745c7
-      [bin/bitcoin-qt]=d0b5b571ee4f9817eb1d61e3eaa2247c8c4c92d40944b53bee22d71446778d2c
-      [libexec/bitcoin-node]=e20aab227423625a498316d929ced4ec8fb68afdcf3953823da574fe69463ed9
-      [libexec/bitcoin-gui]=937b9128a6a61c30b0791fb750fa88be340bc573317ba356530a508306573550
-      [libexec/test_bitcoin]=e6489ead290b4dc6eb07a6f7365659341ca460208c5da2c58ecf835bef41065b
-      [bin/bitcoin.dbg]=4b3110e489bf59f259c34c45d992d13d703c5676fb4b2c2ac23196ec764910c8
-      [bin/bitcoin-cli.dbg]=f6a2abff38c27d27a1d24792d6263a3bb823a4616e1f5feee2705b9de1e6e90a
-      [bin/bitcoind.dbg]=2db574b0832bbe0eac555c386efda2e16b70616987ce397f8d705db897904bc7
-      [bin/bitcoin-tx.dbg]=928cdcb4e2ca9f841a6916aed5ba5a3a36e98b852f72c5f52113c1a31939a8fd
-      [bin/bitcoin-util.dbg]=dc44bc74dc18208781f12891731e4175b7c529adf115af5525440bad9c286be9
-      [bin/bitcoin-wallet.dbg]=82e814b3b46ce5271cbcd01dbc928061333969d834e6f4919e0e4e5939e5c5f8
-      [bin/bitcoin-qt.dbg]=21600762626c3efd0ab1eb11f383ec4b50c223e2fe31e6208ea6b291dc75ae46
-      [libexec/bitcoin-node.dbg]=5dc2f9ab3f9737618dcce5f898df4e59abdba9cae03f193b9a9e4c8e4adc52fd
-      [libexec/bitcoin-gui.dbg]=716dd26289b8bce010c2ece77f63a020870c579782064fadaad385f5e0c8356d
-      [libexec/test_bitcoin.dbg]=d39bb2352ff6f08cd4a9343b68784a5c07e53152f38043d603794eb1fb763cab
-    )
-    fail=0
-    for rel in "''${!expected[@]}"; do
-      f="$out/$rel"
-      if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
-      actual=$(sha256sum "$f" | cut -d' ' -f1)
-      if [ "$actual" = "''${expected[$rel]}" ]; then
-        echo "OK:   $rel matches upstream"
-      else
-        echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
-        fail=1
-      fi
+    echo "BUILT (no per-binary upstream gate — archive gates in tarball.nix):"
+    for rel in \
+      bin/bitcoin bin/bitcoin-cli bin/bitcoind bin/bitcoin-tx \
+      bin/bitcoin-util bin/bitcoin-wallet bin/bitcoin-qt \
+      libexec/bitcoin-node libexec/bitcoin-gui libexec/test_bitcoin; do
+      for f in "$out/$rel" "$out/$rel.dbg"; do
+        if [ ! -f "$f" ]; then echo "FAIL: ''${f#$out/} was not built"; exit 1; fi
+        echo "  ''${f#$out/}  $(sha256sum "$f" | cut -d' ' -f1)"
+      done
     done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more aarch64 binaries/.dbg diverged from upstream GUIX v31.1rc1"; exit 1; }
-    echo "OK: all 10 aarch64 binaries and all 10 .dbg files match upstream GUIX v31.1rc1"
   '';
 
   dontStrip = true;

@@ -25,9 +25,10 @@
 , canonDepends ? false # rewrite depends→/bitcoin via the canon env var instead of -ffile-prefix-map
                        # (an argv map that FIRES ggc-allocates each rewrite and flips var-tracking
                        # loclists in big CUs — GUIX fires no map on its real-/bitcoin depends)
-# rc1 NOTE: defaults to `{}` — no upstream SHA256SUMS to gate against.
-# Pass an attrset {bin/bitcoind=…; …} to re-enable per-binary byte-match
-# gates once available.
+# `{}` = no per-binary upstream hashes published (upstream's SHA256SUMS
+# covers only the assembled archives, gated in tarball.nix) — the
+# per-binary gate is skipped. Pass an attrset {bin/bitcoind=…; …} to
+# re-enable it once reference hashes exist.
 , expectedHashes ? { }
 , pname # e.g. "bitcoind-riscv64"
 }:
@@ -161,10 +162,11 @@ gcc14Stdenv.mkDerivation {
   # Reproducibility gate: assert every shipped binary AND every .dbg debug
   # file byte-matches the upstream GUIX release for this target
   # (the .dbg are what ship in the separate -debug.tar.gz).
-  # rc1: when `expectedHashes` is empty, the gate is skipped and the
-  # binaries are merely listed — no upstream SHA256SUMS published yet.
+  # When `expectedHashes` is empty, the gate is skipped and the binaries
+  # are merely listed — upstream publishes no per-binary hashes (only the
+  # assembled archives, gated in tarball.nix).
   postFixup = if expectedHashes == { } then ''
-    echo "BUILT (rc1, no upstream gate): ${hostTriple}"
+    echo "BUILT (no per-binary upstream gate — archive gates in tarball.nix): ${hostTriple}"
     for rel in ${toString binaries}; do
       f="$out/$rel"
       [ -f "$f" ] && echo "  $rel  $(sha256sum "$f" | cut -d' ' -f1)"

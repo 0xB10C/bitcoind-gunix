@@ -83,7 +83,7 @@ runCommandLocal archiveName
 
   actual=$(sha256sum "$out" | cut -d' ' -f1)
   ${if expectedSha256 == null then ''
-    echo "BUILT (rc1, no upstream gate): ${archiveName} $actual"
+    echo "BUILT (no upstream gate — not in checked-in SHA256SUMS): ${archiveName} $actual"
   '' else ''
     if [ "$actual" != "${expectedSha256}" ]; then
       echo "FAIL: ${archiveName} sha256 does not match expected"

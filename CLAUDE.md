@@ -6,6 +6,59 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-07-07): bumped to v31.1 FINAL — gates read from checked-in noncodesigned.SHA256SUMS; x86_64 + dist archive already byte-match
+
+v31.1 shipped (tag `9be056a8…`, 2026-07-06). The branch now builds the
+v31.1 release, and **every upstream-hash gate looks its expected value
+up from the checked-in `noncodesigned.SHA256SUMS`** (obtained from
+bitcoin-core/guix.sigs) instead of hardcoding hashes. First local
+verification: `bitcoin-31.1.tar.gz` (`50411d5b…`),
+`bitcoin-31.1-x86_64-linux-gnu.tar.gz` (`b80d9c3e…`) and
+`…-debug.tar.gz` (`63a1cee7…`) all byte-match upstream (full local
+toolchain+depends rebuild — the rc1 store paths had been GC'd). The
+other targets re-verify in CI. upstream's
+all.SHA256SUMS (the signed darwin/win64 artifacts + the codesignatures
+archive) is not published yet — when it is, check it in as
+`all.SHA256SUMS` next to the noncodesigned file and those gates turn on
+automatically (default.nix merges both files into the lookup).
+
+What changed:
+
+- **`version = "31.1"`**, source = the GitHub tag archive (bitcoincore.org
+  has no 31.1 release dir yet — re-point when published),
+  `sourceDateEpoch = 1783343359` (the v31.1 tag commit time).
+- **`upstreamSha256` lookup in default.nix**: parses
+  `./noncodesigned.SHA256SUMS` (+ `./all.SHA256SUMS` if present) into
+  filename→hash; passed to every target toolchain. Missing filename →
+  null → that gate is skipped with a "no upstream gate" log line.
+  NOTE: the SHA256SUMS files must be git-tracked or flake eval won't
+  see them.
+- **All 21 noncodesigned artifacts gated from the file**: the 7 linux
+  release+debug tarballs, 3 darwin artifacts × 2 arches, 4 win64
+  artifacts, and the source dist archive (`bitcoin-31.1.tar.gz` —
+  already built + byte-matched upstream: `50411d5b…`).
+- **Per-binary gates emptied**: the rc1 per-binary hashes (captured from
+  our own rc1 builds; guix.sigs never publishes per-binary hashes) are
+  gone — x86/aarch64 release.nix print the per-file hashes instead of
+  asserting, the other targets pass `expectedHashes = {}`. The archive
+  gates are the byte-match assertion; re-add per-binary hashes from a
+  matched build if wanted for divergence-localization.
+- **detached-sigs bumped to v31.1** (`e26f014f…` — the tag exists even
+  though all.SHA256SUMS isn't out), so the whole signing pipeline
+  (darwin `signedDarwin*`, win64 `signedMingw`, `codesignaturesArchive`)
+  BUILDS; those outputs are just ungated until all.SHA256SUMS lands.
+- **NSIS `@CLIENT_VERSION_STRING@` fixed to `31.1.0`** in
+  nix/win64/setup.nix (was hardcoded `31.1.0rc1`; v31.1 has
+  CLIENT_VERSION_RC=0 so no rc suffix).
+- **CI rewritten to read from the file**: every verify step `awk`s the
+  expected hash out of `noncodesigned.SHA256SUMS` (no hashes in the
+  workflow anymore); per-binary verify steps dropped; linux jobs now
+  also build+verify the debug tarballs; darwin/win64 jobs still build
+  the signed artifacts but don't assert them; `build-sha256sums` builds
+  `.#noncodesignedSha256sums` and `diff`s it against the checked-in
+  file (the project-wide proof), and builds `.#sha256sums` for display
+  only. `packages.default` = `noncodesignedSha256sums` for now.
+
 ## Status (2026-06-23, later): bumped to v31.1rc1 — upstream-hash gates + codesigning OFF until v31.1 ships
 
 Version bumped from v31.0 (RELEASED) to v31.1rc1 (RELEASE CANDIDATE).

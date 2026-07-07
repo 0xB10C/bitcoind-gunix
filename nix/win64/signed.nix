@@ -84,7 +84,7 @@ runCommand "bitcoin-${version}-win64-signed"
     local got
     got=$(sha256sum "$f" | cut -d' ' -f1)
     if [ -z "$want" ]; then
-      echo "BUILT (rc1, no upstream gate): $(basename "$f") $got"
+      echo "BUILT (no upstream gate — not in checked-in SHA256SUMS): $(basename "$f") $got"
     elif [ "$got" = "$want" ]; then
       echo "OK:   $(basename "$f") matches upstream ($got)"
     else

@@ -22,12 +22,11 @@
 , sha256
 , bitcoind          # the win64 bitcoind derivation (8 .exe + 8 .dbg)
 , debug ? false     # true → the -debug.zip (just the .dbg)
-# rc1: defaults to null — no upstream SHA256SUMS yet.
+# null = no upstream hash to gate against (byte-match gate skipped).
+# Callers pass the hash looked up from the checked-in SHA256SUMS.
 , expectedSha256 ? null
-# rc1: SOURCE_DATE_EPOCH (v31.0 hard-coded 1776286524). Falls back to
-# the v31.0 epoch if not provided by the caller, which the rc1 wiring
-# does not yet — the win64 archives just inherit the fallback for now.
-# When v31.1 ships, switch to passing default.nix's sourceDateEpoch.
+# SOURCE_DATE_EPOCH — passed through from default.nix (the release
+# tag's commit time); the fallback is v31.0's epoch.
 , sourceDateEpoch ? 1776286524
 }:
 
@@ -91,7 +90,7 @@ runCommandLocal archiveName
 
   actual=$(sha256sum "$out" | cut -d' ' -f1)
 '' + (if expectedSha256 == null then ''
-  echo "BUILT: ${archiveName} ($actual) — no upstream gate (rc1)"
+  echo "BUILT: ${archiveName} ($actual) — no upstream gate (not in checked-in SHA256SUMS)"
 '' else ''
   if [ "$actual" != "${expectedSha256}" ]; then
     echo "FAIL: ${archiveName} sha256 does not match upstream"

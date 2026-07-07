@@ -3,24 +3,42 @@
 }:
 
 let
-  version = "31.1rc1";
-  # v31.1rc1 has no bitcoincore.org release tarball yet (rc still being
-  # tested) — fetch the GitHub source archive directly. The GitHub
-  # archive uses the same `bitcoin-<version>/` prefix as the GUIX
-  # build.sh `git archive --prefix=…` upstream uses for its release
-  # tarball, so the tarball.nix extraction (`bitcoin-${version}/…`)
-  # still resolves. The hash will need to be re-pinned to the
-  # bitcoincore.org tarball if/when v31.1 ships, alongside the per-
-  # binary gates (currently disabled, see the rc1 NOTE in tarball.nix /
-  # release-cross.nix).
+  version = "31.1";
+  # v31.1 is not published on bitcoincore.org/bin yet (guix.sigs has the
+  # noncodesigned attestations; the signed release follows) — fetch the
+  # GitHub source archive directly. The GitHub archive uses the same
+  # `bitcoin-<version>/` prefix as the GUIX build.sh `git archive
+  # --prefix=…` upstream uses for its release tarball, so the
+  # tarball.nix extraction (`bitcoin-${version}/…`) still resolves.
+  # Once the release is published, this can be re-pointed at the
+  # canonical bitcoincore.org tarball.
   url = "https://github.com/bitcoin/bitcoin/archive/refs/tags/v${version}.tar.gz";
-  sha256 = "sha256-hJmpaCwPzodnoHb4Q1sXqdTiXj9LPTBNhtltOfldYh4=";
+  sha256 = "sha256-iK+7yGX3Un68qCwZcFbswYd7Z4LQ+x/gMrEvhr3X454=";
 
-  # SOURCE_DATE_EPOCH for the release archive's mtime. v31.0 used the
-  # v31.0 tag commit time (1776286524). For v31.1rc1 use the tag's
-  # commit time (efde6234… = 2026-06-22T13:11:02Z). When v31.1 final
-  # ships, switch to the v31.1 tag's commit time.
-  sourceDateEpoch = 1782133862;
+  # SOURCE_DATE_EPOCH for the release archive's mtime: the v31.1 tag's
+  # commit time (9be056a8… = 2026-07-06T13:09:19Z), like GUIX's
+  # build.sh derives it from the tag being built.
+  sourceDateEpoch = 1783343359;
+
+  # Upstream reference hashes, parsed from the checked-in
+  # noncodesigned.SHA256SUMS (from bitcoin-core/guix.sigs) — every gate
+  # looks its artifact up here by published filename instead of
+  # hardcoding the hash. Artifacts that only appear in all.SHA256SUMS
+  # (the signed darwin/win64 outputs + the codesignatures archive)
+  # resolve to null — gate skipped — until that file is published and
+  # checked in next to noncodesigned.SHA256SUMS.
+  parseSha256sums = file:
+    if builtins.pathExists file then
+      builtins.listToAttrs (builtins.concatMap
+        (line:
+          let m = builtins.match "([0-9a-f]{64})[ \t]+([^ \t]+)[ \t]*" line;
+          in if m == null then [ ]
+             else [ { name = builtins.elemAt m 1; value = builtins.elemAt m 0; } ])
+        (pkgs.lib.splitString "\n" (builtins.readFile file)))
+    else { };
+  upstreamHashes = parseSha256sums ./noncodesigned.SHA256SUMS
+    // parseSha256sums ./all.SHA256SUMS;
+  upstreamSha256 = filename: upstreamHashes.${filename} or null;
 
   # NOTE (2026-06-10): the original NATIVE x86_64 toolchain (binutils 2.41
   # + gcc 14 rebuilt against glibc 2.31 via wrapped native stdenvs:
@@ -44,14 +62,14 @@ let
   # targets' gates); other hosts re-assert the same gates.
   buildSystem = pkgs.stdenv.hostPlatform.system;
 
-  # Detached signatures (bitcoin-core/bitcoin-detached-sigs v31.1rc1) — used by
+  # Detached signatures (bitcoin-core/bitcoin-detached-sigs v31.1) — used by
   # both the darwin and win64 signed-artifact flows, so it lives here rather
   # than inside either target's toolchain.
   detachedSigs = pkgs.fetchFromGitHub {
     owner = "bitcoin-core";
     repo = "bitcoin-detached-sigs";
-    rev = "8c852f3283134e52d0a4e78d04648f70c9d79b60"; # v31.1rc1
-    hash = "sha256-eJb6KgPP/oB1l0wEXHdoNu/XcE5P3Z9WZ+7sc/9F3cQ=";
+    rev = "e26f014fc2baefda985f8cb76be9b96efa3e81d7"; # v31.1
+    hash = "sha256-7LRhWNmUIOJVu/l8EIWbZkluifqnkNWhff6akJBM2/8=";
   };
 
   # The two `git archive` tarballs that round out upstream's SHA256SUMS
@@ -68,7 +86,7 @@ let
     {
       inherit version;
       src = pkgs.fetchurl { inherit url sha256; };
-      expectedSha256 = "50c152942bf842346360a3905d4221ce841c3493ac98f323d921714e385e4b4e";
+      expectedSha256 = upstreamSha256 "bitcoin-${version}.tar.gz";
     };
 
   # bitcoin-${version}-codesignatures-${version}.tar.gz: codesign.sh's
@@ -79,30 +97,32 @@ let
   # git-archive + gzip is reproduced byte-for-byte.
   detachedSigsGit = pkgs.fetchgit {
     url = "https://github.com/bitcoin-core/bitcoin-detached-sigs";
-    rev = "8c852f3283134e52d0a4e78d04648f70c9d79b60"; # v31.1rc1
+    rev = "e26f014fc2baefda985f8cb76be9b96efa3e81d7"; # v31.1
     leaveDotGit = true;
-    hash = "sha256-OFCYB/96B1AbSY1VliJwx88fHKPKvAB5Cj6ka8+3pJg=";
+    hash = "sha256-qibTxXPE8cyFgIJWxNUr84YWNu0xYgLVjc8W3EWFReM=";
   };
   codesignaturesArchive = import ./nix/lib/codesignatures.nix
     { inherit (pkgs) runCommand gcc git zlib; }
     {
       name = "bitcoin-${version}-codesignatures-${version}.tar.gz";
       src = detachedSigsGit;
-      expectedSha256 = "8da460b12d420c9bc4ef7cda46ed686db559efff8aa9417724883ed735e17c05";
+      # In all.SHA256SUMS only — null (gate skipped) until it's published.
+      expectedSha256 = upstreamSha256 "bitcoin-${version}-codesignatures-${version}.tar.gz";
     };
 
-  aarch64 = import ./nix/aarch64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
-  riscv64 = import ./nix/riscv64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
-  armhf   = import ./nix/arm-linux-gnueabihf/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
-  ppc64   = import ./nix/powerpc64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
-  x86     = import ./nix/x86_64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
-  darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch detachedSigs; };
-  win64   = import ./nix/win64/toolchain.nix { inherit pkgs pkgs2405 version url sha256 buildSystem sourceDateEpoch detachedSigs; };
+  aarch64 = import ./nix/aarch64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch upstreamSha256; };
+  riscv64 = import ./nix/riscv64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch upstreamSha256; };
+  armhf   = import ./nix/arm-linux-gnueabihf/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch upstreamSha256; };
+  ppc64   = import ./nix/powerpc64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch upstreamSha256; };
+  x86     = import ./nix/x86_64-linux-gnu/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch upstreamSha256; };
+  darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
+  win64   = import ./nix/win64/toolchain.nix { inherit pkgs pkgs2405 version url sha256 buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
   # The artifacts this project byte-reproduces, in upstream's
   # noncodesigned.SHA256SUMS / all.SHA256SUMS format (see
   # nix/lib/sha256sums.nix). Order matches upstream EXACTLY (verified
-  # against bitcoin-core/guix.sigs 31.1rc1/achow101/all.SHA256SUMS).
+  # against bitcoin-core/guix.sigs 31.1rc1/achow101/all.SHA256SUMS; the
+  # checked-in 31.1 noncodesigned.SHA256SUMS follows the same order).
   # guix-attest sorts each per-host SHA256SUMS.part fragment by its
   # pre-basename PATH (<outdir_base>/<HOST>/<file>) — the effective
   # order is HOSTS alphabetically (aarch64-linux-gnu,

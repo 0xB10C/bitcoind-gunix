@@ -36,11 +36,11 @@
 # rules, but build.sh ships NO README.md for darwin (its per-host case
 # copies it for linux only) and there are no .dbg files at all.
 , darwinUnsigned ? false
-# rc1 NOTE: defaults to null — no upstream SHA256SUMS to gate against.
-# Pass a string sha to re-enable the byte-match gate once available.
+# null = no upstream hash to gate against (byte-match gate skipped).
+# Callers pass the hash looked up from the checked-in SHA256SUMS.
 , expectedSha256 ? null
-# rc1 NOTE: SOURCE_DATE_EPOCH passes through from default.nix (the
-# v31.1rc1 tag commit time). v31.0 hard-coded 1776286524 inline.
+# SOURCE_DATE_EPOCH passes through from default.nix (the release
+# tag's commit time). v31.0 hard-coded 1776286524 inline.
 , sourceDateEpoch
 }:
 
@@ -108,7 +108,7 @@ runCommandLocal archiveName
 
   actual=$(sha256sum "$out" | cut -d' ' -f1)
 '' + (if expectedSha256 == null then ''
-  echo "BUILT: ${archiveName} ($actual) — no upstream gate (rc1)"
+  echo "BUILT: ${archiveName} ($actual) — no upstream gate (not in checked-in SHA256SUMS)"
 '' else ''
   if [ "$actual" != "${expectedSha256}" ]; then
     echo "FAIL: tarball sha256 does not match upstream GUIX release"

@@ -21,7 +21,7 @@
 , host # "x86_64-apple-darwin" | "arm64-apple-darwin"
 , arch # "x86_64" | "arm64" (the .<arch>sign suffix)
 , codesigningTarball # the -codesigning.tar.gz drv (signer input)
-, detachedSigs # bitcoin-core/bitcoin-detached-sigs @ v31.1rc1 (osx/ tree)
+, detachedSigs # bitcoin-core/bitcoin-detached-sigs @ v31.1 (osx/ tree)
 , expectedTarballSha256 ? null
 , expectedZipSha256 ? null
 }:
@@ -70,7 +70,7 @@ runCommand "bitcoin-${version}-${host}-signed"
     local got
     got=$(sha256sum "$f" | cut -d' ' -f1)
     if [ -z "$want" ]; then
-      echo "BUILT (rc1, no upstream gate): $(basename "$f") $got"
+      echo "BUILT (no upstream gate — not in checked-in SHA256SUMS): $(basename "$f") $got"
     elif [ "$got" = "$want" ]; then
       echo "OK:   $(basename "$f") matches upstream ($got)"
     else

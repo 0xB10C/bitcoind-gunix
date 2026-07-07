@@ -48,12 +48,12 @@
     , dynamicLinker
     , extraCXXFLAGS ? ""
     , pnameSuffix
-    # rc1: all upstream-hash gates default off — pass an attrset / non-
-    # null sha to re-enable per-target gating once v31.1 SHA256SUMS is
-    # published.
+    # Upstream-hash gates: the archive hashes come from the checked-in
+    # SHA256SUMS (via default.nix's upstreamSha256 lookup); per-binary
+    # hashes are not published, so expectedHashes stays {} (gate skipped).
     , expectedHashes ? { }
     , tarballSha256 ? null
-    , debugTarballSha256 ? null # null = the -debug.tar.gz is not byte-reproducible (yet); no attr
+    , debugTarballSha256 ? null # null = no upstream hash — archive built ungated
     }:
     let
       pkgsCross = import nixpkgsPath {
@@ -253,9 +253,8 @@
         arch = triple;
         expectedSha256 = tarballSha256;
       };
-      # rc1: -debug.tar.gz is built unconditionally (no upstream gate);
-      # debugTarballSha256 was previously the "is it byte-reproducible?"
-      # signal but with the gate removed we can always assemble it.
+      # -debug.tar.gz is built unconditionally and gated when
+      # debugTarballSha256 is non-null (from the checked-in SHA256SUMS).
       debugTarball' = pkgs.callPackage ./tarball.nix {
         inherit version url sha256 sourceDateEpoch;
         bitcoind = bitcoind';
