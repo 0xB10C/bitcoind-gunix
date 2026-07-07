@@ -162,8 +162,8 @@ let
   # signapple (+ its elfesteem) pinned to GUIX's manifest, and the v31.1
   # detached signatures. These reproduce the -codesigning.tar.gz and the
   # SIGNED .tar.gz/.zip. The signed artifacts appear only in upstream's
-  # all.SHA256SUMS (not published yet) — their expected hashes resolve to
-  # null and the gate is skipped until that file is checked in.
+  # all.SHA256SUMS (not the noncodesigned set) — their expected hashes
+  # come from that checked-in file.
   signapple = pkgs.callPackage ./signapple.nix { };
   codesigningDarwinX86 = pkgs.callPackage ./codesigning.nix {
     inherit version url sha256 sourceDateEpoch;

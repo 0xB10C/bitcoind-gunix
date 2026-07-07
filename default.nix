@@ -21,12 +21,13 @@ let
   sourceDateEpoch = 1783343359;
 
   # Upstream reference hashes, parsed from the checked-in
-  # noncodesigned.SHA256SUMS (from bitcoin-core/guix.sigs) — every gate
-  # looks its artifact up here by published filename instead of
-  # hardcoding the hash. Artifacts that only appear in all.SHA256SUMS
-  # (the signed darwin/win64 outputs + the codesignatures archive)
-  # resolve to null — gate skipped — until that file is published and
-  # checked in next to noncodesigned.SHA256SUMS.
+  # noncodesigned.SHA256SUMS + all.SHA256SUMS (both from
+  # bitcoin-core/guix.sigs) — every gate looks its artifact up here by
+  # published filename instead of hardcoding the hash. A filename
+  # missing from both files resolves to null and its gate is skipped
+  # (that's how the tree builds between "guix.sigs has attestations"
+  # and "the full signed release is out": check in whichever file
+  # exists). The files must be git-tracked or flake eval won't see them.
   parseSha256sums = file:
     if builtins.pathExists file then
       builtins.listToAttrs (builtins.concatMap
@@ -106,7 +107,8 @@ let
     {
       name = "bitcoin-${version}-codesignatures-${version}.tar.gz";
       src = detachedSigsGit;
-      # In all.SHA256SUMS only — null (gate skipped) until it's published.
+      # In all.SHA256SUMS (the codesignatures archive isn't part of the
+      # noncodesigned set).
       expectedSha256 = upstreamSha256 "bitcoin-${version}-codesignatures-${version}.tar.gz";
     };
 

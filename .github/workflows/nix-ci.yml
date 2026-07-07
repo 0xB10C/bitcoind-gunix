@@ -14,13 +14,13 @@ on:
   workflow_dispatch:
 
 # Every derivation self-gates against the checked-in noncodesigned.SHA256SUMS
-# (from bitcoin-core/guix.sigs), so a successful `nix build` IS the
-# reproducibility test. The verify steps below re-assert the archive hashes
-# externally for CI-log visibility, reading the expected values from the same
-# checked-in file (single source of truth — no hardcoded hashes in this
-# workflow). Signed darwin/win64 artifacts and the codesignatures archive are
-# built but not asserted: they only appear in upstream's all.SHA256SUMS,
-# which is not published yet.
+# / all.SHA256SUMS (both from bitcoin-core/guix.sigs), so a successful
+# `nix build` IS the reproducibility test. The verify steps below re-assert
+# the archive hashes externally for CI-log visibility, reading the expected
+# values from the same checked-in files (single source of truth — no
+# hardcoded hashes in this workflow). Signed darwin/win64 artifacts and the
+# codesignatures archive come from all.SHA256SUMS; everything else from
+# noncodesigned.SHA256SUMS.
 jobs:
   # This workflow contains a single job called "build"
   build:
@@ -194,10 +194,9 @@ jobs:
   # The two macOS releases, cross-built on the same x86_64 runner with the
   # bare clang/lld 19.1.4 toolchain + the Xcode SDK (fetched from the public
   # bitcoincore.org mirror). Each job builds the full chain for one host —
-  # the three noncodesigned artifacts (-unsigned.tar.gz/.zip,
-  # -codesigning.tar.gz) self-gate against the checked-in
-  # noncodesigned.SHA256SUMS; the signed .tar.gz/.zip are built ungated
-  # (all.SHA256SUMS not published yet). The bitcoind step builds inside an
+  # all five published artifacts (-unsigned.tar.gz/.zip, -codesigning.tar.gz
+  # from noncodesigned.SHA256SUMS; the signed .tar.gz/.zip from
+  # all.SHA256SUMS). The bitcoind step builds inside an
   # unshare/userns chroot (for byte-identical LC_UUIDs), which needs
   # CLONE_NEWUSER; Ubuntu 24.04+'s AppArmor unprivileged_userns_restriction
   # blocks that for unconfined processes (`unshare: write failed
@@ -225,11 +224,12 @@ jobs:
       - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
       - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
-      - name: Verify x86_64-apple-darwin artifacts match checked-in noncodesigned.SHA256SUMS
+      - name: Verify all 5 x86_64-apple-darwin artifacts match checked-in SHA256SUMS
         run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
+          check() { # <result-path> <published-filename> [<sums-file>]
+            sums="${3:-noncodesigned.SHA256SUMS}"
+            expected=$(awk -v f="$2" '$2==f{print $1}' "$sums")
+            [ -n "$expected" ] || { echo "MISSING: $2 not in $sums"; return 1; }
             actual=$(sha256sum "$1" | cut -d' ' -f1)
             echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
             [ "$actual" = "$expected" ]
@@ -237,6 +237,8 @@ jobs:
           check result-unsigned-tar bitcoin-31.1-x86_64-apple-darwin-unsigned.tar.gz
           check result-unsigned-zip bitcoin-31.1-x86_64-apple-darwin-unsigned.zip
           check result-codesigning bitcoin-31.1-x86_64-apple-darwin-codesigning.tar.gz
+          check result-signed/bitcoin-31.1-x86_64-apple-darwin.tar.gz bitcoin-31.1-x86_64-apple-darwin.tar.gz all.SHA256SUMS
+          check result-signed/bitcoin-31.1-x86_64-apple-darwin.zip bitcoin-31.1-x86_64-apple-darwin.zip all.SHA256SUMS
 
   build-darwin-arm64:
     runs-on: ubuntu-latest
@@ -259,11 +261,12 @@ jobs:
       - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
       - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
-      - name: Verify arm64-apple-darwin artifacts match checked-in noncodesigned.SHA256SUMS
+      - name: Verify all 5 arm64-apple-darwin artifacts match checked-in SHA256SUMS
         run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
+          check() { # <result-path> <published-filename> [<sums-file>]
+            sums="${3:-noncodesigned.SHA256SUMS}"
+            expected=$(awk -v f="$2" '$2==f{print $1}' "$sums")
+            [ -n "$expected" ] || { echo "MISSING: $2 not in $sums"; return 1; }
             actual=$(sha256sum "$1" | cut -d' ' -f1)
             echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
             [ "$actual" = "$expected" ]
@@ -271,11 +274,13 @@ jobs:
           check result-unsigned-tar bitcoin-31.1-arm64-apple-darwin-unsigned.tar.gz
           check result-unsigned-zip bitcoin-31.1-arm64-apple-darwin-unsigned.zip
           check result-codesigning bitcoin-31.1-arm64-apple-darwin-codesigning.tar.gz
+          check result-signed/bitcoin-31.1-arm64-apple-darwin.tar.gz bitcoin-31.1-arm64-apple-darwin.tar.gz all.SHA256SUMS
+          check result-signed/bitcoin-31.1-arm64-apple-darwin.zip bitcoin-31.1-arm64-apple-darwin.zip all.SHA256SUMS
 
-  # win64 (x86_64-w64-mingw32). The steps build + assert the 4 published
-  # noncodesigned archive/installer artifacts (unsigned + debug zips, NSIS
-  # installer, codesigning tarball); the signed installer + signed zip are
-  # built ungated (all.SHA256SUMS not published yet).
+  # win64 (x86_64-w64-mingw32). The steps build + assert all 6 published
+  # archive/installer artifacts: unsigned + debug zips, NSIS installer,
+  # codesigning tarball (noncodesigned.SHA256SUMS) and the signed
+  # installer + signed zip (all.SHA256SUMS).
   build-win64:
     runs-on: ubuntu-latest
 
@@ -297,11 +302,12 @@ jobs:
       - run: nix build .#setupExeMingw -o result-setup-unsigned --print-build-logs
       - run: nix build .#codesigningMingw -o result-codesigning --print-build-logs
       - run: nix build .#signedMingw -o result-signed --print-build-logs
-      - name: Verify win64 archive/installer artifacts match checked-in noncodesigned.SHA256SUMS
+      - name: Verify all 6 win64 archive/installer artifacts match checked-in SHA256SUMS
         run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
+          check() { # <result-path> <published-filename> [<sums-file>]
+            sums="${3:-noncodesigned.SHA256SUMS}"
+            expected=$(awk -v f="$2" '$2==f{print $1}' "$sums")
+            [ -n "$expected" ] || { echo "MISSING: $2 not in $sums"; return 1; }
             actual=$(sha256sum "$1" | cut -d' ' -f1)
             echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
             [ "$actual" = "$expected" ]
@@ -310,6 +316,8 @@ jobs:
           check result-debug-zip bitcoin-31.1-win64-debug.zip
           check result-setup-unsigned bitcoin-31.1-win64-setup-unsigned.exe
           check result-codesigning bitcoin-31.1-win64-codesigning.tar.gz
+          check result-signed/bitcoin-31.1-win64-setup.exe bitcoin-31.1-win64-setup.exe all.SHA256SUMS
+          check result-signed/bitcoin-31.1-win64.zip bitcoin-31.1-win64.zip all.SHA256SUMS
 
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
@@ -367,15 +375,13 @@ jobs:
           echo "actual:   $actual"
           [ -n "$expected" ] && [ "$actual" = "$expected" ]
 
-  # The aggregator — `.#noncodesignedSha256sums` rebuilds upstream's
-  # noncodesigned.SHA256SUMS from every released artifact. Each sub-
-  # derivation already self-gates against the checked-in file, and this
-  # job diffs the aggregate against it byte-for-byte — the project-wide
-  # reproducibility proof. `.#sha256sums` (all.SHA256SUMS, incl. the
-  # signed artifacts + codesignatures archive) is built and shown but
-  # not compared: upstream's all.SHA256SUMS is not published yet. This
-  # job depends on every per-target build job so all sub-drvs are cache
-  # hits via Cachix; the only fresh work is the aggregator files.
+  # The aggregators — `.#noncodesignedSha256sums` and `.#sha256sums`
+  # rebuild upstream's noncodesigned.SHA256SUMS and all.SHA256SUMS from
+  # every released artifact. Each sub-derivation already self-gates
+  # against the checked-in files, and this job diffs both aggregates
+  # against them byte-for-byte — the project-wide reproducibility proof.
+  # This job depends on every per-target build job so all sub-drvs are
+  # cache hits via Cachix; the only fresh work is the aggregator files.
   build-sha256sums:
     runs-on: ubuntu-latest
     needs:
@@ -410,5 +416,5 @@ jobs:
       - name: Verify aggregator matches checked-in noncodesigned.SHA256SUMS
         run: diff noncodesigned.SHA256SUMS result-noncodesigned-sha256sums
       - run: nix build .#sha256sums -o result-sha256sums --print-build-logs
-      - name: Show all.SHA256SUMS contents (no upstream reference yet)
-        run: cat result-sha256sums
+      - name: Verify aggregator matches checked-in all.SHA256SUMS
+        run: diff all.SHA256SUMS result-sha256sums

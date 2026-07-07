@@ -572,8 +572,8 @@ let
   });
 
   # The signed artifacts appear only in upstream's all.SHA256SUMS (not
-  # published yet) — their expected hashes resolve to null and the gate
-  # is skipped until that file is checked in.
+  # the noncodesigned set) — their expected hashes come from that
+  # checked-in file.
   signedMingw = pkgs.callPackage ./signed.nix {
     inherit version sourceDateEpoch detachedSigs;
     osslsigncode = osslsigncode25;

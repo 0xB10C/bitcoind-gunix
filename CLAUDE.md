@@ -6,6 +6,23 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-07-07, later): all.SHA256SUMS checked in — signed gates ON, all darwin/win64 artifacts byte-match
+
+Upstream's all.SHA256SUMS is out and checked in next to
+noncodesigned.SHA256SUMS. As designed, no nix changes were needed to
+turn the signed gates on — the upstreamSha256 lookup merges both files
+(the file just had to be git-add'ed for flake eval to see it).
+Locally verified byte-matches (on top of the x86_64 set below):
+darwin -unsigned.tar.gz/.zip + -codesigning.tar.gz + SIGNED .tar.gz/.zip
+for BOTH arches, win64 unsigned/debug zips + setup-unsigned.exe (the
+31.1.0 version-string fix confirmed) + codesigning.tar.gz + SIGNED
+setup.exe/.zip, and the codesignatures archive (`aaf63d66…`). Remaining
+for CI: the aarch64/riscv64/armhf/ppc64 archives (gates wired
+identically). Follow-up changes: darwin/win64 CI jobs assert the signed
+artifacts from all.SHA256SUMS; build-sha256sums diffs BOTH aggregators
+against the checked-in files; `packages.default` back to
+`drvs.sha256sums`.
+
 ## Status (2026-07-07): bumped to v31.1 FINAL — gates read from checked-in noncodesigned.SHA256SUMS; x86_64 + dist archive already byte-match
 
 v31.1 shipped (tag `9be056a8…`, 2026-07-06). The branch now builds the
