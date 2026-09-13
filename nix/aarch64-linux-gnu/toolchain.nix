@@ -449,7 +449,12 @@ let
         "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
         "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
       ];
-      patches = (old.patches or [ ]) ++ [ ../patches/gcc-ssa-generation.patch ];
+      # gcc-debug-canon-prefix-map.patch: needed at the v32.x branch-off for
+      # canonDepends (see releaseArgsAarch64) — same as x86_64/riscv64/armhf/ppc64.
+      patches = (old.patches or [ ]) ++ [
+        ../patches/gcc-ssa-generation.patch
+        ../patches/gcc-debug-canon-prefix-map.patch
+      ];
       # Debug info for libgcc with upstream's exact DW_AT_producer
       # `-g -g -g -O2 -O2 -O2` + GUIX's ephemeral gcc build dir for
       # DW_AT_comp_dir — the aarch64 analog of crossGuixGccX86's preBuild
@@ -553,6 +558,12 @@ let
     crossInputs = aarch64CrossInputsNoFp;
     guixGcc = crossGuixGcc.cc;
     linuxHeaders = linuxHeaders61Aarch64;
+    # Branch-off: the argv depends -ffile-prefix-map now flips
+    # var-tracking's loclists choice in aarch64's big CUs (bitcoind.dbg
+    # .debug_loclists +4 / .debug_info +185, only the debuglink CRC in the
+    # runtime binaries) — the GGC poison x86_64 hit at rc1. Route it
+    # through the malloc'd canon env var instead.
+    canonDepends = true;
   };
   bitcoindNoGuiAarch64 = pkgs.callPackage ../lib/release-cross.nix (releaseArgsAarch64 // {
     pname = "bitcoind-aarch64-nogui";
