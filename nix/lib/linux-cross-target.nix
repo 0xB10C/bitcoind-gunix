@@ -146,6 +146,13 @@
         '';
         makeFlags = (old.makeFlags or [ ]) ++ [
           "CC=${gcc14NoFp}/bin/${triple}-gcc"
+          # Target objdump for the generated gnu/stubs-*.h: configure's
+          # `$CC -print-prog-name=objdump` yields a bare host `objdump`, which
+          # reads no target object, so the stubs lists came out EMPTY. The
+          # 11 missing armhf __stub_* macros alone flipped a var-tracking list
+          # in index/base.cpp (every armhf .dbg). GUIX puts the target
+          # binutils first on PATH for the same lookup (cross-base.scm).
+          "OBJDUMP=${crossBinutils241'}/bin/${triple}-objdump"
         ];
         hardeningDisable = [
           "zerocallusedregs" "strictoverflow" "stackprotector"

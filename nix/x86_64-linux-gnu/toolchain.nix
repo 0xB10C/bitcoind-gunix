@@ -162,6 +162,11 @@ let
     '';
     makeFlags = (old.makeFlags or [ ]) ++ [
       "CC=${gcc14X86NoFp}/bin/x86_64-linux-gnu-gcc"
+      # configure takes OBJDUMP from `$CC -print-prog-name=objdump`, a bare
+      # `objdump` that cannot read target objects, so the generated
+      # gnu/stubs-*.h came out with no __stub_* macros. GUIX puts the target
+      # binutils first on PATH for the same lookup (cross-base.scm).
+      "OBJDUMP=${crossBinutils241X86}/bin/x86_64-linux-gnu-objdump"
     ];
     hardeningDisable = [
       "zerocallusedregs" "strictoverflow" "stackprotector"

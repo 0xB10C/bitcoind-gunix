@@ -327,6 +327,8 @@ let
     '';
     makeFlags = (old.makeFlags or [ ]) ++ [
       "CC=${gcc14Aarch64NoFp}/bin/aarch64-linux-gnu-gcc"
+      # Target objdump for the generated gnu/stubs-*.h — see x86_64's crossGlibc231X86.
+      "OBJDUMP=${crossBinutils241}/bin/aarch64-linux-gnu-objdump"
     ];
     # Disable the same nixpkgs hardenings crossGlibc231X86 drops.
     # The decisive one is zerocallusedregs (-fzero-call-used-regs): it
