@@ -428,7 +428,7 @@ gcc14Stdenv.mkDerivation (rec {
   # omits it). So for aarch64 we only omit the LEAF frame pointer and let
   # the wrapper's -fno-omit-frame-pointer keep the non-leaf one — matching
   # upstream's bare -O2. x86_64 omits both (its -O2 default). See the
-  # frame-pointer note in aarch64-linux-gnu/release.nix. riscv64/armhf/powerpc64
+  # aarch64 frame-pointer notes in CLAUDE.md. riscv64/armhf/powerpc64
   # also omit the frame pointer at -O2, but have no leaf/non-leaf split —
   # -momit-leaf-frame-pointer is an x86/aarch64-only option — so they get
   # only -fomit-frame-pointer (overriding the wrapper's injection).
@@ -469,7 +469,7 @@ gcc14Stdenv.mkDerivation (rec {
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection"
     "fortify" "fortify3" "format"
-    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see x86_64-linux-gnu/release.nix).
+    # New nixos-26.05 cc-wrapper defaults GUIX doesn't apply (see lib/release-cross.nix).
     # strictflexarrays1 = -fstrict-flex-arrays=1 (codegen-affecting; GUIX gcc
     # defaults to =0). libcxxhardeningfast is libc++-only (no-op for us).
     "strictflexarrays1" "libcxxhardeningfast"

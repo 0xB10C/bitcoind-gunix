@@ -3,22 +3,24 @@
 let
   # === win64 (x86_64-w64-mingw32) cross-compile ============================
   # GUIX's win64 toolchain (manifest.scm make-mingw-pthreads-cross-toolchain):
-  # binutils 2.41 + binutils-unaligned-default.patch, mingw-w64 12.0.0 CRT +
+  # binutils 2.46.0 + binutils-unaligned-default.patch, mingw-w64 13.0.0 CRT +
   # winpthreads (POSIX threads), gcc 14.3.0 (mingw-w64-base-gcc:
   # --enable-threads=posix --enable-default-ssp=yes --enable-host-bind-now=yes
-  # --disable-gcov --disable-libgomp) + gcc-ssa-generation.patch. nixpkgs'
-  # pkgsCross.mingwW64 defaults to mcf threads / gcc 15.2.0 / binutils 2.46 /
-  # mingw-w64 13.0.0, so all four are pinned. msvcrt (not ucrt) CRT — GUIX
+  # --disable-gcov --disable-libgomp --disable-libsanitizer --disable-lto
+  # --disable-nls) + gcc-ssa-generation.patch. nixpkgs' pkgsCross.mingwW64
+  # defaults to mcf threads / gcc 15.2.0, so both are pinned; its mingw-w64
+  # 13.0.0 matches the guix pin, and binutils is re-sourced to GUIX's. msvcrt (not ucrt) CRT — GUIX
   # passes --with-default-msvcrt=msvcrt (12.0.0 flipped the default to UCRT).
   mingwTriple = "x86_64-w64-mingw32";
 
-  # GUIX builds the mingw-w64 CRT + winpthreads with the cross binutils 2.41
-  # (+ unaligned patch); nixpkgs' bootstrap uses 2.46, whose alignment NOP-fill
-  # ORDER is reversed (short-first vs 2.41's long-first) — visible in the CRT's
+  # GUIX builds the mingw-w64 CRT + winpthreads with its default cross
+  # binutils (see mingwCrtBinutils); nixpkgs' bootstrap binutils differs in
+  # version, and gas output is version-sensitive (e.g. 2.46's alignment
+  # NOP-fill ORDER is short-first vs 2.41's long-first) — visible in the CRT's
   # pre_c_init padding at the very start of every .exe's .text. (The bootstrap
   # gcc is 15.2.0 vs GUIX's 14.3.0, but those produce byte-identical CRT objects
   # here, so only the binutils matters.) Build the CRT/winpthreads with the
-  # bootstrap stdenvNoLibc gcc but its bintools swapped to 2.41. From a SEPARATE
+  # bootstrap stdenvNoLibc gcc but its bintools swapped to mingwCrtBinutils. From a SEPARATE
   # clean cross import (mingwBootSet) to avoid a splice cycle with pkgsCrossMingw's
   # windows override; using stdenvNoLibc.cc (NOT gccWithoutTargetLibc, which
   # drags in a broken, uncacheable target-bash).
@@ -27,7 +29,7 @@ let
     crossSystem = { config = mingwTriple; libc = "msvcrt"; };
     config.allowUnsupportedSystem = true;
   };
-  # PLAIN binutils 2.41 for the CRT/winpthreads — NO unaligned-default patch.
+  # GUIX's default cross binutils for the CRT/winpthreads — NO unaligned-default patch.
   # GUIX's make-mingw-w64 (CRT + winpthreads) passes no #:xbinutils, so it uses
   # the UNPATCHED cross-binutils; only the final gcc's binutils
   # (binutils-mingw-patches) gets the patch. With the patch, gas encodes
@@ -62,7 +64,7 @@ let
   # 14 on the CRT (verified: crtexe.c __tmainCRTStartup is 16 B bigger under
   # gcc15 — dllimport `mov`/IAT becomes `lea`/auto-import), so we need a gcc 14
   # NOLIBC cross cc. Reconstruct it as the gcc14 cc with the same nolibc args
-  # the bootstrap uses, + --with-as/--with-ld=2.41 (the bootstrap BAKES
+  # the bootstrap uses, + --with-as/--with-ld=mingwCrtBinutils (the bootstrap BAKES
   # --with-as=2.46, which also reverses the alignment NOP-fill order). This
   # UNWRAPPED cc does NOT pull the target-bash that the gccWithoutTargetLibc
   # WRAPPER drags in — we wrap it with the clean stdenvNoLibc.cc wrapper below.
@@ -72,7 +74,7 @@ let
   # to the working gcc15 path. Constructing a nolibc gcc14 fresh with .override
   # instead yields a different binutils-wrapper whose target-bash can't build
   # (bash doesn't cross-compile to mingw and isn't cached for this triple).
-  # Append --with-as/--with-ld=2.41 (the bootstrap BAKES --with-as=2.46, which
+  # Append --with-as/--with-ld=mingwCrtBinutils (the bootstrap BAKES --with-as=2.46, which
   # reverses the alignment NOP-fill order). gcc14's own src + patches; relax the
   # version self-check.
   mingwCc14Unwrapped = mingwBootSet.stdenvNoLibc.cc.cc.overrideAttrs (old: {
@@ -103,9 +105,9 @@ let
   # omits FP by default). Doing it via the wrapper (not NIX_CFLAGS) leaves the
   # producer clean, like bitcoind's mingwGuixGccNoFp.
   stripMingwFpFlags = wrappedCc: wrappedCc.overrideAttrs (o: {
-    # The flags live in cc-cflags-before on 26.05; older cc-wrappers (24.05,
-    # for the NSIS gcc11) may not create that file or inject the flags at all
-    # (then -O2 already omits the FP) — so guard the file and replace quietly.
+    # The flags live in cc-cflags-before on 26.05; guard the file and replace
+    # quietly in case a wrapper does not inject them (then -O2 already omits
+    # the FP).
     postFixup = (o.postFixup or "") + ''
       if [ -f $out/nix-support/cc-cflags-before ]; then
         substituteInPlace $out/nix-support/cc-cflags-before \
@@ -116,33 +118,33 @@ let
   });
   mingwCrtStdenv =
     let
-      bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
+      crtBintools = mingwBootSet.stdenvNoLibc.cc.bintools.override {
         bintools = mingwCrtBinutils;
       };
-      cc241 = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
+      crtCc = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
         cc = mingwCc14Unwrapped;
-        bintools = bintools241;
+        bintools = crtBintools;
       });
-    in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc cc241;
+    in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc crtCc;
   # CRT-AWARE stdenv for winpthreads, which links a shared libwinpthread (needs
-  # dllcrt2.o / -lmingw32 / -lmsvcrt …). Same clean wrapper + 2.41 as, but with
+  # dllcrt2.o / -lmingw32 / -lmsvcrt …). Same clean wrapper + mingwCrtBinutils, but with
   # libc = the boot set's CRT so the link resolves. bitcoind statically links
   # libwinpthread.a (the .o content, compiled from our 12.0.0 source by this
   # gcc), so which CRT the *shared* link uses never reaches the final binary.
   mingwPthreadsStdenv =
     let
       bootCrt = mingwBootSet.windows.mingw_w64;
-      bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
+      crtBintools = mingwBootSet.stdenvNoLibc.cc.bintools.override {
         bintools = mingwCrtBinutils;
         libc = bootCrt;
       };
-      cc241 = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
+      crtCc = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
         cc = mingwCc14Unwrapped;
-        bintools = bintools241;
+        bintools = crtBintools;
         libc = bootCrt;
         noLibc = false;
       });
-    in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc cc241;
+    in mingwBootSet.overrideCC mingwBootSet.stdenvNoLibc crtCc;
 
   pkgsCrossMingw = import pkgs.path {
     localSystem = buildSystem;
@@ -168,7 +170,7 @@ let
           # functions linked into every .exe), plus the rest of the set
           # bitcoind/depends drop. GUIX's CRT is built by plain base-gcc with
           # none of these.
-          # Build the CRT + winpthreads with the gcc 14.3.0 / binutils 2.41
+          # Build the CRT + winpthreads with the gcc 14.3.0 / mingwCrtBinutils
           # NOLIBC stdenv (mingwCrtStdenv) instead of nixpkgs' bootstrap 15.2.0
           # / 2.46 — see mingwCrtStdenv. Plus the FP + hardening overrides so
           # the codegen matches GUIX's flag-free -O2 base-gcc CRT.
@@ -283,7 +285,7 @@ let
     ];
   };
 
-  # binutils 2.41 + GUIX's binutils-unaligned-default.patch (turns on
+  # GUIX's binutils + binutils-unaligned-default.patch (turns on
   # -muse-unaligned-vector-move by default — avoids unaligned-instruction
   # divergence). Same bundled-zlib + compressed-debug-sections override as
   # the linux crossBinutilsX86.
@@ -468,7 +470,7 @@ let
   # debug info, the two zips, the NSIS installer (via the generated
   # build/GenerateWindowsInstaller.cmake, which is why nsis is an input)
   # and the codesigning tarball — all four published win64 artifacts come
-  # out of this one derivation. NSIS is our GUIX-style 3.10 build.
+  # out of this one derivation. NSIS is our GUIX-style 3.11 build.
   packagedMingw = pkgs.callPackage ../lib/package.nix {
     inherit version src sourceDateEpoch;
     hostTriple = mingwTriple;
@@ -538,7 +540,6 @@ let
     });
   });
 
-  # Attr name kept (default.nix / flake outputs); it is NSIS 3.11 now.
   nsis = pkgs.callPackage ./nsis-toolchain.nix {
     nsisCC = nsisGcc14;
     mingwInclude = "${mingwCrt.dev}/include";

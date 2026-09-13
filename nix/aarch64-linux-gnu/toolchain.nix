@@ -202,8 +202,9 @@ let
   # glibc — has it; it makes the PAC/BTI codegen a compiler DEFAULT, so
   # the previously explicit -mbranch-protection=standard, which would be
   # recorded in DW_AT_producer, is dropped). --with-as/--with-ld point at
-  # cross binutils 2.41: gas GENERATES the .debug_line programs (and
-  # assembles glibc's .S CUs entirely); 2.46's encoding diverges.
+  # the pinned cross binutils: gas GENERATES the .debug_line programs (and
+  # assembles glibc's .S CUs entirely); another gas version's encoding
+  # diverges.
   # --with-arch=armv8-a (nixpkgs' platform default) is FILTERED OUT: a
   # configured --with-arch makes the gcc DRIVER self-inject
   # `-march=armv8-a` into every cc1 command line (OPTION_DEFAULT_SPECS),
@@ -339,7 +340,7 @@ let
       "zerocallusedregs" "strictoverflow" "stackprotector"
       "stackclashprotection" "fortify" "fortify3"
       # New nixos-26.05 cross cc-wrapper defaults GUIX doesn't apply (see
-      # nix/x86_64-linux-gnu/release.nix). strictflexarrays1 is codegen-affecting;
+      # lib/release-cross.nix). strictflexarrays1 is codegen-affecting;
       # libcxxhardeningfast is libc++-only (no-op for us).
       "strictflexarrays1" "libcxxhardeningfast"
       # "pic": see crossGlibc231X86 — the wrapper's default -fPIC injection
@@ -377,9 +378,9 @@ let
     '';
   });
 
-  # Downgrade the aarch64 cross binutils to GUIX's 2.41 (nixpkgs cross
-  # ships 2.44; 2.44 relaxes aarch64 more aggressively → smaller
-  # .text/.eh_frame than upstream). Override the *build-host* cross
+  # Pin the aarch64 cross binutils to GUIX's version (2.46.0 since the v32.x
+  # branch-off; under GUIX's earlier 2.41 pin, nixpkgs' then-2.44 relaxed
+  # aarch64 more aggressively → smaller .text/.eh_frame than upstream). Override the *build-host* cross
   # binutils (the one that runs on x86_64 and targets aarch64) —
   # `stdenv.cc.bintools.bintools`, NOT `binutils-unwrapped` (which is the
   # aarch64-native binutils and can't run on the build machine). Same
@@ -442,10 +443,11 @@ let
         "--disable-lto"
         "--disable-nls"
         "--disable-tm-clone-registry"
-        # Re-point the baked --with-as/--with-ld at cross binutils 2.41
-        # (nixpkgs bakes the 2.46 wrapper; a second --with-as appended
-        # later wins). On aarch64 this is debug-only — gas generates the
-        # .debug_line programs and 2.46's encoding diverges; the code
+        # Re-point the baked --with-as/--with-ld at the pinned cross
+        # binutils (nixpkgs bakes its own wrapper; a second --with-as
+        # appended later wins). On aarch64 this is debug-only — gas
+        # generates the .debug_line programs, whose encoding is
+        # gas-version-sensitive; the code
         # bytes never depended on gas here (fixed-width instructions, no
         # NOP-fill choice — see crossGuixGccX86 for the x86 story).
         "--with-as=${crossBinutils}/bin/aarch64-linux-gnu-as"
@@ -529,7 +531,7 @@ let
   # build stdenv (so the native helper tools — native_capnp, mpgen, native_qt
   # — use the build machine's gcc) plus the aarch64 cross toolchain on PATH
   # (so HOST packages use aarch64-linux-gnu-gcc). Uses the GUIX-flags cross
-  # gcc + binutils 2.41, rebuilt against glibc 2.31 (crossGlibc231 via
+  # gcc + pinned binutils, rebuilt against glibc 2.31 (crossGlibc231 via
   # libcCross above) — which makes all 10 cross-built binaries byte-match the
   # upstream aarch64 release (the dynsym GLIBC symbol versions, .text/.eh_frame
   # all line up; see CLAUDE.md's aarch64 section).

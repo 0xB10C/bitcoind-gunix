@@ -2,13 +2,13 @@
 
   # --- generic linux-gnu cross target generator ---
   # The aarch64/riscv64 recipe parameterized over the target triple: cross
-  # binutils 2.41 (compressed-debug-sections, bundled zlib), GUIX's glibc
+  # binutils 2.46 (compressed-debug-sections, bundled zlib), GUIX's glibc
   # 2.31 (forced default-PIE gcc-14 CC, --disable-static-pie, drv-0
   # debug-prefix-map, pic-hardening-off, unsplit static libs), gcc 14.3.0
   # with GUIX's linux-base-gcc flags + the ssa patch (libgcc -g
   # multiplicity, GUIX maps, libstdc++ strip-debug), NoFp wrapper
-  # variants, kernel headers 6.1.119, then depends/bitcoind/tarballs with
-  # 20-artifact + 2-archive gates. See the aarch64 section above for the
+  # variants, kernel headers 6.1.166, then both build passes, package.sh
+  # and the 2 archive gates. See the aarch64 section above for the
   # full reasoning on every piece (that section predates this generator
   # and keeps its bespoke definitions: it additionally FILTERS
   # --with-arch=armv8-a, bakes --enable-standard-branch-protection and

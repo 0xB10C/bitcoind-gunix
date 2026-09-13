@@ -53,13 +53,10 @@ let
   # "no upstream gate" log line.
   #
   # The branch-off commit is not a release, so guix.sigs has no attestation
-  # for it. The two files still hold v31.1's hashes, and no v31.1 filename
-  # matches a bitcoin-${version}-… artifact, so every byte-match gate is
-  # currently OFF. The reference to diff against is a LOCAL guix build of
-  # the same commit; replacing the file's contents with that build's
-  # output/<host>/SHA256SUMS.part fragments turns every gate back on with
-  # no nix changes (the file just has to stay git-tracked, or flake eval
-  # won't see it).
+  # for it: noncodesigned.SHA256SUMS holds the output/<host>/SHA256SUMS.part
+  # hashes of a LOCAL guix build of the same commit, and all.SHA256SUMS is
+  # absent (no signed artifacts). The file has to stay git-tracked, or flake
+  # eval won't see it.
   parseSha256sums = file:
     if builtins.pathExists file then
       builtins.listToAttrs (builtins.concatMap
@@ -112,8 +109,8 @@ let
   #   the full 40-char sha, which changes the pax long-path headers, so the
   #   shortcut does not hold. Needs a real `git archive` (fetchgit +
   #   leaveDotGit, like nix/lib/codesignatures.nix does for the
-  #   detached-sigs repo) — left for when the guix reference exists to
-  #   compare against.
+  #   detached-sigs repo) — not done yet; its reference hash is already in
+  #   noncodesigned.SHA256SUMS.
   detachedSigs = null;
 
   aarch64 = import ./nix/aarch64-linux-gnu/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch upstreamSha256; };
@@ -129,8 +126,8 @@ let
   # They exist to be `diff`ed against upstream's published
   # noncodesigned.SHA256SUMS / all.SHA256SUMS, and neither exists for a
   # master commit; they also include the two `git archive` artifacts that
-  # are off here (see the detachedSigs note above). Restore them together
-  # with the gates once a reference SHA256SUMS is checked in — the v31.1
+  # are off here (see the detachedSigs note above); they can come back once
+  # the dist archive is built — the v31.1
   # versions, including the exact upstream ordering comment, are in git
   # history at commit 4599977e9723.
 in {

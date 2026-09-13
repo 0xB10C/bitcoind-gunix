@@ -1,9 +1,9 @@
-# Cross-build the full Bitcoin Core v31.0 win64 (x86_64-w64-mingw32) release
+# Cross-build one pass of the Bitcoin Core win64 (x86_64-w64-mingw32) release
 # — the 8 PE binaries (bitcoin{,-cli,-tx,-util,-wallet,-qt,d}.exe +
 # libexec/test_bitcoin.exe; NO bitcoin-node/-gui, ENABLE_IPC is OFF for WIN32)
 # — byte-for-byte identical to the upstream GUIX release. Mirrors
 # lib/release-cross.nix; the mingw-specific deltas are noted inline. See
-# x86_64-linux-gnu/release.nix / lib/release-cross.nix for the full reasoning behind each flag.
+# lib/release-cross.nix and x86_64-linux-gnu/toolchain.nix for the full reasoning behind each flag.
 { lib
 , gcc14Stdenv
 , fetchurl

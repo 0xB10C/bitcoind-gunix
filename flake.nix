@@ -5,9 +5,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
   };
 
-  # All toolchain construction (the GUIX-exact cross toolchains for
-  # x86_64-linux-gnu and aarch64-linux-gnu, incl. glibc 2.31 / binutils
-  # 2.41 / gcc 14.3.0 with GUIX's configure flags) lives in default.nix.
+  # All toolchain construction (the GUIX-exact toolchains for every target,
+  # incl. glibc 2.31 / binutils 2.46 / gcc 14.3.0 with GUIX's configure
+  # flags) lives in default.nix and nix/<target>/.
   #
   # "Cross everywhere": the same pipeline is exposed for every supported
   # BUILD host; package attr names refer to the TARGET. So
@@ -47,9 +47,9 @@
             bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
             nsisGcc14 nsis setupExeMingw codesigningMingw
             osslsigncode25;
-          # No SHA256SUMS aggregator at the branch-off commit (nothing to
-          # diff it against yet) — the x86_64 release tarball is the
-          # default build target until a guix reference lands.
+          # No SHA256SUMS aggregator at the branch-off commit (it would
+          # include the unbuilt dist archive); the x86_64 release tarball
+          # is the default build target.
           default = drvs.tarball;
         });
     };

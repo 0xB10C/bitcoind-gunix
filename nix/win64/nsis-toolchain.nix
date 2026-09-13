@@ -1,9 +1,10 @@
-# NSIS 3.10 built the GUIX way (gnu/packages/installers.scm make-nsis): the
+# NSIS 3.11 built the GUIX way (gnu/packages/installers.scm make-nsis): the
 # makensis compiler is native, but the installer STUBS + plugins are
 # CROSS-compiled to x86_64-w64-mingw32 so they end up byte-identical to GUIX's
 # (the stub is prepended to every setup.exe). GUIX uses its default cross-gcc
-# (gcc-11 = 11.4.0) + cross-binutils (2.41) + cross-libc (mingw-w64 12.0.0);
-# `nsisCC` is exactly that toolchain (NoFp-wrapped, see default.nix).
+# (gcc-14 = 14.3.0) + cross-binutils (2.44 + guix's patches) + cross-libc
+# (mingw-w64 13.0.0); `nsisCC` is exactly that toolchain (NoFp-wrapped, see
+# win64/toolchain.nix).
 #
 # Unlike nixpkgs' nsis (which SKIPSTUBS=all and ships the prebuilt official
 # Windows stubs), we build the stubs from source — the official stubs are
@@ -14,7 +15,7 @@
 , scons
 , zlib
 , libfaketime
-, nsisCC          # the gcc 11.4.0 mingw cross (wrapped; provides <triple>-gcc/g++)
+, nsisCC          # the gcc 14.3.0 mingw cross (wrapped; provides <triple>-gcc/g++)
 , mingwInclude    # mingw-w64 CRT headers dir (PREFIX_PLUGINAPI_INC)
 , mingwLib        # mingw-w64 CRT libs dir   (PREFIX_PLUGINAPI_LIB)
 , hostTriple      # "x86_64-w64-mingw32"
@@ -56,7 +57,7 @@ stdenv.mkDerivation {
 
   # GUIX's vanilla cross-gcc applies none of nixpkgs' cc-wrapper hardenings;
   # the NoFp wrapper (nsisCC) already drops the frame-pointer injection, and
-  # these drop the rest so the stub codegen matches GUIX's bare gcc-11 -O2.
+  # these drop the rest so the stub codegen matches GUIX's bare gcc-14 -O2.
   hardeningDisable = [
     "zerocallusedregs" "strictoverflow" "stackprotector"
     "stackclashprotection" "fortify" "fortify3" "format"
@@ -80,7 +81,7 @@ stdenv.mkDerivation {
   # no VERSION is given (GUIX passes none) → epoch 1 = "v01-Jan-1970.cvs", and
   # the stubs' PE TimeDateStamp = 1 (the setup.exe inherits both from the stub).
   # Must be set in preBuild: nixpkgs' unpack hook otherwise resets it to the
-  # source tarball mtime (= NSIS 3.10's release date, 30-Mar-2024).
+  # source tarball mtime (= the NSIS release date).
   preBuild = ''
     export SOURCE_DATE_EPOCH=1
   '';
@@ -88,7 +89,7 @@ stdenv.mkDerivation {
   # ld's PE .rsrc resource-directory merge (when the uninstaller stub /
   # plugin DLLs link in resources) stamps IMAGE_RESOURCE_DIRECTORY.
   # TimeDateStamp with time(NULL) directly, ignoring SOURCE_DATE_EPOCH
-  # (cross-binutils-2.41's PE COFF TimeDateStamp DOES respect it — the
+  # (the cross binutils' PE COFF TimeDateStamp DOES respect it — the
   # stubs' COFF ts is already 1 — but the .rsrc resource-dir ts is a
   # separate field written by the resource merger). Upstream's value is
   # the literal 1, matching SOURCE_DATE_EPOCH=1 — freeze the wall clock at
@@ -112,7 +113,7 @@ stdenv.mkDerivation {
   '';
 
   meta = {
-    description = "NSIS 3.10 (GUIX-style: native makensis + cross-compiled stubs)";
+    description = "NSIS 3.11 (GUIX-style: native makensis + cross-compiled stubs)";
     mainProgram = "makensis";
   };
 }

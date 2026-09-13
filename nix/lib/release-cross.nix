@@ -18,7 +18,8 @@
 #
 # Both install into the SAME prefix; libexec/package.sh then splits debug
 # info and tars the merged tree. This file is ONE pass (`guiOnly` selects
-# which); nix/lib/release-package.nix does the merge + split-debug + gate.
+# which); nix/lib/package.nix runs package.sh over the merged tree and
+# nix/lib/artifact.nix gates each published archive.
 #
 # Used for every linux target via nix/lib/linux-cross-target.nix and the
 # bespoke x86_64/aarch64 toolchain.nix wirings. See

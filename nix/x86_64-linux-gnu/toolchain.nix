@@ -16,9 +16,10 @@ let
     crossSystem = { config = "x86_64-linux-gnu"; };
   };
 
-  # x86_64-linux-gnu cross binutils 2.41 — same override as the aarch64
-  # crossBinutils: take the build-host cross binutils (runs on the build
-  # machine, emits/targets x86_64-linux-gnu) and downgrade it to GUIX's 2.41.
+  # x86_64-linux-gnu cross binutils at GUIX's version (2.46.0 since the v32.x
+  # branch-off, see lib/cross-binutils-246.nix) — same override as the
+  # aarch64 crossBinutils: take the build-host cross binutils (runs on the
+  # build machine, emits/targets x86_64-linux-gnu) and re-version it.
   # Match GUIX's binutils compression config (gnu/packages/base.scm):
   # --enable-compressed-debug-sections=all makes gas/ld/objcopy default
   # to zlib-gabi-compressing debug sections — that's why every .debug_*
@@ -26,9 +27,7 @@ let
   # passes no explicit flag). And GUIX does NOT use --with-system-zlib,
   # so the deflate bytes come from binutils' bundled zlib — drop
   # nixpkgs' --with-system-zlib so ours come from the same bundled code
-  # (identical 2.41 tarball ⇒ identical compressed bytes).
-  # (Name kept for diff-minimality; since the v32.x branch-off GUIX's
-  # manifest_build.scm pins binutils 2.46.0 — see cross-binutils-246.nix.)
+  # (identical tarball ⇒ identical compressed bytes).
   crossBinutilsX86 = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
 
   # Stock cross gcc14 wrapper, adjusted on two axes, used as
@@ -40,15 +39,15 @@ let
   #   does NOT pass an explicit -fpie to the csu/crt objects — same
   #   codegen, clean producer. (The full crossGuixGccX86 can't be used
   #   here: it depends on this very glibc via libcCross.)
-  # - the rebuilt cc also bakes --with-as/--with-ld = cross binutils 2.41
-  #   (the stock cc bakes the 2.46 wrapper): gas GENERATES the
-  #   .debug_line programs (and assembles the .S CUs entirely), and the
-  #   2.46 encoding diverges from upstream's GUIX-2.41 one. Code sections
+  # - the rebuilt cc also bakes --with-as/--with-ld = the pinned cross
+  #   binutils (the stock cc bakes nixpkgs' binutils wrapper): gas GENERATES
+  #   the .debug_line programs (and assembles the .S CUs entirely), and a
+  #   different gas version's encoding diverges from upstream's. Code sections
   #   were already byte-identical under either gas; this aligns the debug.
   # - the wrapper's -fno-omit-frame-pointer injection is stripped so the
   #   -O2 default (omit) applies without explicit override flags.
   # Kernel headers pinned to GUIX's version (manifest.scm:
-  # linux-libre-headers-6.1 = 6.1.119; vanilla 6.1.119's installed uapi
+  # linux-libre-headers-6.1 = 6.1.166 at the guix pin; vanilla 6.1.166's installed uapi
   # headers are equivalent — deblobbing doesn't touch them). The headers
   # version is visible in the .dbg: bitcoind's netlink code records
   # <linux/rtnetlink.h> enum DIEs, and newer headers (nixpkgs' 6.18) add
@@ -230,10 +229,11 @@ let
   # one:
   #
   # - `--enable-cet=yes` (x86-only, omitted on aarch64).
-  # - `--with-as` re-pointed at cross binutils 2.41. nixpkgs bakes --with-as
-  #   into cross gcc (verified: it points at the 2.46 cross binutils
-  #   wrapper), and gas's alignment-NOP fill order changed in 2.46
-  #   (short-first; 2.41 = GUIX emits long-first), which diverges the
+  # - `--with-as` re-pointed at the pinned cross binutils. nixpkgs bakes
+  #   --with-as into cross gcc (its own binutils wrapper), and gas output is
+  #   version-sensitive on x86 — its alignment-NOP fill order changed in
+  #   2.46 (short-first; 2.41, GUIX's pin at the time, emits long-first),
+  #   which diverges the
   #   inter-function padding of the statically-linked libgcc/libstdc++ on
   #   x86 — the bug the former native gcc rebuild fixed by PATH-shadowing
   #   `as` (cross gcc has --with-as, so overriding it is enough). Appending
@@ -341,7 +341,7 @@ let
   # Wrapper variant for the bitcoind compile that does NOT inject
   # `-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer` (nixpkgs' cross
   # cc-wrapper puts those in cc-cflags-before). With the injection gone,
-  # nix/x86_64-linux-gnu/release.nix no longer needs the explicit -fomit-frame-pointer
+  # the release build (lib/release-cross.nix) needs no explicit -fomit-frame-pointer
   # override — and that matters for the .dbg: every explicit flag is
   # recorded in DW_AT_producer, while upstream GUIX compiles with bare
   # `-O2 -g` (the x86_64 -O2 default omits both frame pointers), so its
