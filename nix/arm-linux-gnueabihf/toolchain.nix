@@ -68,6 +68,22 @@ let
     gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
     debugCanonMap = true;
     canonDepends = true;
+    # Branch-off: bitcoin-qt/-gui/-node/test_bitcoin differed only in ld's
+    # stub order (Cortex-A8 erratum + long-branch veneers, named after
+    # global BFD section ids). Our glibc libpthread.so.0 and libc.so.6 each
+    # carry one section more than GUIX's; ld reads libpthread.so twice, so
+    # ids drifted -1/-3 and the stub hash order changed. Relinking guix's
+    # own objects against copies with ANY one section removed from both
+    # reproduces guix's .text exactly (ld only counts them). .ARM.extab is
+    # chosen because ppc64 shows guix's glibc keeps .interp and the debug
+    # sections, so an ARM-only section is the likely one; its identity is
+    # unconfirmed. See glibcStripSharedSections in lib/linux-cross-target.nix.
+    # Only those two files: GUIX's ld-linux-armhf.so.3 keeps its section.
+    # Stripping it too left test_bitcoin (its big stub group is anchored
+    # after ld-linux's ids) one id short; relinking test_bitcoin with one
+    # section added back to ld-linux reproduces guix's .text exactly.
+    glibcStripSharedSections = [ ".ARM.extab" ];
+    glibcStripSharedFiles = [ "libc.so.6" "libpthread.so.0" ];
     extraCXXFLAGS = "-Wno-psabi";
     pnameSuffix = "armhf";
     tarballSha256 = upstreamSha256 "bitcoin-${version}-arm-linux-gnueabihf.tar.gz";

@@ -40,6 +40,20 @@
     , gccExtraPatches ? [ ] # extra patches for the final cross gcc only (not the glibc CC)
     , gccNativeInputs ? [ ] # prepended to the cross gcc's build env (e.g. armhf's pinned gawk)
     , glibcPatches ? [ ]
+    # Sections to remove from the installed glibc SHARED objects. ld only
+    # reads these .so files, but every section it reads takes a global BFD
+    # section id, and ld names ppc64/ARM long-branch (and Cortex-A8
+    # erratum) stubs after those ids and emits them in hash-table order.
+    # Where our glibc .so carry a section GUIX's lack, every later id
+    # shifts and the stubs of the big binaries come out reordered.
+    # - ppc64: [ ".gnu.attributes" ] (rs6000 Tag_GNU_Power_ABI_FP in
+    #   libm.so.6/libc.so.6); proven by relinking guix's own objects
+    #   against copies minus that section: every section matches.
+    , glibcStripSharedSections ? [ ]
+    # Restrict that strip to these sonames (resolved to their real files);
+    # null = every ELF lib/*.so*. armhf needs it: GUIX's ld-linux keeps the
+    # section its libc/libpthread lack.
+    , glibcStripSharedFiles ? null
     , debugCanonMap ? false # route the /build→DISTSRC rewrite through the gcc canon env var (ppc64)
     , canonDepends ? false # route the depends→/bitcoin rewrite through the canon env var too
                            # (instead of -ffile-prefix-map): gcc ggc-allocates every FIRED argv
@@ -162,6 +176,16 @@
           mkdir -p $static/lib
           cp $bin/bin/getconf $bin/bin/getconf_
           mv $bin/bin/getconf_ $bin/bin/getconf
+        '' + pkgs.lib.optionalString (glibcStripSharedSections != [ ]) ''
+          # See glibcStripSharedSections. Only real ELF shared objects:
+          # symlinks resolve to them, linker scripts (libc.so) are text, and
+          # the static archives (whose linked members' debug info feeds the
+          # .dbg files) stay untouched.
+          for f in ${if glibcStripSharedFiles == null then "$out/lib/*.so*" else pkgs.lib.concatMapStringsSep " " (n: "$(readlink -f $out/lib/${n})") glibcStripSharedFiles}; do
+            [ -L "$f" ] && continue
+            head -c4 "$f" | grep -q ELF || continue
+            ${crossBinutils241'}/bin/${triple}-objcopy ${pkgs.lib.concatMapStringsSep " " (s: "--remove-section=${s}") glibcStripSharedSections} "$f"
+          done
         '';
       });
 

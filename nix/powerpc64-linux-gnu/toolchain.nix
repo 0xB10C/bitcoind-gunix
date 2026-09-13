@@ -51,6 +51,13 @@ let
     # two diverging .dbg are qt CUs, full of depends/Qt headers that our
     # argv map fired on while GUIX's environment fires none.
     canonDepends = true;
+    # Branch-off: bitcoin-gui (.text > 32 MB, so ld inserts long-branch
+    # stubs) differed only in stub order. Our glibc libm.so.6/libc.so.6
+    # carry a .gnu.attributes section GUIX's don't; that one extra section
+    # shifted ld's global section ids, renaming two stubs
+    # (long_branch.29967 vs guix 29966) and reordering the hash-ordered
+    # stub table. See glibcStripSharedSections in lib/linux-cross-target.nix.
+    glibcStripSharedSections = [ ".gnu.attributes" ];
     pnameSuffix = "ppc64";
     tarballSha256 = upstreamSha256 "bitcoin-${version}-powerpc64-linux-gnu.tar.gz";
     debugTarballSha256 = upstreamSha256 "bitcoin-${version}-powerpc64-linux-gnu-debug.tar.gz";
