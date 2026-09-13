@@ -6,6 +6,605 @@ Reproduce the official Bitcoin Core GUIX release binary for
 `x86_64-pc-linux-gnu` using Nix, producing a binary with an identical
 sha256. Project tracking: https://github.com/0xB10C/bitcoind-gunix/issues/1.
 
+## Status (2026-09-13, 06:33): ALL 20 ARTIFACTS BYTE-MATCH the local guix reference of f3fec67c3eeb — verified in one final-tree build
+
+One `nix build --keep-going` of all 20 gated artifacts on the final tree
+(tmpdiff/final-build.log, out-links tmpdiff/result-final*) exited 0, and
+an independent sha256 of every output against noncodesigned.SHA256SUMS
+gives match=20 differ=0: the 5 linux release + 5 debug tarballs (x86_64,
+aarch64, riscv64, armhf, ppc64), darwin x86_64 + arm64 unsigned.tar.gz /
+unsigned.zip / codesigning.tar.gz, and win64 unsigned.zip / debug.zip /
+setup-unsigned.exe / codesigning.tar.gz. (The dist archive
+bitcoin-f3fec67c3eeb.tar.gz is listed in the SHA256SUMS file but is not
+built — see sourceDistArchive below.) The last two fixes, found below:
+glibc makeFlags `OBJDUMP=<triple>-objdump` (non-empty gnu/stubs-*.h, all
+linux targets) and armhf's glibcStripSharedFiles = libc.so.6 +
+libpthread.so.0. NOT COMMITTED YET.
+
+## Status (2026-09-12): local guix reference in hand — x86_64 linux + win64 zips BYTE-MATCH; toolchain retargeted to guix pin c5eee3336cc1
+
+The user supplied a full local guix build of f3fec67c3eeb (extracted to
+`/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`: `guix-build-*/output/`,
+the GUI-pass `distsrc-*/build` trees with CMakeCache.txt, and the
+`depends/built/GUIX/{BUILD,GUI}` caches). `noncodesigned.SHA256SUMS` now
+holds its 21 hashes (from `output/*/SHA256SUMS.part`), `all.SHA256SUMS`
+is removed (no signed artifacts at a master commit) — every gate is ON.
+
+**UPDATE: 16/20** — riscv64 matched first try; aarch64 matched after
+enabling `canonDepends` + the canon patch (its .dbg flipped loclists
+like x86_64 at rc1: `.debug_loclists` +4, only the debuglink CRC in the
+runtime binaries). Remaining: armhf + ppc64 (see the stub-order section
+below).
+
+**Verified byte-matches so far (12/20):** `…-x86_64-linux-gnu.tar.gz`
+(6b492451…), `…-x86_64-linux-gnu-debug.tar.gz` (82257770…); ALL FOUR
+win64 artifacts: `…-win64-unsigned.zip` (baf9b0f3…), `…-win64-debug.zip`
+(69e01ace…), `…-win64-setup-unsigned.exe` (cda85d41…),
+`…-win64-codesigning.tar.gz` (5f16d65a…); ALL SIX darwin artifacts:
+x86_64 `-unsigned.tar.gz` (81954bff…) / `-unsigned.zip` (4f596577…) /
+`-codesigning.tar.gz` (21bd7bc4…), arm64 `-unsigned.tar.gz` (2ede9b1c…) /
+`-unsigned.zip` (4832a552…) / `-codesigning.tar.gz` (df48f7c4…).
+Remaining: aarch64/riscv64/armhf/ppc64 release + debug tarballs (8).
+
+The "open questions" below were answered by the reference: the guix pin
+moved the WHOLE toolchain, not just binutils. Found by reading
+manifest_build.scm, the time-machine pin's package definitions
+(`guix/guix/` checkout) and the reference's CMakeCache.txt store paths:
+
+- **linux cross binutils 2.46.0** (fresh origin, no guix patches,
+  `--enable-gprofng=no`) — `nix/lib/cross-binutils-246.nix` replaces the
+  2.41 file. nixpkgs' recipe expects its `binutils-with-gold` tarball:
+  strip `gold/Makefile.in` from preConfigure and set `hasGold = false`.
+- **kernel headers 6.1.166** (was 6.1.119).
+- **glibc 2.31 commit 28eb5caf** (was 7b27c450) + `--enable-kernel=3.17.0`.
+- **linux-base-gcc** gains `--disable-lto --disable-tm-clone-registry`.
+- **GUI pass container has python-minimal**; build_*_gui.sh uses
+  `-Werror=dev`, so a missing Python is fatal → python3 in guiOnly passes
+  (release-cross.nix, win64/release.nix).
+- **mingw-w64 13.0.0** (= nixpkgs; the 12.0.0 override is gone, the
+  ephemeral `/tmp/guix-build-mingw-w64-x86_64-winpthreads-13.0.0.drv-0`
+  map updated); CRT binutils = guix's default cross-binutils 2.44 + its 4
+  patches (now in nix/patches/), `--enable-compressed-debug-sections=no`;
+  final mingw binutils 2.46.0 + unaligned patch; mingw-w64-base-gcc gains
+  `--enable-gprofng=no --disable-libsanitizer --disable-lto --disable-nls`.
+- **NSIS 3.11, stubs built by guix's DEFAULT cross gcc-14** (%xgcc is
+  gcc-14 now, not gcc-11) against mingwCrt + the 2.44 binutils — the whole
+  nixpkgs-24.05 gcc11 side-chain is DELETED (nsisGcc14 replaces nsisGcc11).
+  nixpkgs' cross gcc is `--enable-default-pie`; that makes the driver pass
+  `-pie` to ld silently and gave the stub `.edata` + `.reloc` sections the
+  reference lacks (1 KB → whole installer shifted). Filtered out for
+  nsisGcc14 only.
+- **darwin clang/lld/libcxx 19.1.7** = nixpkgs' llvmPackages_19; the
+  19.1.4 overlay pin is gone.
+- **darwin: kj fibers are ON upstream now.** setup.sh's `llvm_toolchain`
+  no longer exports LIBRARY_PATH (only `gcc_toolchain` does), so capnp's
+  makecontext check passes in guix — `darwinLibraryPathDir` and the darwin
+  LIBRARY_PATH env are removed (they cost bitcoin-cli/-node/-gui/
+  test_bitcoin ~4.4 KB each).
+- **darwin: the cocoa PCH-guard sed is removed** — guix's cmake is now
+  3.31, so upstream's `CMAKE_VERSION VERSION_LESS "3.25"` guard no longer
+  fires there either. (Removing it did NOT close bitcoin-qt/-gui's 28
+  bytes — see the next item; it only mirrors upstream.)
+- **darwin: native depends packages are built with clang + libc++.**
+  setup.sh's `llvm_toolchain` passes build_CC/build_CXX = clang /
+  `clang++ -stdlib=libc++` to the depends make line (guix's cached
+  native_qt `rcc` links libc++.so.1; ours linked libstdc++.so.6). This is
+  load-bearing: rcc sorts a qrc directory's children with `std::sort` by
+  qt_hash, and `:/translations/he` / `…/gu` COLLIDE (qt_hash 0x6e5) —
+  libc++ and libstdc++ order the tie differently, swapping two tree
+  records in qrc_bitcoin_locale.cpp = 20 bytes of `__TEXT,__const` + the
+  8-byte LC_UUID in bitcoin-qt AND bitcoin-gui, on BOTH arches. Proven by
+  running our rcc on the reference `bitcoin_locale.qrc` (16-line diff vs
+  guix's generated file: exactly the he/gu and one more tied pair).
+  depends.nix passes darwin-only `build_CC`/`build_CXX` wrapper scripts
+  around nixpkgs' `llvmPackages_19.libcxxClang` with explicit
+  `-L…/libcxx/lib -Wl,-rpath` (depends' builders/default.mk overwrites an
+  env build_LDFLAGS, and makeFlags values cannot contain spaces). Linux /
+  mingw drvs are unchanged (verified drvPath-identical).
+- **darwin DONE:** fibers ON took it to 8/10 binaries per arch; the
+  libc++ native toolchain closed bitcoin-qt/-gui — all 6 darwin archives
+  byte-match on the first rebuild with it.
+- Plumbing: darwin's in-chroot script sources setup.sh under `set +u`
+  (it tests `$V` unguarded); package.nix sets `dontUseCmakeConfigure`
+  (cmake is an input on mingw only for `cmake -P`).
+
+Guix's own depends caches show host packages byte-identical between the
+BUILD and GUI passes; only native_capnp/native_libmultiprocess differ.
+
+**armhf + ppc64 (open, 2026-09-13): LINKER STUB ORDER, not codegen.**
+- armhf: bitcoind differs only in its debuglink CRC (its .dbg is off by
+  +578 B .debug_info / +10 B .debug_loclists); bitcoin-node by 16 bytes
+  (3 page-boundary Thumb BLs + the 3 long-branch veneers at the end of
+  .text, SAME veneers in a DIFFERENT ORDER); qt/gui/test_bitcoin by
+  23k–88k bytes at identical section sizes.
+- ppc64: only bitcoin-gui (.text 35.6 MB > the ±32 MB branch range, so
+  ld inserts long_branch/plt_call stubs). Identical code, `bl` targets
+  into the stub area shifted by 0x20. Stub symbols in the .dbg carry ld's
+  section ids: group ids match (0x3e, 0x5a05), but two local-target stubs
+  are `long_branch.29967:5+78/+c0` ours vs `…29966…` guix — the target is
+  libgcc's unwind-dw2-fde-dip.o. binutils 2.46 names ARM stubs
+  `%08x_%s+%x_%d` (input_section->id, …) and emits both arches' stubs in
+  hash-traversal order, so ONE extra section somewhere before the libgcc
+  member in OUR link reorders the stubs.
+- Ruled out by relinking GUIX's OWN bitcoin-qt objects (armhf GUI build
+  tree + link.txt survive) inside our gui-pass nix-shell: our toolchain +
+  our depends → exactly OUR .text (13ccdac7…) vs ref 2adc70d9…, so the
+  objects are not it; with GUIX's own depends tree → still ours (depends
+  not it). NOT yet ruled out: the auto-loaded bfd-plugins/libdep.so — the
+  "plugin-less ld.bfd via `-fuse-ld=bfd -B…`" relink never used that ld:
+  collect2 ALWAYS runs gcc's baked `--with-ld` linker (with -fuse-ld=bfd it
+  just appends `.bfd` to the baked path; `-print-prog-name=ld.bfd` lies).
+  To run a different ld, capture collect2's argv from `-v` and invoke that
+  ld directly (what trace-relink-ppc64.sh now does).
+- Sensitivity confirmed: strip-debugging only libm/libpthread/libdl .so
+  → text bf500824…; all glibc .so strip-debug OR strip-unneeded →
+  5468d05e… (both variants identical, neither = ref). So glibc .so
+  section counts DO move the ids, but they are not the (only) difference.
+- **ROOT CAUSE FOUND for ppc64 (2026-09-13):** our glibc `libm.so.6`
+  carries a `.gnu.attributes` section (`Tag_GNU_Power_ABI_FP: hard float,
+  128-bit IBM long double`) that GUIX's does not. ld only READS libm.so,
+  but its sections consume global section ids, so every id after it is
+  +1 → libgcc_eh unwind-dw2-fde-dip.o `.opd` = 170343 (0x29967) instead of
+  guix's 170342 (0x29966) → two long_branch stubs renamed → stub hash
+  order changes → bl targets shift. PROOF: relinking guix's own bitcoin-gui
+  objects with a copy of our libm.so.6 minus `.gnu.attributes` gives
+  `.opd` id 170342 and a `.text` byte-identical to the reference
+  (3143177e…; our shipped build eef47a68…). Method: section-id-tracing ld
+  (scratchpad trace-binutils.nix) driven with collect2's captured argv.
+  Evidence on WHO differs: our ppc64 glibc objects are tagged (452/611
+  libm.a members, 71/1634 libc.a; C objects, so compiler-emitted
+  `.gnu_attribute 4,N`); libm.so.6 and libc.so.6 carry the merged section,
+  libdl/libpthread/ld64 don't. GUIX's FINAL gcc also tags (2/32
+  libbitcoin_util.a, 2/51 libbitcoin_common.a, depends libsqlite3.a), and
+  both final binaries carry `.gnu.attributes` (hard float, IBM128) — so
+  only guix's GLIBC objects are untagged, i.e. its glibc compiler
+  (xgcc-sans-libc) behaves differently from our forced glibc CC. glibc
+  2.31 itself has no -mno-gnu-attribute logic. Nix kept no build log for
+  our glibc.
+  Full-shape validation: relinking with `.gnu.attributes` removed from BOTH
+  libm.so.6 and libc.so.6 gives .opd id 170342 and .text/.rodata/.data/
+  .opd/.eh_frame/.rela.dyn/.dynamic/.got/.data.rel.ro all identical to the
+  reference, same merged Tag_GNU_Power_ABI_FP.
+  **ppc64 NOW BYTE-MATCHES (18/20):** `…-powerpc64-linux-gnu.tar.gz`
+  (13dbea78…) + `…-debug.tar.gz` (afa3046d…) with the fix below — the
+  single ppc64 root cause.
+  FIX WIRED: list-valued `glibcStripSharedSections` knob in
+  nix/lib/linux-cross-target.nix (objcopy --remove-section=<each> on the
+  real ELF lib/*.so* in glibc postInstall; archives untouched). ppc64
+  passes [ ".gnu.attributes" ], armhf [ ".ARM.extab" ]; the default [ ]
+  leaves every other target's drv unchanged (riscv64 tarball drv verified
+  identical). The first ppc64 match used an earlier boolean form of this
+  knob; renaming it changed the glibc drv (comment text), so ppc64 was
+  re-verified on the current tree: both archives match again.
+  armhf WITH the fix: bitcoin-qt/-gui/-node now differ only by the 4-byte
+  debuglink CRC (stub order fixed), as does bitcoind. Remaining:
+  (a) test_bitcoin (pass 1) .text still differs by 19879 B in the stub
+  area near the end of .text; guix's pass-1 build tree is gone, so it can
+  only be compared via .dbg stub symbols. (b) every armhf .dbg still
+  differs; bitcoind.dbg by .debug_loclists +12 B only, a var-tracking
+  loclists flip. Localized: ALL FIVE diverging .dbg (bitcoind, -node,
+  -qt, -gui, test_bitcoin) differ in exactly ONE loclists table, the
+  `./index/base.cpp` CU (ours 152870 B, ref 152858 B), starting at
+  variable `current_time`: ours has one extra GNU locview pair and
+  spells the following pieces without guix's DW_OP_GNU_uninit. Guix's
+  own GUI-pass build tree still has `bitcoin_node.dir/index/base.cpp.o`
+  with exactly ref's 152858 B, so it is a single-CU replay oracle
+  (tmpdiff/replay3: chroot with a persistent /build and the captured
+  armhfCross.bitcoindNoGui dev env).
+  Replay3 facts: the chroot rebuild reproduces the sandbox exactly (base
+  .o loclists 152870, test_bitcoin .text b5a05dc8… = shipped), and is
+  deterministic. Everything else in base.cpp.o (.text/.rodata/.debug_line/
+  .debug_str/.debug_abbrev/.debug_rnglists) is ALREADY byte-identical to
+  guix's object. INERT for the flip (all still 152870): adding guix's 94
+  /gnu/store argv maps; source at the literal /distsrc-base path; depends
+  at the literal /bitcoin/depends path (and both); canon env unset; LC_ALL=C;
+  dropping every toolchain-header map (no remap fires at all). So unlike
+  v31's net_processing flip this is NOT remap/GGC-from-maps. Our gcc
+  ignores CROSS_*_INCLUDE_PATH (guix's gcc-12-cross-environment-variables
+  patch), so guix's env-based include search is not emulated yet. The
+  bitcoin gcc-remap-guix-store.patch only touches libgcc's build (and
+  existed at v31). Also inert: GGC never collecting (ggc params are at the
+  cap here anyway). E13 = FULL environment emulation: unwrapped g++,
+  -nostdinc + C_/CPLUS_INCLUDE_PATH = guix's exact 7 dirs at their literal
+  /gnu/store spellings (bind-mounted; search list verified with -v), guix's
+  94 maps, literal source/depends paths → .text/.rodata/.debug_line/
+  .debug_str identical to guix's .o, loclists STILL 152870. The flip is in
+  the cc1plus binary itself, not its inputs. Neither side's gcc patches
+  touch var-tracking. The two lists: guix marks current_time's r7/r5
+  ranges DW_OP_GNU_uninit and has no 0x296c-0x296e range; ours tracks
+  them initialized with an extra `r7; fbreg -160` range (bitcoind.dbg
+  overall: 500 vs 496 GNU_uninit ops, exactly these 4). Also inert:
+  MALLOC_PERTURB_ (two values), tcache off + mmap everything. Our cross
+  gcc is ALREADY compiled by gcc 14.3.0 (its stdenv; the gcc-wrapper-15.2.0
+  input is only CC_FOR_BUILD), so the remaining build-side difference vs
+  guix is nixpkgs' hardening flags on the gcc build (strictoverflow etc.);
+  a hardeningDisable=all variant was built (tmpdiff/replay3/gccvar): E16 =
+  E13 with that cc1plus → STILL 152870, so hardening is not it either.
+  Next suspects are the patches that touch cc1plus's filename handling:
+  our canon patch (active code in dwarf2out lookup_filename even with the
+  env unset) and nixpkgs' mangle-NIX_STORE-in-__FILE__ — variants without
+  them were built: E17 (no canon patch) and E18 (no canon, no mangle) →
+  both STILL 152870. So no gcc patch difference explains it; next check
+  is the compiler's input CONTENT (generated build/src headers, depends
+  headers — the replays used our depends at guix's path, not guix's).
+  Checked: E19 with guix's own bitcoin-build-config.h (GUI-pass: adds
+  USE_DBUS/USE_QRCODE) → 152870; all 278 depends + 110 src headers in
+  base.cpp's .d are byte-identical to guix's trees, and guix's .d lists the
+  same toolchain header set (236 gcc, 6 gcc-lib, 120 glibc, 7 kernel). The
+  normalized DIE dumps of guix's vs our object differ ONLY in location-list
+  offsets. So inputs (except the uncomparable toolchain header CONTENTS —
+  c++config.h, glibc headers) and all recorded output apart from this one
+  list are identical. Hypothesis under test: a different declaration count
+  in guix's toolchain headers shifts DECL_UIDs, which order var-tracking's
+  hash tables (tmpdiff/replay3/uidsweep.sh: -include k dummy externs).
+  **CONFIRMED:** k=0 → 152870 (ours), k=1 and k=2 → .debug_loclists
+  BYTE-IDENTICAL to guix's object. The flip is purely DECL_UID-count
+  sensitive: guix's compile of base.cpp sees at least one more declaration
+  than ours, from toolchain header CONTENT (c++config.h / glibc / gcc
+  headers). Guix's store items for those are not on bordeaux/ci
+  substitute servers (404), so the difference must be located indirectly.
+  Refined: the flip is hash-order chaotic, not a clean count — extra
+  externs k=1..17 and 32..64 give guix's bytes, 18..28 give ours; extra
+  `#define`s k=5,10 also give guix's bytes (k=1,2 don't). So ANY small
+  preprocessor-visible toolchain header difference can be the cause (macro
+  values included). The toolchain header NAME lists are identical (369),
+  our 13 generated libstdc++ target headers are the pristine gnu/gnu-linux/
+  arm configs, and guix's glibc-2.31 inherits guix's glibc-2.41 recipe
+  (configure flags + source substitutions, e.g. paths.h) — the prime
+  suspect for header CONTENT differences.
+  **armhf .dbg ROOT CAUSE FOUND (E20): our glibc's gnu/stubs-*.h are
+  EMPTY.** All 116 static glibc headers base.cpp uses are pristine; the 4
+  generated ones include gnu/stubs-hard.h, which in our build holds no
+  `#define __stub_*` at all. glibc's Makerules builds that list with
+  `$(OBJDUMP) -h` over its objects, and configure sets OBJDUMP from
+  `$CC -print-prog-name=objdump` — for our forced cross CC that is a bare
+  `objdump` that cannot read target objects, so the awk finds nothing
+  (guix carries glibc-cross-objdump.patch for this). PROOF: bind-mounting
+  a stubs-hard.h with the 11 armhf glibc-2.31 stubs (chflags fattach
+  fchflags fdetach gtty lchmod revoke setlogin sigreturn sstk stty) into
+  the E13 replay makes base.cpp.o byte-identical to guix's in EVERY
+  section (.text .rodata .debug_line .debug_str .debug_info
+  .debug_loclists). Every cross glibc 2.31 in the store (armhf, ppc64)
+  has the same empty list, so this is a latent header bug on all linux
+  targets; the others simply sat below the flip threshold.
+  FIX WIRED (all three linux glibc definitions — x86_64 and aarch64
+  toolchain.nix, lib/linux-cross-target.nix): glibc makeFlags gain
+  `OBJDUMP=<cross binutils>/bin/<triple>-objdump` (a make command-line
+  override beats config.make). glibc merges the per-subdir lists with
+  `LC_ALL=C sort`, so awk's hash order does not matter. This changes the
+  glibc (and everything downstream) for EVERY linux target, so all five
+  must be rebuilt and re-gated. Verified on the rebuilt armhf glibc: its
+  gnu/stubs-hard.h now carries 12 stubs — __compat_create_module
+  __compat_get_kernel_syms __compat_query_module chflags fchflags gtty
+  lchmod revoke setlogin sigreturn sstk stty (the E20 proof used a
+  Debian-style guess of 11 with fattach/fdetach instead of the three
+  __compat_* ones). E21 = the E13 replay with that REAL rebuilt
+  stubs-hard.h overlaid → base.cpp.o again byte-identical to guix's in
+  every section, so the fix as built (not just the guess) closes the flip.
+  **armhf test_bitcoin ROOT CAUSE FOUND:** the glibc strip was too broad.
+  Traced relink of test_bitcoin in replay3 (stub-trace ld, .text ==
+  shipped b5a05dc8…) + the offline solver (scratchpad stubhash model) gave
+  a unique fit: all local ids unchanged, only the big `.text.__stub`
+  group's anchor id 162841 → 162842 in guix, i.e. guix has ONE MORE
+  section just before crtn.o — the window holds libm.so, libpthread.so,
+  libc.so.6, libc_nonshared, ld-linux-armhf.so.3, crtendS, crtn. PROOF:
+  relinking with a copy of our ld-linux-armhf.so.3 plus one dummy section
+  gives guix's test_bitcoin .text exactly (ec7a9f96…), +0 gives ours.
+  GUIX's ld-linux keeps the section that its libc/libpthread lack (in the
+  GUI binaries ld-linux's ids come after every stub anchor, so it did not
+  show there). Fix: new `glibcStripSharedFiles` knob (soname list,
+  readlink -f'd; null = all ELF lib/*.so*, loop text unchanged), armhf
+  passes [ "libc.so.6" "libpthread.so.0" ]. Verified drv-scoped: ppc64,
+  riscv64 and x86_64 drvPaths unchanged, armhf changes. REBUILT and
+  verified: every armhf stripped binary (bitcoind, -qt, -gui, -node,
+  test_bitcoin) now differs from guix in exactly the 4 .gnu_debuglink CRC
+  bytes — linker stub order is fully solved on armhf. The only remaining
+  armhf divergence is the single index/base.cpp `current_time` loclists
+  flip carried by the five .dbg files.
+  **armhf ROOT CAUSE FOUND (2026-09-13):** same family as ppc64. Our glibc
+  `libpthread.so.0` and `libc.so.6` each carry ONE BFD section more than
+  GUIX's. ld reads libpthread.so twice, so our ids drift −1 after its first
+  open and −3 by the big stub group. Solved offline: an exact
+  bfd_hash_hash/stub-table model, validated at 0 violations on ld's real
+  stub names (ld patched to print them), gives the unique fit "ids ≥
+  169445 −1, group link id 189338 → 189335". PROOF: relinking guix's own
+  bitcoin-qt objects against libpthread.so.0 + libc.so.6 copies with any
+  one section removed gives a .text byte-identical to guix's (2adc70d9…).
+  Which section guix lacks cannot be told from ld's behaviour (it only
+  counts sections). ppc64 shows guix's glibc keeps .interp and debug
+  sections, so the ARM-only `.ARM.extab` is the prime candidate
+  (libdl/libm, which don't drift, have no ARM unwind sections).
+  armhf: the reordered veneers are CORTEX-A8 ERRATUM 657417 veneers, not
+  long-branch ones. In bitcoin-node, the three `b.w` stubs at the end of
+  .text target code ~0x200 before BLs straddling the 4 KB page boundaries
+  0x8fa000/0x90e000/0x93d000. binutils names these stubs "%x:%x" (calling
+  input section id : offset) and emits them in stub-hash order: same three
+  targets, ours [93c7c4,90d31e,8f9df4] vs guix [8f9df4,93c7c4,90d31e].
+  Shift sweeps on armhf bitcoin-qt (guix objects, .text vs 2adc70d9…):
+  every net shift of +1..+3, -2, -3 at libdl, libpthread, libm, libc and
+  ld-linux misses. libm and libc shifts give identical results (adjacent
+  in load order); ld-linux shifts do nothing (after all callers). So the
+  drift is not a single glibc .so. Next: map stub names to calling-section
+  ids and solve bfd_hash_hash order offline.
+  BEFORE COMMITTING: riscv64/x86_64/aarch64/win64/darwin were byte-verified
+  on earlier trees (e.g. before the package.nix dontUseCmakeConfigure
+  edit, which changes every linux packaged drv without affecting bytes).
+  Rebuild them on the final tree to re-assert the gates.
+- Method note: an instrumented ld (scratchpad trace-binutils.nix: patches
+  bfd_section_init to print `SECID id archive file section` when
+  BFD_TRACE_SECTION_IDS is set) + trace-relink-ppc64.sh, to list every
+  input's section count in the id window 23045..29967.
+
+**Ops (2026-09-13 00:00): the store was GC'd from outside.** Every path
+built this session vanished, including outputs behind `result-*` links:
+this container's daemon registers NO auto GC roots
+(`/nix/var/nix/gcroots/auto` empty, `gcroots` not writable), so a
+host-side scheduled GC sees nothing protected. The passed gates remain
+valid, but everything must be rebuilt for further work, and anything
+built can vanish again at the next scheduled GC.
+
+Ops (2026-09-13 ~05:40): two concurrent full `nix build --keep-going`
+runs (all linux archives + all darwin/win64 artifacts) were killed by the
+agent harness's low-memory guard. User direction: the machine (128 GB,
+24 cores) has headroom — use all of it (nix defaults max-jobs=24,
+cores=0), but run the re-verification as ONE `nix build` over all 20
+artifacts rather than two parallel clients.
+
+Ops: ftpmirror.gnu.org times out from this machine — binutils tarballs
+were fetched from sourceware.org (hash-checked) and `nix-store --add-fixed`.
+`tmpdiff/ref-f3fec67c3eeb/` holds unpacked reference trees + per-file
+hashes; a scratchpad `cmp-archive.sh` localizes an archive gate failure to
+files / listing / modes in one step.
+
+## Status (2026-09-11): retargeted at the v32.x BRANCH-OFF commit — eval-clean, all gates OFF, awaiting a local guix reference
+
+The tree now builds bitcoin/bitcoin at the v32.x branch-off commit
+`f3fec67c3eeb27d5be1bc9d57ca737b74fcd762d` ("Merge #36227: Pre 32.x
+branching updates", 2026-09-11) instead of the v31.1 release. NOTHING
+HAS BEEN BUILT YET — the whole change set is eval-verified only
+(`nix eval` over every flake output on both build hosts). The reference
+to diff against is a LOCAL guix build of the same commit, which is being
+produced separately; until it exists every upstream-hash gate is off.
+
+This is NOT a version bump. Upstream rewrote the entire guix build layer
+in that merge, and most of the changes below follow from that rewrite.
+
+### What upstream changed (contrib/guix + depends)
+
+- **`libexec/build.sh` is gone.** It split into `libexec/setup.sh` +
+  six per-platform scripts (`build_{linux,macos,win}{,_gui}.sh`) + a
+  shared `libexec/package.sh`, and `manifest.scm` split into
+  `manifest_build.scm` / `manifest_gui.scm` / `manifest_codesign.scm`.
+  The guix time-machine pin moved to `c5eee3336cc1…` (was `5cb84f2013c5…`).
+- **Every platform now builds TWICE**, in two containers, from two
+  depends trees: pass 1 (`build_<os>.sh`) builds depends with `NO_QT=1`
+  under `BASE_CACHE .../GUIX/BUILD` and configures `-DBUILD_GUI=OFF`;
+  pass 2 (`build_<os>_gui.sh`) builds the full depends tree under
+  `.../GUIX/GUI`, turns every non-GUI target OFF and builds only
+  `bitcoin-gui` + `bitcoin-qt` (win64: `bitcoin-qt` alone). Both install
+  into the SAME prefix; `package.sh` then split-debugs and archives the
+  merged tree ONCE. Neither pass passes `-DBUILD_GUI=ON` — the depends
+  toolchain.cmake turns it on in pass 2 because Qt is present there.
+- **binutils 2.41 → 2.46** (`manifest_build.scm` overrides guix's 2.44).
+  gcc stays 14, glibc 2.31, linux-libre-headers 6.1.
+- **New linux link flag** `-Wl,--fatal-warnings` on every target except
+  riscv64 (boostorg/test#345); win64 gains it too and DROPS
+  `-DCMAKE_SKIP_RPATH=TRUE`.
+- **The NSIS installer** is no longer the cmake `deploy` target: it is
+  `cmake -D BIN_DIR=… -D LIBEXEC_DIR=… -P build/GenerateWindowsInstaller.cmake`,
+  run from `package.sh` AFTER split-debug, so the installer now bundles
+  the very same `.exe` (with `.gnu_debuglink`) that ship in the zip.
+- **darwin** dropped the `cmake_install.cmake -u -r` sed (CMake ≥ 3.27).
+- **The linux release archives gain `INSTALL.md`** (copied from
+  `doc/INSTALL_linux.md`).
+- **depends**: libevent REMOVED entirely; boost 1.90.0 → 1.91.0-1 (and
+  `signals2` dropped); capnp/native_capnp 1.3.0 → 1.5.0; Qt 6.8.3 →
+  6.8.4 (tarballs renamed `…-everywhere-opensource-src-6.8.4.tar.xz`,
+  qt5 top-level files now fetched from the `v6.8.4-lts-lgpl` TAG);
+  `hosts/linux.mk`'s x86-build-machine special case DELETED; zeromq
+  gains `add_new_include.patch` as its LAST patch; `qtbase_platformsupport.patch`
+  dropped; `CMAKE_INSTALL_LIBDIR=lib/` → `lib`.
+
+### What changed here
+
+- **`version = "f3fec67c3eeb"`** (guix's `git_head_version` falls back to
+  `git rev-parse --short=12` for an untagged commit, so DISTNAME =
+  `bitcoin-f3fec67c3eeb`), `sourceDateEpoch = 1789143096`.
+- **`url`/`sha256` replaced by a single `src`** everywhere (≈20 files).
+  GitHub's archive of a COMMIT prefixes with the full 40-char sha, not
+  `bitcoin-<short12>/`, so default.nix unpacks and REPACKS it under the
+  DISTNAME prefix and passes that tarball down. Build input only.
+- **`sourceDistArchive` dropped.** For a tagged release GitHub's own tag
+  archive IS guix's `git archive` output, so we only re-gzipped it; for
+  an untagged commit the prefix length differs, which changes the pax
+  long-path headers, so the shortcut no longer holds. Needs a real
+  `git archive` (fetchgit + leaveDotGit, as nix/lib/codesignatures.nix
+  already does) when we want it back.
+- **Signing pipeline off**: `detachedSigs = null` (bitcoin-detached-sigs
+  only tags releases), so `signedDarwin*` / `signedMingw` /
+  `codesignaturesArchive` are not exposed; the unsigned and
+  `-codesigning` artifacts still build. The two SHA256SUMS aggregators are
+  dropped with them (they include the dist-archive and the codesignatures
+  archive). `packages.default` = `drvs.tarball`.
+- **The checked-in `noncodesigned.SHA256SUMS` / `all.SHA256SUMS` stay in
+  place**, still holding v31.1's hashes. `upstreamSha256` keys on the
+  PUBLISHED FILENAME, and nothing matches `bitcoin-f3fec67c3eeb-…`, so
+  every gate resolves to null and logs "no upstream gate". Replacing the
+  file's contents with the branch-off hashes (from the local guix build's
+  `output/<host>/SHA256SUMS.part` fragments) turns every gate back on with
+  no code change — that is the one action needed after the reference build.
+- **We now RUN upstream's shell scripts** instead of reimplementing what
+  they do. See "Which upstream scripts we run" below for the full list and
+  for the ones we cannot use. The two that carry the work:
+  - **`libexec/setup.sh` is SOURCED**, so its LC_ALL/TZ/umask/TAR_OPTIONS,
+    its required-variable check and its `ACTUAL_OUTDIR` / `OUTDIR` /
+    `INSTALLPATH` / `BASEPREFIX` derivations are upstream's, not ours.
+    `nix/lib/guix-setup.sh` makes the one sandbox-safe copy of it, applying
+    (and verifying) the three rewrites the Nix sandbox forces — see that
+    file's header. It is also where `glibc_dynamic_linker` comes from now:
+    `nix/lib/release-cross.nix` calls it for the ELF interpreter instead of
+    keeping our own copy of the per-target paths (all five matched, so the
+    switch is a verified no-op).
+  - **`libexec/package.sh` is RUN**, verbatim up to its trailing outdir
+    bookkeeping. New `nix/lib/package.nix` sets up what it expects, then
+    lets it run the security/symbol checks, split the debug info, copy the
+    committed extras and produce the archives, the win64 NSIS installer
+    and the codesigning tarballs. That trailing block is cut because it
+    moves OUTDIR into place and then writes a SHA256SUMS.part from a
+    hardcoded `/outdir-base` (the read-only sandbox root has no room for
+    it) whose first entry is the dist-archive we do not build. We run its
+    `mv "$OUTDIR" "$ACTUAL_OUTDIR"` line ourselves, so `$out` IS
+    package.sh's OUTDIR and `$installed` is the tree it split the debug
+    info out of.
+  - What cmake would have generated into the build tree is generated the
+    same way by hand, since the build tree is not carried between
+    derivations: `build/split-debug.sh` from
+    `contrib/devtools/split-debug.sh.in`, and on win64
+    `build/GenerateWindowsInstaller.cmake` from its `.in`, whose `@VARS@`
+    are read out of the source tree's own CMakeLists.txt so a version bump
+    needs no edit.
+  - package.sh runs `security-check.py` and `symbol-check.py`, so the
+    packaging step now needs python3 with **lief**. Those checks are new
+    coverage for us.
+  - **DELETED as a result**: `nix/lib/tarball.nix`, `nix/win64/zip.nix`,
+    `nix/win64/setup.nix`, `nix/win64/codesigning.nix`,
+    `nix/darwin/codesigning.nix`. Each published artifact is now a thin
+    selection from package.sh's OUTDIR plus the byte-match gate — see
+    `nix/lib/artifact.nix`. `packaged*` is exposed per target so the whole
+    OUTDIR can be inspected at once.
+  - darwin is the exception that runs both scripts INSIDE its release
+    derivation: package.sh's `deploy` target needs the GUI pass's cmake
+    build tree. One thing still has to happen after package.sh there — the
+    app bundle's Qt translations come out of the read-only store at mode
+    0444, which the zip records as the DOS read-only bit, so the bundle is
+    made owner-writable and the zip rebuilt with the same `macos_zip.sh`.
+- **Two-pass builds wired for every target.** `nix/lib/release-cross.nix`
+  gained `guiOnly` + `fatalLinkWarnings` and lost its packaging;
+  `nix/{x86_64,aarch64}-linux-gnu/release.nix` were DELETED — they were
+  byte-for-byte the generic file with `canonDepends = true` / the aarch64
+  triple, so both now call it. darwin runs both passes inside its one
+  unshare chroot (same `$DISTSRC`, `build` dir removed between passes, the
+  `/bitcoin/depends/<host>` symlink re-pointed); win64 mirrors the linux
+  split and builds only `bitcoin-qt` in pass 2.
+- **`dontGzipMan = true`** on every release derivation: upstream ships man
+  pages uncompressed and package.sh now archives the install tree as it
+  finds it, so nixpkgs' fixup must not gzip them.
+- **No per-binary gate any more.** Upstream publishes no per-binary
+  hashes, so the `expectedHashes` plumbing is gone; every binary and
+  `.dbg` hash is PRINTED instead, which is what localizes an archive
+  divergence to one file. Re-add a gate from a matched build if wanted.
+- **New attrs** per target: `dependsNoQt*`, `bitcoind*NoGui`,
+  `bitcoind*Gui`, `packaged*`. `bitcoind*` keeps its name and meaning (the
+  install tree with the `.dbg` files).
+- **depends.nix**: source list updated (boost/capnp/Qt as above, libevent
+  entry removed); the `hosts/linux.mk` x86-host workaround DELETED
+  (upstream removed the conditional it patched, and its `grep -q` guard
+  would now fail the build); the zeromq patch-wiring seds re-anchored
+  from `no_librt.patch` to `add_new_include.patch` and given a `grep -q`
+  guard of their own. The x86_64 and non-x86 linux `optionalAttrs` blocks
+  merged into one (they became identical).
+- **Latent bug fixed**: `nix/darwin/release.nix` hardcoded
+  `SOURCE_DATE_EPOCH = 1776286524` (v31.0's) instead of taking it from
+  default.nix — it feeds `macos_zip.sh`'s mtime normalization, so the
+  darwin app zip carried v31.0 mtimes for the whole v31.1 cycle. Now
+  plumbed.
+- **CI**: every `Verify … matches checked-in SHA256SUMS` step, the
+  signed-artifact builds and the `build-sha256sums` aggregator job are
+  gone (the nix gates themselves come back automatically once the
+  SHA256SUMS file is updated); a new `print-hashes` job, gated on all
+  eight per-target jobs, prints the sha256 of all 20 artifacts in one
+  place to diff against the guix reference.
+
+Kept but currently unreferenced, for when the signing / dist-archive flows
+come back: `nix/lib/{source-dist-archive,sha256sums,codesignatures}.nix`
+(+ `gzip6.c`), `nix/{darwin,win64}/signed.nix`, `nix/darwin/signapple.nix`.
+
+### Which upstream scripts we run
+
+RUN, as upstream ships them:
+
+- **`contrib/guix/libexec/setup.sh`** — sourced by `nix/lib/package.nix`
+  and by the darwin release derivation (inside its chroot), and called in
+  a throwaway subshell by `nix/lib/release-cross.nix` just for
+  `glibc_dynamic_linker`. `nix/lib/guix-setup.sh` makes the sandbox-safe
+  copy and asserts that each of its three rewrites applied: the two
+  `/usr/bin` lines (the sandbox root is a read-only mount with no /usr,
+  and `mkdir` there is denied even for the build user, so they abort the
+  script under errexit; they only exist to make `#!/usr/bin/env` shebangs
+  resolve inside GUIX's container, which Nix does not need), and the
+  QUOTES around TAR_OPTIONS' `--mtime` date, because GNU tar 1.35 as built
+  in nixpkgs ABORTS parsing the quoted form out of the environment
+  (`*** buffer overflow detected ***`, exit 134).
+- **`contrib/guix/libexec/package.sh`** — verbatim up to its trailing
+  outdir block (see above).
+- **`contrib/devtools/split-debug.sh.in`** — configure_file'd by hand,
+  then invoked by package.sh.
+- **`cmake/script/macos_zip.sh`** — used directly for the darwin
+  app-bundle rezip, and by package.sh's `deploy` target.
+- **`cmake/script/GenerateWindowsInstaller.cmake.in`** — configure_file'd
+  by hand, then run by package.sh via `cmake -P`.
+
+NOT usable, and why:
+
+- **`libexec/build_{linux,macos,win}{,_gui}.sh`** — three separate
+  blockers, any one of them fatal. (1) `HOST_CFLAGS` is built by
+  `find /gnu/store -maxdepth 1 -mindepth 1 -type d -exec echo -n
+  " -ffile-prefix-map={}=/usr" \;` — with no /gnu/store the loop yields
+  nothing and every toolchain header path lands in the DWARF unmapped;
+  our targeted per-component maps exist precisely to emulate that loop.
+  (2) `gcc_toolchain`/`llvm_toolchain`/`mingw_w64_toolchain` resolve their
+  paths through `store_path`, which greps `$GUIX_ENVIRONMENT/manifest`.
+  (3) they run `make -C depends`, which for us is a separate derivation.
+  A future direction that would make (1) and (2) tractable: bind-mount our
+  toolchain store paths into a `/gnu/store` inside a chroot, the way the
+  darwin build already chroots for LC_UUID. That would let upstream's own
+  flag computation run unmodified, at the cost of rewriting how every
+  toolchain path is spelled.
+- **`libexec/prelude.bash` / `guix-build` / `guix-clean`** — the host-side
+  driver (guix time-machine, container flags, VERSION/DISTNAME derivation).
+  `default.nix` reproduces only its `git_head_version` result.
+
+READY to adopt, when the signing flow comes back (there is no
+bitcoin-detached-sigs tag for a master commit, so it is off):
+
+- **`libexec/codesign.sh`** — same shape as package.sh: cut the same
+  trailing `/outdir-base` block, hand it `CODESIGNING_TARBALL`,
+  `DETACHED_SIGS_REPO` (must be a real git checkout — `detachedSigsGit`
+  with `leaveDotGit`, not the plain `fetchFromGitHub`), `DIST_ARCHIVE_BASE`,
+  `DISTNAME`, `HOST`, `SOURCE_DATE_EPOCH`, `DISTSRC`, `OUTDIR`, and put
+  osslsigncode 2.5 / signapple / zip on PATH. Two details: it sets its own
+  TAR_OPTIONS with the same quoted `--mtime` that crashes nixpkgs' tar, so
+  it needs the same rewrite; and its `-CAfile
+  "$GUIX_ENVIRONMENT/etc/ssl/certs/ca-certificates.crt"` would resolve to
+  nothing and make osslsigncode exit nonzero (the output bytes are already
+  written at that point — see the 2026-06-14 win64 note), which under
+  errexit aborts the script, so export `GUIX_ENVIRONMENT` pointing at a
+  directory that has `etc/ssl/certs/ca-certificates.crt`. Adopting it also
+  produces the codesignatures archive, replacing
+  `nix/lib/codesignatures.nix`. Left unwritten for now because the path is
+  unreachable at this commit and so cannot be exercised at all.
+
+### Open questions for the first diff against the guix reference
+
+1. **Does the two-pass split matter byte-wise?** Mirroring it is the safe
+   choice and costs a second depends tree per target, but the non-GUI
+   binaries plausibly come out identical either way. If the reference says
+   they do, the split could be collapsed back to one pass.
+2. **binutils 2.46**: the gas NOP-fill order and compressed-debug-sections
+   reasoning recorded below was all derived against 2.41. Re-derive it.
+   `nix/lib/cross-binutils-241.nix` and every `binutils 2.41` pin are
+   still in place and now DISAGREE with upstream — this is the single
+   biggest known-wrong piece of the toolchain.
+3. **`CMAKE_INSTALL_PREFIX` at configure time** (upstream) vs the nixpkgs
+   cmake hook's `$out`: neither matches guix's
+   `$DISTSRC/installed/$DISTNAME`, so it only matters if the prefix is
+   compiled in anywhere.
+4. The `-ffile-prefix-map=/gnu/store/<item>=/usr` header maps and the
+   canon-prefix-map machinery are unchanged; Qt 6.8.4 + boost 1.91 + capnp
+   1.5 may move the var-tracking flip thresholds that `canonDepends` was
+   tuned for.
+
+
 ## Status (2026-07-07, later): all.SHA256SUMS checked in — signed gates ON, all darwin/win64 artifacts byte-match
 
 Upstream's all.SHA256SUMS is out and checked in next to
