@@ -214,8 +214,8 @@ let
     configureFlags = (builtins.filter (f: f != "--with-arch=armv8-a") (o.configureFlags or [ ])) ++ [
       "--enable-default-pie=yes"
       "--enable-standard-branch-protection=yes"
-      "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
-      "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
+      "--with-as=${crossBinutils}/bin/aarch64-linux-gnu-as"
+      "--with-ld=${crossBinutils}/bin/aarch64-linux-gnu-ld"
     ];
     # Fourth trivial-cross collision (aarch64-linux build host only):
     # TOP-level `configure.ac:2743-2747` bails with
@@ -328,7 +328,7 @@ let
     makeFlags = (old.makeFlags or [ ]) ++ [
       "CC=${gcc14Aarch64NoFp}/bin/aarch64-linux-gnu-gcc"
       # Target objdump for the generated gnu/stubs-*.h — see x86_64's crossGlibc231X86.
-      "OBJDUMP=${crossBinutils241}/bin/aarch64-linux-gnu-objdump"
+      "OBJDUMP=${crossBinutils}/bin/aarch64-linux-gnu-objdump"
     ];
     # Disable the same nixpkgs hardenings crossGlibc231X86 drops.
     # The decisive one is zerocallusedregs (-fzero-call-used-regs): it
@@ -383,10 +383,10 @@ let
   # binutils (the one that runs on x86_64 and targets aarch64) —
   # `stdenv.cc.bintools.bintools`, NOT `binutils-unwrapped` (which is the
   # aarch64-native binutils and can't run on the build machine). Same
-  # override as crossBinutils241X86.
-  crossBinutils241 = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossAarch64; };
-  crossBintools241 = pkgsCrossAarch64.stdenv.cc.bintools.override {
-    bintools = crossBinutils241;
+  # override as crossBinutilsX86.
+  crossBinutils = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossAarch64; };
+  crossBintools = pkgsCrossAarch64.stdenv.cc.bintools.override {
+    bintools = crossBinutils;
     libc = crossGlibc231;
   };
 
@@ -420,7 +420,7 @@ let
   # enough. (On nixos-25.11 the splice happened to give the cross gcc, so
   # plain `gcc14.cc` worked there.)
   crossGuixGcc = pkgsCrossAarch64.stdenv.cc.override {
-    bintools = crossBintools241;
+    bintools = crossBintools;
     libc = crossGlibc231;
     cc = (pkgsCrossAarch64.buildPackages.gcc14.cc.override {
       libcCross = crossGlibc231;
@@ -448,8 +448,8 @@ let
         # .debug_line programs and 2.46's encoding diverges; the code
         # bytes never depended on gas here (fixed-width instructions, no
         # NOP-fill choice — see crossGuixGccX86 for the x86 story).
-        "--with-as=${crossBinutils241}/bin/aarch64-linux-gnu-as"
-        "--with-ld=${crossBinutils241}/bin/aarch64-linux-gnu-ld"
+        "--with-as=${crossBinutils}/bin/aarch64-linux-gnu-as"
+        "--with-ld=${crossBinutils}/bin/aarch64-linux-gnu-ld"
       ];
       # gcc-debug-canon-prefix-map.patch: needed at the v32.x branch-off for
       # canonDepends (see releaseArgsAarch64) — same as x86_64/riscv64/armhf/ppc64.
@@ -488,7 +488,7 @@ let
       dontStrip = true;
       postFixup = (old.postFixup or "") + ''
         find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
-          ${crossBinutils241}/bin/aarch64-linux-gnu-objcopy \
+          ${crossBinutils}/bin/aarch64-linux-gnu-objcopy \
             --enable-deterministic-archives --strip-debug "$f"
         done
       '';

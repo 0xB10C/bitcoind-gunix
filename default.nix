@@ -149,11 +149,11 @@ in {
     dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
     tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
     signapple codesigningDarwinX86 codesigningDarwinArm64;
-  inherit (win64) mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw dependsMingw dependsNoQtMingw
+  inherit (win64) mingwGuixGcc mingwGuixGccNoFp mingwBinutils pkgsCrossMingw dependsMingw dependsNoQtMingw
     bitcoindMingwNoGui bitcoindMingwGui
     mingwCrtStdenv mingwCrt
     bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
-    nsisGcc14 nsis310 setupExeMingw codesigningMingw
+    nsisGcc14 nsis setupExeMingw codesigningMingw
     osslsigncode25;
   inherit src srcArchive;
 }

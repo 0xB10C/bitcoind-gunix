@@ -38,7 +38,7 @@ let
   # base.scm's two patches + cross-base.scm's mingw pair (windres,
   # deterministic) and --enable-compressed-debug-sections=no. The same
   # toolchain also builds the NSIS stubs (make-nsis's xbinutils).
-  mingwCrtBinutils241 = mingwBootSet.stdenv.cc.bintools.bintools.overrideAttrs (old: {
+  mingwCrtBinutils = mingwBootSet.stdenv.cc.bintools.bintools.overrideAttrs (old: {
     version = "2.44";
     src = pkgs.fetchurl {
       url = "mirror://gnu/binutils/binutils-2.44.tar.bz2";
@@ -80,14 +80,14 @@ let
     patches = mingwBootSet.buildPackages.gcc14.cc.patches;
     postPatch = builtins.replaceStrings [ "15.2.0" ] [ "14.3.0" ] (old.postPatch or "");
     configureFlags = (old.configureFlags or [ ]) ++ [
-      "--with-as=${mingwCrtBinutils241}/bin/${mingwTriple}-as"
-      "--with-ld=${mingwCrtBinutils241}/bin/${mingwTriple}-ld"
+      "--with-as=${mingwCrtBinutils}/bin/${mingwTriple}-as"
+      "--with-ld=${mingwCrtBinutils}/bin/${mingwTriple}-ld"
     ];
     # HAVE_GAS_CFI_DIRECTIVE=1 (see mingwGuixGcc) so the CRT/winpthreads
     # .debug_frame is gas-generated (CIE v1, RA col 32), matching upstream.
     preConfigure = (old.preConfigure or "") + ''
-      export OBJDUMP_FOR_TARGET=${mingwCrtBinutils241}/bin/${mingwTriple}-objdump
-      export gcc_cv_objdump=${mingwCrtBinutils241}/bin/${mingwTriple}-objdump
+      export OBJDUMP_FOR_TARGET=${mingwCrtBinutils}/bin/${mingwTriple}-objdump
+      export gcc_cv_objdump=${mingwCrtBinutils}/bin/${mingwTriple}-objdump
       export gcc_cv_as_cfi_directive=yes
       export gcc_cv_as_cfi_advance_working=yes
         export gcc_cv_as_cfi_personality_directive=yes
@@ -117,7 +117,7 @@ let
   mingwCrtStdenv =
     let
       bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
-        bintools = mingwCrtBinutils241;
+        bintools = mingwCrtBinutils;
       };
       cc241 = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
         cc = mingwCc14Unwrapped;
@@ -133,7 +133,7 @@ let
     let
       bootCrt = mingwBootSet.windows.mingw_w64;
       bintools241 = mingwBootSet.stdenvNoLibc.cc.bintools.override {
-        bintools = mingwCrtBinutils241;
+        bintools = mingwCrtBinutils;
         libc = bootCrt;
       };
       cc241 = stripMingwFpFlags (mingwBootSet.stdenvNoLibc.cc.override {
@@ -286,11 +286,11 @@ let
   # binutils 2.41 + GUIX's binutils-unaligned-default.patch (turns on
   # -muse-unaligned-vector-move by default — avoids unaligned-instruction
   # divergence). Same bundled-zlib + compressed-debug-sections override as
-  # the linux crossBinutils241X86.
+  # the linux crossBinutilsX86.
   # v32.x branch-off: GUIX's (binutils-mingw-patches (base-binutils target))
   # — a FRESH 2.46.0 origin (no guix patches) + only the unaligned patch,
   # keeping cross-binutils' mingw --enable-compressed-debug-sections=no.
-  mingwBinutils241 = pkgsCrossMingw.stdenv.cc.bintools.bintools.overrideAttrs (old: {
+  mingwBinutils = pkgsCrossMingw.stdenv.cc.bintools.bintools.overrideAttrs (old: {
     version = "2.46.0";
     src = pkgs.fetchurl {
       url = "mirror://gnu/binutils/binutils-2.46.0.tar.bz2";
@@ -315,8 +315,8 @@ let
         (old.configureFlags or [ ]))
       ++ [ "--enable-compressed-debug-sections=no" ];
   });
-  mingwBintools241 = pkgsCrossMingw.stdenv.cc.bintools.override {
-    bintools = mingwBinutils241;
+  mingwBintools = pkgsCrossMingw.stdenv.cc.bintools.override {
+    bintools = mingwBinutils;
     libc = mingwLibc;
   };
 
@@ -324,7 +324,7 @@ let
   # threads come from the overlay (threadsCross). gcc-ssa-generation.patch
   # for deterministic SSA numbering (same as every other target).
   mingwGuixGcc = pkgsCrossMingw.stdenv.cc.override {
-    bintools = mingwBintools241;
+    bintools = mingwBintools;
     libc = mingwLibc;
     cc = (pkgsCrossMingw.buildPackages.gcc14.cc.override {
       libcCross = mingwLibc;
@@ -343,8 +343,8 @@ let
         "--disable-libsanitizer"
         "--disable-lto"
         "--disable-nls"
-        "--with-as=${mingwBinutils241}/bin/${mingwTriple}-as"
-        "--with-ld=${mingwBinutils241}/bin/${mingwTriple}-ld"
+        "--with-as=${mingwBinutils}/bin/${mingwTriple}-as"
+        "--with-ld=${mingwBinutils}/bin/${mingwTriple}-ld"
       ];
       # gcc-debug-canon-prefix-map.patch: route the depends→/bitcoin rewrite
       # through NIX_DEBUG_CANON_PREFIX_MAP (malloc'd, GGC-neutral) instead of a
@@ -368,8 +368,8 @@ let
       # the check passes and .debug_frame matches upstream. (Only affects
       # .debug_frame in the .dbg, not the SEH .xdata in the stripped binary.)
       preConfigure = (old.preConfigure or "") + ''
-        export OBJDUMP_FOR_TARGET=${mingwBinutils241}/bin/${mingwTriple}-objdump
-        export gcc_cv_objdump=${mingwBinutils241}/bin/${mingwTriple}-objdump
+        export OBJDUMP_FOR_TARGET=${mingwBinutils}/bin/${mingwTriple}-objdump
+        export gcc_cv_objdump=${mingwBinutils}/bin/${mingwTriple}-objdump
         export gcc_cv_as_cfi_directive=yes
         export gcc_cv_as_cfi_advance_working=yes
         export gcc_cv_as_cfi_personality_directive=yes
@@ -395,7 +395,7 @@ let
       # *-chk.c CUs in the .dbg that GUIX's stripped libssp lacks.
       postFixup = (old.postFixup or "") + ''
         find $out \( -name 'libstdc++*.a' -o -name 'libsupc++*.a' -o -name 'libssp*.a' \) | while read -r f; do
-          ${mingwBinutils241}/bin/${mingwTriple}-objcopy \
+          ${mingwBinutils}/bin/${mingwTriple}-objcopy \
             --enable-deterministic-archives --strip-debug "$f"
         done
       '';
@@ -475,7 +475,7 @@ let
     noGui = bitcoindMingwNoGui;
     gui = bitcoindMingwGui;
     crossInputs = mingwCrossInputsNoFp;
-    nsis = nsis310;
+    inherit nsis;
     pname = "bitcoin-win64-packaged";
   };
   # The install tree package.sh split the debug info out of (8 .exe + 8
@@ -510,13 +510,13 @@ let
   #             plain: none of bitcoin's gcc flags/patches, gcc's default
   #             (win32) thread model;
   #   xbinutils (cross-binutils triplet) — 2.44 + guix's patches, i.e.
-  #             exactly mingwCrtBinutils241 above;
+  #             exactly mingwCrtBinutils above;
   #   xlibc     (cross-libc triplet) — mingw-w64 13.0.0 msvcrt, no
   #             winpthreads, built by the nolibc gcc-14 — i.e. mingwCrt.
   # (The v31 pin used gcc-11 + mingw-w64 12.0.0 here, which needed a whole
   # nixos-24.05 side-chain; that is gone.)
   nsisBintools = pkgsCrossMingw.stdenv.cc.bintools.override {
-    bintools = mingwCrtBinutils241;
+    bintools = mingwCrtBinutils;
     libc = mingwCrt;
   };
   nsisGcc14 = stripMingwFpFlags (pkgsCrossMingw.stdenv.cc.override {
@@ -532,14 +532,14 @@ let
       # export table + .reloc section upstream's stub lacks (every other
       # section was identical) — and shifts the whole installer payload.
       configureFlags = (builtins.filter (f: f != "--enable-default-pie") (old.configureFlags or [ ])) ++ [
-        "--with-as=${mingwCrtBinutils241}/bin/${mingwTriple}-as"
-        "--with-ld=${mingwCrtBinutils241}/bin/${mingwTriple}-ld"
+        "--with-as=${mingwCrtBinutils}/bin/${mingwTriple}-as"
+        "--with-ld=${mingwCrtBinutils}/bin/${mingwTriple}-ld"
       ];
     });
   });
 
   # Attr name kept (default.nix / flake outputs); it is NSIS 3.11 now.
-  nsis310 = pkgs.callPackage ./nsis-toolchain.nix {
+  nsis = pkgs.callPackage ./nsis-toolchain.nix {
     nsisCC = nsisGcc14;
     mingwInclude = "${mingwCrt.dev}/include";
     mingwLib = "${mingwCrt}/lib";
@@ -572,11 +572,11 @@ let
     expectedZipSha256 = upstreamSha256 "bitcoin-${version}-win64.zip";
   };
 in {
-  inherit mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw
+  inherit mingwGuixGcc mingwGuixGccNoFp mingwBinutils pkgsCrossMingw
     dependsMingw dependsNoQtMingw bitcoindMingwNoGui bitcoindMingwGui
     mingwCrtStdenv mingwCrt
     bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
-    nsisGcc14 nsis310 setupExeMingw codesigningMingw
+    nsisGcc14 nsis setupExeMingw codesigningMingw
     osslsigncode25;
 } // pkgs.lib.optionalAttrs (detachedSigs != null) {
   # Only wired up when there are detached signatures to apply — see the

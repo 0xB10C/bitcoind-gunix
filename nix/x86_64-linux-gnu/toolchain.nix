@@ -17,7 +17,7 @@ let
   };
 
   # x86_64-linux-gnu cross binutils 2.41 — same override as the aarch64
-  # crossBinutils241: take the build-host cross binutils (runs on the build
+  # crossBinutils: take the build-host cross binutils (runs on the build
   # machine, emits/targets x86_64-linux-gnu) and downgrade it to GUIX's 2.41.
   # Match GUIX's binutils compression config (gnu/packages/base.scm):
   # --enable-compressed-debug-sections=all makes gas/ld/objcopy default
@@ -29,7 +29,7 @@ let
   # (identical 2.41 tarball ⇒ identical compressed bytes).
   # (Name kept for diff-minimality; since the v32.x branch-off GUIX's
   # manifest_build.scm pins binutils 2.46.0 — see cross-binutils-246.nix.)
-  crossBinutils241X86 = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
+  crossBinutilsX86 = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
 
   # Stock cross gcc14 wrapper, adjusted on two axes, used as
   # crossGlibc231X86's forced CC. glibc's statically-linked members carry
@@ -60,8 +60,8 @@ let
   gcc14X86NoFpCC = pkgsCrossX86.buildPackages.gcc14.cc.overrideAttrs (o: {
     configureFlags = (o.configureFlags or [ ]) ++ [
       "--enable-default-pie=yes"
-      "--with-as=${crossBinutils241X86}/bin/x86_64-linux-gnu-as"
-      "--with-ld=${crossBinutils241X86}/bin/x86_64-linux-gnu-ld"
+      "--with-as=${crossBinutilsX86}/bin/x86_64-linux-gnu-as"
+      "--with-ld=${crossBinutilsX86}/bin/x86_64-linux-gnu-ld"
     ];
   });
   gcc14X86NoFp = (pkgsCrossX86.buildPackages.gcc14.override {
@@ -166,7 +166,7 @@ let
       # `objdump` that cannot read target objects, so the generated
       # gnu/stubs-*.h came out with no __stub_* macros. GUIX puts the target
       # binutils first on PATH for the same lookup (cross-base.scm).
-      "OBJDUMP=${crossBinutils241X86}/bin/x86_64-linux-gnu-objdump"
+      "OBJDUMP=${crossBinutilsX86}/bin/x86_64-linux-gnu-objdump"
     ];
     hardeningDisable = [
       "zerocallusedregs" "strictoverflow" "stackprotector"
@@ -219,8 +219,8 @@ let
     '';
   });
 
-  crossBintools241X86 = pkgsCrossX86.stdenv.cc.bintools.override {
-    bintools = crossBinutils241X86;
+  crossBintoolsX86 = pkgsCrossX86.stdenv.cc.bintools.override {
+    bintools = crossBinutilsX86;
     libc = crossGlibc231X86;
   };
 
@@ -245,7 +245,7 @@ let
   #   without it the final link relaxes libstdc++'s _S_timezones GOT
   #   accesses that upstream keeps.
   crossGuixGccX86 = pkgsCrossX86.stdenv.cc.override {
-    bintools = crossBintools241X86;
+    bintools = crossBintoolsX86;
     libc = crossGlibc231X86;
     cc = (pkgsCrossX86.buildPackages.gcc14.cc.override {
       libcCross = crossGlibc231X86;
@@ -265,8 +265,8 @@ let
         "--disable-lto"
         "--disable-nls"
         "--disable-tm-clone-registry"
-        "--with-as=${crossBinutils241X86}/bin/x86_64-linux-gnu-as"
-        "--with-ld=${crossBinutils241X86}/bin/x86_64-linux-gnu-ld"
+        "--with-as=${crossBinutilsX86}/bin/x86_64-linux-gnu-as"
+        "--with-ld=${crossBinutilsX86}/bin/x86_64-linux-gnu-ld"
       ];
       # rc1: canon-prefix-map patch lets release.nix route the depends
       # rewrite through NIX_DEBUG_CANON_PREFIX_MAP (env, malloc'd, GGC-
@@ -323,7 +323,7 @@ let
       dontStrip = true;
       postFixup = (old.postFixup or "") + ''
         find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
-          ${crossBinutils241X86}/bin/x86_64-linux-gnu-objcopy \
+          ${crossBinutilsX86}/bin/x86_64-linux-gnu-objcopy \
             --enable-deterministic-archives --strip-debug "$f"
         done
       '';

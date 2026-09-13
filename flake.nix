@@ -41,11 +41,11 @@
             tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
             signapple
             codesigningDarwinX86 codesigningDarwinArm64
-            mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw dependsNoQtMingw
+            mingwGuixGcc mingwGuixGccNoFp mingwBinutils dependsMingw dependsNoQtMingw
             bitcoindMingwNoGui bitcoindMingwGui
             mingwCrtStdenv mingwCrt
             bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
-            nsisGcc14 nsis310 setupExeMingw codesigningMingw
+            nsisGcc14 nsis setupExeMingw codesigningMingw
             osslsigncode25;
           # No SHA256SUMS aggregator at the branch-off commit (nothing to
           # diff it against yet) — the x86_64 release tarball is the

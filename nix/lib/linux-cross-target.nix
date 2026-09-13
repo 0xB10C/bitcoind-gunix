@@ -90,8 +90,8 @@
       gcc14NoFpCC = pkgsCross.buildPackages.gcc14.cc.overrideAttrs (o: {
         configureFlags = (o.configureFlags or [ ]) ++ [
           "--enable-default-pie=yes"
-          "--with-as=${crossBinutils241'}/bin/${triple}-as"
-          "--with-ld=${crossBinutils241'}/bin/${triple}-ld"
+          "--with-as=${crossBinutils'}/bin/${triple}-as"
+          "--with-ld=${crossBinutils'}/bin/${triple}-ld"
         ] ++ gccArchFlags;
       });
       gcc14NoFp = (pkgsCross.buildPackages.gcc14.override {
@@ -152,7 +152,7 @@
           # 11 missing armhf __stub_* macros alone flipped a var-tracking list
           # in index/base.cpp (every armhf .dbg). GUIX puts the target
           # binutils first on PATH for the same lookup (cross-base.scm).
-          "OBJDUMP=${crossBinutils241'}/bin/${triple}-objdump"
+          "OBJDUMP=${crossBinutils'}/bin/${triple}-objdump"
         ];
         hardeningDisable = [
           "zerocallusedregs" "strictoverflow" "stackprotector"
@@ -191,14 +191,14 @@
           for f in ${if glibcStripSharedFiles == null then "$out/lib/*.so*" else pkgs.lib.concatMapStringsSep " " (n: "$(readlink -f $out/lib/${n})") glibcStripSharedFiles}; do
             [ -L "$f" ] && continue
             head -c4 "$f" | grep -q ELF || continue
-            ${crossBinutils241'}/bin/${triple}-objcopy ${pkgs.lib.concatMapStringsSep " " (s: "--remove-section=${s}") glibcStripSharedSections} "$f"
+            ${crossBinutils'}/bin/${triple}-objcopy ${pkgs.lib.concatMapStringsSep " " (s: "--remove-section=${s}") glibcStripSharedSections} "$f"
           done
         '';
       });
 
-      crossBinutils241' = import ./cross-binutils-246.nix { inherit pkgs pkgsCross; };
-      crossBintools241' = pkgsCross.stdenv.cc.bintools.override {
-        bintools = crossBinutils241';
+      crossBinutils' = import ./cross-binutils-246.nix { inherit pkgs pkgsCross; };
+      crossBintools' = pkgsCross.stdenv.cc.bintools.override {
+        bintools = crossBinutils';
         libc = crossGlibc231';
       };
 
@@ -207,7 +207,7 @@
       # (aarch64-only), no --enable-cet (x86-only), no
       # -Wa,-mrelax-relocations (GOTPCRELX is x86-only).
       crossGuixGcc' = pkgsCross.stdenv.cc.override {
-        bintools = crossBintools241';
+        bintools = crossBintools';
         libc = crossGlibc231';
         cc = (pkgsCross.buildPackages.gcc14.cc.override {
           libcCross = crossGlibc231';
@@ -225,8 +225,8 @@
             "--disable-lto"
             "--disable-nls"
             "--disable-tm-clone-registry"
-            "--with-as=${crossBinutils241'}/bin/${triple}-as"
-            "--with-ld=${crossBinutils241'}/bin/${triple}-ld"
+            "--with-as=${crossBinutils'}/bin/${triple}-as"
+            "--with-ld=${crossBinutils'}/bin/${triple}-ld"
           ] ++ gccArchFlags;
           patches = (old.patches or [ ]) ++ [ ../patches/gcc-ssa-generation.patch ] ++ gccExtraPatches;
           nativeBuildInputs = gccNativeInputs ++ (old.nativeBuildInputs or [ ]);
@@ -242,7 +242,7 @@
           dontStrip = true;
           postFixup = (old.postFixup or "") + ''
             find $out -name 'libstdc++*.a' -o -name 'libsupc++*.a' | while read -r f; do
-              ${crossBinutils241'}/bin/${triple}-objcopy \
+              ${crossBinutils'}/bin/${triple}-objcopy \
                 --enable-deterministic-archives --strip-debug "$f"
             done
           '';
