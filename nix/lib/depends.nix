@@ -37,6 +37,10 @@
 # the generated toolchain.cmake stays valid for the later bitcoind build.
 , darwinSdk ? null
 , runCommand
+, writeShellScript
+# darwin: the NATIVE (build-machine) compiler for depends' native_* packages
+# — see darwinBuildCC below.
+, llvmPackages_19
 }:
 
 let
@@ -44,6 +48,27 @@ let
 
   isDarwin = lib.hasInfix "-apple-darwin" hostTriple;
   isMingw = lib.hasInfix "mingw" hostTriple;
+
+  # darwin native packages are built with clang + libc++, like guix's
+  # setup.sh `llvm_toolchain` (build_macos*.sh pass its build_CC/build_CXX
+  # on the depends make line; linux/mingw use `gcc_toolchain` = gcc +
+  # libstdc++, which is what our gcc14Stdenv already is). Load-bearing: rcc
+  # (native_qt) sorts a qrc directory's children by qt_hash with std::sort,
+  # and `:/translations/he` and `…/gu` collide (qt_hash 0x6e5) — libc++'s
+  # and libstdc++'s sort order those ties differently, which swapped two
+  # rcc tree records in qrc_bitcoin_locale.cpp → 20 bytes of __TEXT,__const
+  # (+ the LC_UUID) in bitcoin-qt/bitcoin-gui. depends' build_LDFLAGS from
+  # the environment is overwritten by builders/default.mk, so guix's
+  # `-L${LIB_CXX}/lib -Wl,-rpath,…` travels with the compiler command
+  # here (makeFlags values cannot contain spaces, hence the scripts).
+  libcxxClang = llvmPackages_19.libcxxClang;
+  libcxxLib = "${llvmPackages_19.libcxx}/lib";
+  darwinBuildCC = writeShellScript "build-clang" ''
+    exec ${libcxxClang}/bin/clang "$@"
+  '';
+  darwinBuildCXX = writeShellScript "build-clang++" ''
+    exec ${libcxxClang}/bin/clang++ -stdlib=libc++ -L${libcxxLib} -Wl,-rpath,${libcxxLib} "$@"
+  '';
 
   # GUIX build.sh:81 exports LIBRARY_PATH=$NATIVE_GCC/lib for the whole
   # mingw DEPENDS build ("Required for native packages"). NATIVE_GCC is
@@ -60,34 +85,6 @@ let
     done
     for f in ${gcc14Stdenv.cc.libc}/lib/*; do
       ln -sfn "$f" "$out/lib/$(basename "$f")"
-    done
-  '';
-
-  # The LIBRARY_PATH dir for the darwin depends build (see the env block
-  # below for why LIBRARY_PATH is set at all). GUIX points it at ONE dir:
-  # $NATIVE_GCC/lib, the gcc-toolchain UNION of gcc's and glibc's lib/.
-  # We can't use our gcc/glibc lib dirs raw: nixpkgs' glibc additionally
-  # installs unversioned COMPAT SYMLINKS for the libraries glibc 2.34
-  # merged into libc (libpthread.so -> libpthread.so.0 etc.) which
-  # vanilla glibc — GUIX's — does not ship. Those links point at ELF
-  # stub shared objects, so any darwin target link passing -lpthread
-  # (capnp's tools via CMake Threads) finds the ELF and ld64.lld hard-
-  # errors ("unhandled file type"), while in GUIX the same -lpthread
-  # falls through to the SDK's tbd. Build the union minus exactly those
-  # nixpkgs-only compat links; everything vanilla glibc ships (incl. the
-  # load-bearing ASCII libc.so linker script that fails capnp's -lc
-  # fibers check) stays.
-  darwinLibraryPathDir = runCommand "guix-gcc-toolchain-lib-union" { } ''
-    mkdir -p $out/lib
-    for f in ${gcc14Stdenv.cc.cc.lib}/lib/*; do
-      ln -s "$f" "$out/lib/$(basename "$f")"
-    done
-    for f in ${gcc14Stdenv.cc.libc}/lib/*; do
-      b=$(basename "$f")
-      case "$b" in
-        libpthread.so|librt.so|libdl.so|libutil.so|libanl.so) continue ;;
-      esac
-      ln -sfn "$f" "$out/lib/$b"
     done
   '';
 
@@ -410,7 +407,11 @@ gcc14Stdenv.mkDerivation (rec {
     # depends Makefile errors out early if the extracted SDK dir is
     # missing. GUIX mounts it at depends/SDKs (see guix-build); we point
     # SDK_PATH at the extracted-SDK store path instead.
-    ++ lib.optionals isDarwin [ "SDK_PATH=${darwinSdk}" ];
+    ++ lib.optionals isDarwin [
+      "SDK_PATH=${darwinSdk}"
+      "build_CC=${darwinBuildCC}"
+      "build_CXX=${darwinBuildCXX}"
+    ];
 
   # Override the nixpkgs gcc-wrapper's `-fno-omit-frame-pointer
   # -mno-omit-leaf-frame-pointer` (set in cc-cflags-before) so depends
@@ -437,24 +438,6 @@ gcc14Stdenv.mkDerivation (rec {
        else if lib.hasPrefix "x86_64" hostTriple then "-fomit-frame-pointer -momit-leaf-frame-pointer"
        else "-fomit-frame-pointer")
       + " -pipe";
-  } // lib.optionalAttrs isDarwin {
-    # GUIX build.sh:80 exports LIBRARY_PATH=$NATIVE_GCC/lib for the whole
-    # darwin DEPENDS build ("Required for native packages"; build.sh
-    # unsets it again before the bitcoin build). NATIVE_GCC is GUIX's
-    # gcc-toolchain — a union of gcc AND glibc (commencement.scm
-    # make-gcc-toolchain), so its lib/ contains glibc's ASCII linker
-    # scripts (libc.so = "GROUP(...)"). clang forwards LIBRARY_PATH
-    # entries to the TARGET link, where ld64.lld chokes on the ELF/ASCII
-    # libc.so ("unhandled file type") — which makes capnp's
-    # check_library_exists(c makecontext …) FAIL in GUIX's container and
-    # turns kj fibers OFF (KJ_USE_FIBERS=0). Without this, our `-lc`
-    # check resolves against the SDK's libc.tbd, fibers come out ON, and
-    # bitcoin-node/bitcoin-gui/test_bitcoin gain ~4.4 KB of fiber code +
-    # getcontext/setcontext/makecontext/mprotect imports that upstream's
-    # binaries don't have (verified). Mirror the env as ONE union dir
-    # like GUIX's (see darwinLibraryPathDir above for why the raw
-    # gcc/glibc lib dirs won't do).
-    LIBRARY_PATH = "${darwinLibraryPathDir}/lib";
   } // lib.optionalAttrs isMingw {
     # build.sh:81 — same LIBRARY_PATH export for mingw native packages
     # (full gcc+glibc union; see nativeLibraryPathDir).
@@ -578,33 +561,11 @@ gcc14Stdenv.mkDerivation (rec {
     sed -i 's|^\$(package)_cmake_opts += -DQT_NO_APPLE_SDK_MAX_VERSION_CHECK=ON$|&\n$(package)_cmake_opts += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
       packages/qt.mk
     grep -q 'CMAKE_SYSTEM_IGNORE_PATH' packages/qt.mk || { echo "qt.mk ignore-path sed failed"; exit 1; }
-
-    # qtbase_plugins_cocoa.patch appends, to qtbase's cocoa plugin
-    # CMakeLists.txt:
-    #   if(CMAKE_VERSION VERSION_LESS "3.25" AND NOT QT_FEATURE_sessionmanager)
-    #       set_target_properties(QCocoaIntegrationPlugin PROPERTIES
-    #           DISABLE_PRECOMPILE_HEADERS ON)
-    #       endif()
-    # bitcoin's qt.mk disables sessionmanager UNCONDITIONALLY
-    # (-no-feature-sessionmanager is in the shared $(package)_config_opts,
-    # not just _linux/_darwin), so QT_FEATURE_sessionmanager is OFF on every
-    # host and this guard reduces to CMAKE_VERSION VERSION_LESS "3.25". GUIX
-    # builds with cmake-minimal 3.24.2 (manifest.scm "Build tools" — the one
-    # cmake used for every host's native_qt/qt), so the guard fires there:
-    # QCocoaIntegrationPlugin (qnsview.mm + the rest of libqcocoa.a) is built
-    # WITHOUT a precompiled header. nixpkgs' cmake is >=3.25, so the guard
-    # never fires for us and PCH stays at Qt's default (enabled). PCH usage
-    # doesn't change qnsview.mm's emitted .text/.data (verified
-    # byte-identical to upstream) but shifts clang's internal
-    # GCC_except_table/_OBJC_SELECTOR_REFERENCES_/_OBJC_CLASSLIST_REFERENCES_
-    # counters by a small constant — the sole remaining divergence (and the
-    # only reason bitcoin-qt/bitcoin-gui's LC_UUID, an xxh3 of the unstripped
-    # image, didn't match). Drop the version guard so PCH is disabled
-    # unconditionally for this target, like GUIX's cmake 3.24.2 does.
-    cat >> packages/qt.mk <<'EOF'
-$(package)_preprocess_cmds += && sed -i 's/CMAKE_VERSION VERSION_LESS "3.25" AND //' qtbase/src/plugins/platforms/cocoa/CMakeLists.txt
-EOF
-    grep -q 'qtbase/src/plugins/platforms/cocoa/CMakeLists.txt' packages/qt.mk || { echo "qt.mk cocoa PCH sed failed"; exit 1; }
+    # (The former qtbase cocoa `CMAKE_VERSION VERSION_LESS "3.25"` PCH-guard
+    # sed is gone: GUIX now builds with cmake-minimal 3.31, so upstream's
+    # guard no longer fires there either and PCH stays enabled on both
+    # sides. Likewise the darwin LIBRARY_PATH export: setup.sh's
+    # llvm_toolchain no longer sets one, so kj fibers are ON upstream.)
   '';
 } // lib.optionalAttrs isMingw {
   # mingw: same BUILD-glibc find_library leak as darwin. In the Nix sandbox
