@@ -13,18 +13,12 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# At the v32.x branch-off there is no upstream SHA256SUMS to gate against:
-# the branch-off commit is not a release, so bitcoin-core/guix.sigs has no
-# attestation for it. The checked-in noncodesigned.SHA256SUMS /
-# all.SHA256SUMS still hold v31.1's hashes, and none of those filenames
-# matches a bitcoin-<short12>-… artifact, so every derivation's byte-match
-# gate resolves to "no upstream gate" and each build PRINTS the sha256 of
-# what it produced instead. The print-hashes job at the end collects every
-# artifact hash in one place to diff against a local guix build of the same
-# commit. Updating the SHA256SUMS file with that build's hashes turns all
-# the nix gates back on by itself; the per-job `Verify …` steps and the
-# build-sha256sums aggregator job that used to re-assert them externally
-# can be restored from git history at commit 4599977e9723.
+# The v32.x branch-off commit is not a release, so bitcoin-core/guix.sigs
+# has no attestation for it: the checked-in noncodesigned.SHA256SUMS holds
+# the hashes of a local guix build of the same commit. Every artifact
+# derivation gates its own sha256 against that file, so a mismatch fails the
+# nix build and with it the job. The print-hashes job at the end lists all
+# 20 artifact hashes in one place.
 jobs:
   # This workflow contains a single job called "build"
   build:
@@ -259,17 +253,12 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarball -o result-tarball --print-build-logs
 
-  # NOTE (v32.x branch-off): there is no upstream SHA256SUMS to gate
-  # against — the branch-off commit is not a release, so guix.sigs has no
-  # attestation for it. Every `Verify … matches checked-in SHA256SUMS`
-  # step, the signed-artifact builds (no bitcoin-detached-sigs tag) and
-  # the whole `build-sha256sums` aggregator job were dropped here; each
-  # build instead PRINTS the sha256 of what it produced (the per-target
-  # nix derivations do the same for their binaries and .dbg). Compare
-  # those against a local guix build of the same commit. Once a reference
-  # noncodesigned.SHA256SUMS is checked in, restore the verify steps and
-  # the aggregator job from git history at commit 4599977e9723 — the nix
-  # gates themselves turn back on with no code change.
+  # NOTE (v32.x branch-off): the nix derivations gate every artifact
+  # against the checked-in noncodesigned.SHA256SUMS (a local guix build of
+  # this commit). The signed-artifact builds (no bitcoin-detached-sigs tag)
+  # and the build-sha256sums aggregator (it includes the unbuilt dist
+  # archive) are gone; the v31.1 versions are in git history at commit
+  # 4599977e9723. This job only prints all 20 artifact hashes together.
   print-hashes:
     runs-on: ubuntu-latest
     needs:
