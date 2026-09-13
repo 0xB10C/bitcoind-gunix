@@ -29,28 +29,6 @@ let
   ppc64Cross = mkLinuxCrossTarget {
     triple = "powerpc64-linux-gnu";
     nixpkgsPath = nixpkgsPpc64;
-    # ppc64's line tables come out of gas (.loc, DWARF v3), where gcc's
-    # file-table behavior is path-spelling-sensitive: a main file whose
-    # path matches a -fdebug-prefix-map gets a DUPLICATE file entry, and
-    # whether that duplicate appears must match upstream's per-CU
-    # situation EXACTLY (their $DISTSRC/src=. map duplicates bitcoin's
-    # src/ CUs on both sides; our extra whole-tree /build=$DISTSRC map
-    # also duplicated the cmake-build-dir mpgen-generated CUs, which
-    # upstream — building at the REAL /distsrc-base path — does not
-    # remap). The patch adds a TRANSPARENT canonical rewrite (env var
-    # NIX_DEBUG_CANON_PREFIX_MAP, applied before the maps and to the
-    # file table keys), so the build behaves as if it ran at GUIX's real
-    # path and the remaining -fdebug-prefix-map set is spelled exactly
-    # like build.sh's. See the patch header; strict no-op when unset.
-    gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
-    # With the canon rewrite active, the source-tree map must be GUIX's
-    # literal one (on the POST-canon path), not /build-based.
-    debugCanonMap = true;
-    # The depends rewrite also moves off argv onto the canon env var
-    # (second pair): same ggc-allocation root cause as armhf — ppc64's
-    # two diverging .dbg are qt CUs, full of depends/Qt headers that our
-    # argv map fired on while GUIX's environment fires none.
-    canonDepends = true;
     # Branch-off: bitcoin-gui (.text > 32 MB, so ld inserts long-branch
     # stubs) differed only in stub order. Our glibc libm.so.6/libc.so.6
     # carry a .gnu.attributes section GUIX's don't; that one extra section

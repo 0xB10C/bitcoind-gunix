@@ -25,21 +25,6 @@ let
     # build_linux.sh skips -Wl,--fatal-warnings for riscv64 only
     # (boostorg/test#345).
     fatalLinkWarnings = false;
-    # Full canon wiring like armhf/ppc64. v31.0 reproduced without it
-    # (big CUs sat below the GGC-allocation flip threshold), but
-    # v31.1rc1 trips it: bitcoind.dbg `.debug_loclists` is +129 bytes
-    # vs upstream while every other section (incl. the stripped
-    # binary) is byte-identical — the classic var-tracking
-    # representative flip caused by the depends `-ffile-prefix-map`
-    # ggc-allocating its rewrites (see CLAUDE.md armhf finding;
-    # GUIX fires no map on depends — real /bitcoin path). Route
-    # depends→/bitcoin via the canon env var so its rewrites are
-    # malloc'd (GGC-neutral), and use GUIX's literal /build→DISTSRC
-    # argv map so generated CUs (mpgen capnp, qt moc) don't dup
-    # their main-file table entry.
-    gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
-    debugCanonMap = true;
-    canonDepends = true;
     tarballSha256 = upstreamSha256 "bitcoin-${version}-riscv64-linux-gnu.tar.gz";
     debugTarballSha256 = upstreamSha256 "bitcoin-${version}-riscv64-linux-gnu-debug.tar.gz";
   };

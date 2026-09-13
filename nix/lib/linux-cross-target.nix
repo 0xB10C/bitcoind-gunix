@@ -37,7 +37,23 @@
     { triple
     , nixpkgsPath ? pkgs.path
     , gccArchFlags ? [ ]
-    , gccExtraPatches ? [ ] # extra patches for the final cross gcc only (not the glibc CC)
+    # Canon-prefix-map wiring, ON for every linux target (each one hit a
+    # case at some version). The final cross gcc always carries
+    # gcc-debug-canon-prefix-map.patch, a strict no-op unless
+    # NIX_DEBUG_CANON_PREFIX_MAP is set, and by default:
+    # - canonDepends routes the depends→/bitcoin rewrite through that env
+    #   var instead of -ffile-prefix-map. gcc ggc-allocates every argv map
+    #   rewrite that FIRES, GUIX never fires one on depends (it lives at the
+    #   real /bitcoin), and the extra allocations flip var-tracking's
+    #   loclists choice in big CUs (armhf net_processing, ppc64 qt, riscv64
+    #   bitcoind at v31.1rc1; an identity map alone reproduces the flip).
+    # - debugCanonMap routes the /build→DISTSRC rewrite through it too, so
+    #   the remaining argv map is GUIX's literal $DISTSRC/src=. . A
+    #   /build=$DISTSRC argv map also matches the cmake-build-dir GENERATED
+    #   CUs' main files (mpgen capnp, qt moc) and gives them a duplicate
+    #   file-table entry, which upstream, building at the real $DISTSRC,
+    #   never has (ppc64's gas-built DWARF v3 line tables showed it first).
+    , gccExtraPatches ? [ ] # further patches for the final cross gcc only (not the glibc CC)
     , gccNativeInputs ? [ ] # prepended to the cross gcc's build env (e.g. armhf's pinned gawk)
     , glibcPatches ? [ ]
     # Sections to remove from the installed glibc SHARED objects. ld only
@@ -54,13 +70,8 @@
     # null = every ELF lib/*.so*. armhf needs it: GUIX's ld-linux keeps the
     # section its libc/libpthread lack.
     , glibcStripSharedFiles ? null
-    , debugCanonMap ? false # route the /build→DISTSRC rewrite through the gcc canon env var (ppc64)
-    , canonDepends ? false # route the depends→/bitcoin rewrite through the canon env var too
-                           # (instead of -ffile-prefix-map): gcc ggc-allocates every FIRED argv
-                           # map rewrite, and GUIX never fires a map on depends (it lives at the
-                           # real /bitcoin) — the extra allocations flip var-tracking loclists
-                           # in big CUs (armhf net_processing, ppc64 qt). Needs gccExtraPatches
-                           # to include gcc-debug-canon-prefix-map.patch.
+    , debugCanonMap ? true # see the canon-prefix-map note above
+    , canonDepends ? true
     , extraCXXFLAGS ? ""
     , fatalLinkWarnings ? true # build_linux.sh adds -Wl,--fatal-warnings everywhere but riscv64
     , pnameSuffix
@@ -228,7 +239,7 @@
             "--with-as=${crossBinutils'}/bin/${triple}-as"
             "--with-ld=${crossBinutils'}/bin/${triple}-ld"
           ] ++ gccArchFlags;
-          patches = (old.patches or [ ]) ++ [ ../patches/gcc-ssa-generation.patch ] ++ gccExtraPatches;
+          patches = (old.patches or [ ]) ++ [ ../patches/gcc-ssa-generation.patch ../patches/gcc-debug-canon-prefix-map.patch ] ++ gccExtraPatches;
           nativeBuildInputs = gccNativeInputs ++ (old.nativeBuildInputs or [ ]);
           preBuild = (old.preBuild or "") + ''
             EXTRA_SANS_O2="''${EXTRA_FLAGS_FOR_TARGET/-O2 /}"

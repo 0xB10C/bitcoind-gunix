@@ -49,25 +49,6 @@ let
     triple = "arm-linux-gnueabihf";
     gccArchFlags = [ "--with-arch=armv7-a" "--with-mode=thumb" "--with-fpu=neon" ];
     gccNativeInputs = [ gawk530 ];
-    # Full canon wiring like ppc64 (canon patch + BOTH knobs), for the two
-    # replay-verified root causes (see CLAUDE.md):
-    # - canonDepends: the depends -ffile-prefix-map FIRING on every
-    #   depends header ggc-allocates the rewrites and flips
-    #   var-tracking's loclists representative for `it` in
-    #   net_processing.cpp (an IDENTITY map alone reproduces the flip);
-    #   GUIX fires no map on depends (real /bitcoin path, outside their
-    #   /gnu/store→/usr maps).
-    # - debugCanonMap: the /build=$DISTSRC argv map matches the
-    #   cmake-build-dir GENERATED CUs' main files (mpgen capnp, qt moc)
-    #   and duplicates their file-table entry — upstream, building at
-    #   the real $DISTSRC, never remaps them (visible as shifted
-    #   DW_AT_decl_file implicit_consts + a doubled v5 line-table file
-    #   entry in bitcoin-node/-gui/test_bitcoin/qt). With the canon
-    #   rewrite the remaining argv map is GUIX's literal
-    #   $DISTSRC/src=., which dups the src/ CUs on both sides equally.
-    gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
-    debugCanonMap = true;
-    canonDepends = true;
     # Branch-off: bitcoin-qt/-gui/-node/test_bitcoin differed only in ld's
     # stub order (Cortex-A8 erratum + long-branch veneers, named after
     # global BFD section ids). Our glibc libpthread.so.0 and libc.so.6 each
