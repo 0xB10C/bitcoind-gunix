@@ -1,5 +1,4 @@
 { pkgs ? import <nixpkgs> {}
-, pkgs2405 ? null # nixos-24.05 (for gcc 11.4.0 — the NSIS stub toolchain)
 }:
 
 let
@@ -123,7 +122,7 @@ let
   ppc64   = import ./nix/powerpc64-linux-gnu/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch upstreamSha256; };
   x86     = import ./nix/x86_64-linux-gnu/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch upstreamSha256; };
   darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
-  win64   = import ./nix/win64/toolchain.nix { inherit pkgs pkgs2405 version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
+  win64   = import ./nix/win64/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
   # The SHA256SUMS aggregators (nix/lib/sha256sums.nix) are dropped for the
   # branch-off commit, along with the ordered artifact lists they consume.

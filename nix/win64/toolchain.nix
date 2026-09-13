@@ -1,4 +1,4 @@
-{ pkgs, pkgs2405, version, src, buildSystem, sourceDateEpoch, detachedSigs, upstreamSha256 }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch, detachedSigs, upstreamSha256 }:
 
 let
   # === win64 (x86_64-w64-mingw32) cross-compile ============================

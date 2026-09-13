@@ -3,12 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    # nixos-24.05 still ships gcc11 (= 11.4.0), which 26.05 removed. Used
-    # ONLY to build the gcc 11.4.0 mingw cross for the NSIS 3.10 installer
-    # stubs — GUIX compiles those with its default cross-gcc (= gcc-11 =
-    # 11.4.0), not the bitcoin base-gcc 14.3.0. 24.05's mingw cross binutils
-    # is already 2.41 (GUIX's), so only mingw-w64 needs pinning to 12.0.0.
-    nixpkgs2405.url = "github:NixOS/nixpkgs/nixos-24.05";
   };
 
   # All toolchain construction (the GUIX-exact cross toolchains for
@@ -23,7 +17,7 @@
   # derivation gates the same upstream hashes, so a successful build on
   # ANY host proves byte-identity. (x86_64-hosted builds are the ones
   # routinely exercised; aarch64-hosted builds re-assert the same gates.)
-  outputs = { nixpkgs, nixpkgs2405, ... }:
+  outputs = { nixpkgs, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems f;
@@ -31,8 +25,7 @@
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          pkgs2405 = import nixpkgs2405 { inherit system; };
-          drvs = import ./default.nix { inherit pkgs pkgs2405; };
+          drvs = import ./default.nix { inherit pkgs; };
         in {
           inherit (drvs) depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball
             dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
