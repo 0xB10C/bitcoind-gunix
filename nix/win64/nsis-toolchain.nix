@@ -39,12 +39,12 @@ let
 in
 stdenv.mkDerivation {
   pname = "nsis";
-  version = "3.10";
+  version = "3.11";
 
   src = fetchurl {
-    url = "https://prdownloads.sourceforge.net/nsis/nsis-3.10-src.tar.bz2";
-    # GUIX's hash (base32) for nsis-3.10-src.tar.bz2.
-    sha256 = "15xj1izz3cmaw0mazsvfm8jpr132dyphlw5j0pszwimb0xilmd8i";
+    url = "https://prdownloads.sourceforge.net/nsis/nsis-3.11-src.tar.bz2";
+    # GUIX's hash for nsis-3.11-src.tar.bz2 (installers.scm at c5eee3336cc1).
+    hash = "sha256-GecgYmduvcZ8EdwDK6gLl5zb/9OIbGCwS7RCzdQB/0s=";
   };
 
   # GUIX's patch: SConstruct passes the real os.environ to the build env so

@@ -1,7 +1,7 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch, upstreamSha256 }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch, upstreamSha256 }:
 
 let
-  mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
+  mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version src buildSystem sourceDateEpoch; };
 
   # --- armhf (arm-linux-gnueabihf) cross-compile ---
   # The arm-linux-gnueabihf release. armhf-specific notes (verified
@@ -68,13 +68,8 @@ let
     gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
     debugCanonMap = true;
     canonDepends = true;
-    dynamicLinker = "/lib/ld-linux-armhf.so.3";
     extraCXXFLAGS = "-Wno-psabi";
     pnameSuffix = "armhf";
-    # Per-binary reference hashes are not published for v31.1 (upstream's
-    # noncodesigned.SHA256SUMS covers only the assembled archives, gated
-    # below); the release build prints the per-file hashes for the log.
-    expectedHashes = { };
     tarballSha256 = upstreamSha256 "bitcoin-${version}-arm-linux-gnueabihf.tar.gz";
     debugTarballSha256 = upstreamSha256 "bitcoin-${version}-arm-linux-gnueabihf-debug.tar.gz";
   };

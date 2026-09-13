@@ -1,4 +1,4 @@
-{ pkgs, pkgs2405, version, url, sha256, buildSystem, sourceDateEpoch, detachedSigs, upstreamSha256 }:
+{ pkgs, pkgs2405, version, src, buildSystem, sourceDateEpoch, detachedSigs, upstreamSha256 }:
 
 let
   # === win64 (x86_64-w64-mingw32) cross-compile ============================
@@ -33,16 +33,30 @@ let
   # (binutils-mingw-patches) gets the patch. With the patch, gas encodes
   # aligned vector moves as unaligned (movaps→movups), which diverged the CRT's
   # _FindPESectionExec etc. (ours movups 0f11, upstream movaps 0f29).
+  # v32.x branch-off (guix pin c5eee3336cc1): that UNPATCHED default is now
+  # guix's (cross-binutils "x86_64-w64-mingw32") = binutils 2.44 with
+  # base.scm's two patches + cross-base.scm's mingw pair (windres,
+  # deterministic) and --enable-compressed-debug-sections=no. The same
+  # toolchain also builds the NSIS stubs (make-nsis's xbinutils).
   mingwCrtBinutils241 = mingwBootSet.stdenv.cc.bintools.bintools.overrideAttrs (old: {
-    version = "2.41";
+    version = "2.44";
     src = pkgs.fetchurl {
-      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
-      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+      url = "mirror://gnu/binutils/binutils-2.44.tar.bz2";
+      hash = "sha256-9mOQpmH6oRfQD6suec8tydCXtCzClr8/hnfR57RS3Do=";
     };
-    patches = [ ];
+    patches = [
+      ../patches/binutils-2.41-fix-cross.patch
+      ../patches/binutils-loongson-workaround.patch
+      ../patches/binutils-cross-windres.patch
+      ../patches/binutils-mingw-w64-deterministic.patch
+    ];
+    # plain tarball has no gold/ (see lib/cross-binutils-246.nix)
+    preConfigure = builtins.replaceStrings [ " gold/Makefile.in" ] [ "" ] (old.preConfigure or "");
+    passthru = (old.passthru or { }) // { hasGold = false; };
     configureFlags =
-      (builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]))
-      ++ [ "--enable-compressed-debug-sections=all" ];
+      (builtins.filter (f: f != "--with-system-zlib" && f != "--enable-gold")
+        (old.configureFlags or [ ]))
+      ++ [ "--enable-compressed-debug-sections=no" ];
   });
   # GUIX builds the CRT/winpthreads with base-gcc 14.3.0; gcc 15 diverges from
   # 14 on the CRT (verified: crtexe.c __tmainCRTStartup is 16 B bigger under
@@ -136,17 +150,11 @@ let
     config.allowUnsupportedSystem = true;
     overlays = [
       (final: prev: {
-        # Pin mingw-w64 to GUIX's 12.0.0 (nixpkgs ships 13.0.0). The CRT
-        # (mingw_w64) and winpthreads (pthreads) both `inherit (mingw_w64_headers)
-        # version src`, so overriding the headers cascades to all three.
+        # mingw-w64: GUIX's pin (c5eee3336cc1) is 13.0.0 == nixpkgs-26.05's,
+        # so the former 12.0.0 headers override is gone. The CRT (mingw_w64)
+        # and winpthreads (pthreads) both `inherit (mingw_w64_headers)
+        # version src`.
         windows = prev.windows.overrideScope (wfinal: wprev: {
-          mingw_w64_headers = wprev.mingw_w64_headers.overrideAttrs (o: {
-            version = "12.0.0";
-            src = pkgs.fetchurl {
-              url = "mirror://sourceforge/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v12.0.0.tar.bz2";
-              hash = "sha256-zEGJiqxLbo3Vz/1zMbnZUVuRLfRCCjphK16ilVu+7S8=";
-            };
-          });
           # The mingw-w64 CRT (crt2.o etc.) and winpthreads are built by
           # nixpkgs' bootstrap cc-wrapper (crossThreadsStdenv), which injects
           # -fno-omit-frame-pointer. GUIX builds them with bare cross-gcc → -O2
@@ -175,8 +183,8 @@ let
           # the mingw makefiles), so adding our own -g would record a SECOND -g
           # in DW_AT_producer (upstream has exactly one). dontStrip keeps the
           # makefile-emitted debug info; the map rewrites its comp_dir to GUIX's.
-          mingwCrtDbgFlags = " -fdebug-prefix-map=/build/mingw-w64-v12.0.0="
-            + "/tmp/guix-build-mingw-w64-x86_64-winpthreads-12.0.0.drv-0/mingw-w64-v12.0.0"
+          mingwCrtDbgFlags = " -fdebug-prefix-map=/build/mingw-w64-v13.0.0="
+            + "/tmp/guix-build-mingw-w64-x86_64-winpthreads-13.0.0.drv-0/mingw-w64-v13.0.0"
             # gcc builtin headers (xmmintrin.h, stddef.h, …) that a few CRT/
             # winpthreads files pull resolve to the boot gcc's own
             # lib/gcc/<triple>/14.3.0/include; upstream records them as
@@ -203,7 +211,7 @@ let
           # the crt and winpthreads nixpkgs drvs unpack the full source, so
           # /build/mingw-w64-v12.0.0/mingw-w64-headers is present in each.
           mingwCrtHeaderInc =
-            let base = "/build/mingw-w64-v12.0.0/mingw-w64-headers";
+            let base = "/build/mingw-w64-v13.0.0/mingw-w64-headers";
             in " -isystem ${base}"
               + " -isystem ${base}/include"
               + " -isystem ${base}/crt"
@@ -267,7 +275,7 @@ let
   # symlinkJoin is first-wins, so listing pthreads first makes its REAL
   # pthread_time.h win, with the rest of the CRT headers/libs falling through.
   mingwLibc = pkgs.symlinkJoin {
-    name = "mingw-w64-crt-with-winpthreads-12.0.0";
+    name = "mingw-w64-crt-with-winpthreads-13.0.0";
     paths = [
       pkgsCrossMingw.windows.pthreads
       pkgsCrossMingw.windows.mingw_w64
@@ -279,13 +287,19 @@ let
   # -muse-unaligned-vector-move by default — avoids unaligned-instruction
   # divergence). Same bundled-zlib + compressed-debug-sections override as
   # the linux crossBinutils241X86.
+  # v32.x branch-off: GUIX's (binutils-mingw-patches (base-binutils target))
+  # — a FRESH 2.46.0 origin (no guix patches) + only the unaligned patch,
+  # keeping cross-binutils' mingw --enable-compressed-debug-sections=no.
   mingwBinutils241 = pkgsCrossMingw.stdenv.cc.bintools.bintools.overrideAttrs (old: {
-    version = "2.41";
+    version = "2.46.0";
     src = pkgs.fetchurl {
-      url = "mirror://gnu/binutils/binutils-2.41.tar.bz2";
-      sha256 = "sha256-pMS+wFL3uDcAJOYDieGUN38/SLVmGEGOpRBn9nqqsws=";
+      url = "mirror://gnu/binutils/binutils-2.46.0.tar.bz2";
+      hash = "sha256-DzFSYyoqnOBm8glj6btAr3z4W5tsQJ7Ykv0GduhOzRI=";
     };
     patches = [ ../patches/binutils-unaligned-default.patch ];
+    # plain tarball has no gold/ (see lib/cross-binutils-246.nix)
+    preConfigure = builtins.replaceStrings [ " gold/Makefile.in" ] [ "" ] (old.preConfigure or "");
+    passthru = (old.passthru or { }) // { hasGold = false; };
     # NO --enable-compressed-debug-sections: GUIX's mingw binutils does NOT
     # default-compress (its .obj carry plain .debug_*, verified in the local
     # guix-build). With compression ON gas emits PE .zdebug_frame$<mangled> for
@@ -297,7 +311,9 @@ let
     # match = selection preserved. (Linux targets DO compress — their .dbg are
     # SHF_COMPRESSED; PE .dbg are not, so this flag was wrong for mingw.)
     configureFlags =
-      builtins.filter (f: f != "--with-system-zlib") (old.configureFlags or [ ]);
+      (builtins.filter (f: f != "--with-system-zlib" && f != "--enable-gold")
+        (old.configureFlags or [ ]))
+      ++ [ "--enable-compressed-debug-sections=no" ];
   });
   mingwBintools241 = pkgsCrossMingw.stdenv.cc.bintools.override {
     bintools = mingwBinutils241;
@@ -319,9 +335,14 @@ let
     }).overrideAttrs (old: {
       configureFlags = (old.configureFlags or [ ]) ++ [
         "--enable-default-ssp=yes"
+        "--enable-gprofng=no"
         "--enable-host-bind-now=yes"
         "--disable-gcov"
         "--disable-libgomp"
+        # new in manifest_build.scm's mingw-w64-base-gcc at the branch-off
+        "--disable-libsanitizer"
+        "--disable-lto"
+        "--disable-nls"
         "--with-as=${mingwBinutils241}/bin/${mingwTriple}-as"
         "--with-ld=${mingwBinutils241}/bin/${mingwTriple}-ld"
       ];
@@ -402,158 +423,127 @@ let
   # bitcoind's debug info via the system include path; mapped to /usr.
   mingwCrt = pkgsCrossMingw.windows.mingw_w64;
 
-  # win64 depends tree (Qt included; no X11 — Windows Qt). Package set
-  # (depends packages.mk *_mingw32_packages): boost libevent qrencode qt
-  # sqlite zeromq capnp + native_{capnp,libmultiprocess,qt}.
+  # win64 depends trees (no X11 — Windows Qt). Package set (depends
+  # packages.mk *_mingw32_packages): boost qrencode qt sqlite zeromq capnp
+  # + native_{capnp,libmultiprocess,qt}. TWO trees, like upstream's two
+  # build passes: build_win.sh builds depends with NO_QT=1 under BASE_CACHE
+  # .../GUIX/BUILD, build_win_gui.sh the full tree under .../GUIX/GUI.
+  dependsNoQtMingw = pkgs.callPackage ../lib/depends.nix {
+    inherit version src;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = mingwTriple;
+    buildQt = false;
+    crossInputs = mingwCrossInputs;
+  };
   dependsMingw = pkgs.callPackage ../lib/depends.nix {
-    inherit version url sha256;
+    inherit version src;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = mingwTriple;
     buildQt = true;
     crossInputs = mingwCrossInputs;
   };
 
-  # Per-binary reference hashes are not published for v31.1 (upstream's
-  # noncodesigned.SHA256SUMS covers only the assembled archives, gated
-  # below); the release build prints the per-file hashes for the log.
-  mingwExpectedHashes = { };
-  bitcoindMingw = pkgs.callPackage ./release.nix {
-    inherit version url sha256;
+  # Per-binary reference hashes are not published (upstream's SHA256SUMS
+  # covers only the assembled archives); package.sh's wrapper prints every
+  # binary/.dbg hash for the log instead.
+  mingwReleaseArgs = {
+    inherit version src;
     inherit (pkgs) gcc14Stdenv;
-    depends = dependsMingw;
     crossInputs = mingwCrossInputsNoFp;
     guixGcc = mingwGuixGcc.cc;
     mingwCrt = mingwCrt;
     mingwPthreads = pkgsCrossMingw.windows.pthreads;
     hostTriple = mingwTriple;
-    pname = "bitcoind-win64";
-    expectedHashes = mingwExpectedHashes;
   };
-  # Dev variant: skip the byte-match gate (empty expectedHashes) so the
-  # binaries can be extracted and diffed against upstream during iteration.
-  bitcoindMingwNoGate = bitcoindMingw.override { expectedHashes = { }; };
+  bitcoindMingwNoGui = pkgs.callPackage ./release.nix (mingwReleaseArgs // {
+    pname = "bitcoind-win64-nogui";
+    depends = dependsNoQtMingw;
+  });
+  bitcoindMingwGui = pkgs.callPackage ./release.nix (mingwReleaseArgs // {
+    pname = "bitcoind-win64-gui";
+    depends = dependsMingw;
+    guiOnly = true;
+  });
+  # Upstream's libexec/package.sh over the merged install tree: split
+  # debug info, the two zips, the NSIS installer (via the generated
+  # build/GenerateWindowsInstaller.cmake, which is why nsis is an input)
+  # and the codesigning tarball — all four published win64 artifacts come
+  # out of this one derivation. NSIS is our GUIX-style 3.10 build.
+  packagedMingw = pkgs.callPackage ../lib/package.nix {
+    inherit version src sourceDateEpoch;
+    hostTriple = mingwTriple;
+    noGui = bitcoindMingwNoGui;
+    gui = bitcoindMingwGui;
+    crossInputs = mingwCrossInputsNoFp;
+    nsis = nsis310;
+    pname = "bitcoin-win64-packaged";
+  };
+  # The install tree package.sh split the debug info out of (8 .exe + 8
+  # .dbg), kept for per-binary diffing against a reference build.
+  bitcoindMingw = packagedMingw.installed;
+  mkArtifactMingw = args:
+    pkgs.callPackage ../lib/artifact.nix { } ({ packaged = packagedMingw; } // args);
 
-  # The published win64 .zip archives (build.sh mingw case).
-  unsignedZipMingw = pkgs.callPackage ./zip.nix {
-    inherit version url sha256 sourceDateEpoch;
-    bitcoind = bitcoindMingw;
+  unsignedZipMingw = mkArtifactMingw {
+    file = "bitcoin-${version}-win64-unsigned.zip";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-win64-unsigned.zip";
   };
-  debugZipMingw = pkgs.callPackage ./zip.nix {
-    inherit version url sha256 sourceDateEpoch;
-    bitcoind = bitcoindMingw;
-    debug = true;
+  debugZipMingw = mkArtifactMingw {
+    file = "bitcoin-${version}-win64-debug.zip";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-win64-debug.zip";
   };
-
-  # ---- NSIS 3.10 installer (win64-setup-unsigned.exe) ----------------------
-  # GUIX builds the installer with `cmake --build build -t deploy` → makensis
-  # (nsis-x86_64 3.10). The setup.exe = an NSIS STUB (the installer runtime,
-  # ~98 KB) + the LZMA-solid-packed payload (the 7 stripped .exe we already
-  # reproduce + COPYING/readme/conf/rpcauth + pixmaps). The stub is compiled
-  # by GUIX's DEFAULT cross-gcc — `(cross-gcc "x86_64-w64-mingw32")` = %xgcc =
-  # gcc-11 = 11.4.0 (its .comment reads "GCC: (GNU) 11.4.0"), NOT the bitcoin
-  # base-gcc 14.3.0 — with the default cross-binutils (2.41) and cross-libc
-  # (mingw-w64 12.0.0). 26.05 removed gcc11, so import it from 24.05 (whose
-  # mingw cross binutils is already 2.41); pin only mingw-w64 → 12.0.0.
-  #
-  # The mingw-w64 headers 12.0.0 overlay (shared by the boot set + the main
-  # import).
-  nsisHeaders12Overlay = (final: prev: {
-    windows = prev.windows.overrideScope (wfinal: wprev: {
-      mingw_w64_headers = wprev.mingw_w64_headers.overrideAttrs (o: {
-        version = "12.0.0";
-        src = pkgs.fetchurl {
-          url = "mirror://sourceforge/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v12.0.0.tar.bz2";
-          hash = "sha256-zEGJiqxLbo3Vz/1zMbnZUVuRLfRCCjphK16ilVu+7S8=";
-        };
-      });
-    });
-  });
-  # A SEPARATE clean 24.05 mingw import (only the headers overlay) — the CRT
-  # compiler comes from here so it can't form the splice cycle "the CRT's
-  # stdenv uses gcc11 whose libcCross is the CRT" (same trick as mingwBootSet).
-  nsisCrtBootSet = import pkgs2405.path {
-    localSystem = buildSystem;
-    crossSystem = { config = mingwTriple; libc = "msvcrt"; };
-    config.allowUnsupportedSystem = true;
-    overlays = [ nsisHeaders12Overlay ];
-  };
-  # gcc 11.4.0 cross stdenv for the CRT: NoFp-wrapped (GUIX's bare xgcc injects
-  # no -fno-omit-frame-pointer); 12.0.0 headers come from the boot set's libc.
-  nsisCrtStdenv = nsisCrtBootSet.overrideCC nsisCrtBootSet.stdenv
-    (stripMingwFpFlags nsisCrtBootSet.buildPackages.gcc11);
-
-  pkgsCrossMingwNsis = import pkgs2405.path {
-    localSystem = buildSystem;
-    crossSystem = { config = mingwTriple; libc = "msvcrt"; };
-    config.allowUnsupportedSystem = true;
-    overlays = [
-      nsisHeaders12Overlay
-      (final: prev: {
-        windows = prev.windows.overrideScope (wfinal: wprev: {
-          # GUIX's NSIS cross-libc is the mingw-w64 CRT built by the SAME xgcc
-          # (gcc 11.4.0), so crt2.o / libmingw32 / libmingwex (linked into the
-          # installer stub) carry "GCC 11.4.0". 24.05's default cross-gcc is
-          # 13.2.0, which would stamp the stub with 13.2.0 and diverge. Rebuild
-          # the CRT with the gcc-11.4.0 nsisCrtStdenv (from the boot set, no cycle)
-          # + GUIX's bare-gcc hardening set (same as the bitcoin CRT).
-          mingw_w64 = (wprev.mingw_w64.override {
-            stdenv = nsisCrtStdenv;
-          }).overrideAttrs (o: {
-            # 24.05's mingw_w64 recipe only adds --with-default-msvcrt=ucrt
-            # for libc=="ucrt"; for libc=="msvcrt" it adds NOTHING, relying
-            # on mingw-w64's OWN configure default — which 12.0.0 flipped to
-            # UCRT. Add 26.05's equivalent flags by hand (crt=msvcrt,
-            # x86_64 lib64-only) so the NSIS plugin DLLs (System.dll etc.)
-            # link against msvcrt.dll like GUIX's gcc-11 CRT, not UCRT.
-            configureFlags = (o.configureFlags or [ ]) ++ [
-              "--with-default-msvcrt=msvcrt"
-              "--disable-lib32"
-              "--enable-lib64"
-              "--disable-libarm64"
-              "ac_cv_prog_cc_c23=no"
-            ];
-            # 24.05's hardening set (no stackclashprotection/strictflexarrays1).
-            hardeningDisable = (o.hardeningDisable or [ ]) ++ [
-              "zerocallusedregs" "strictoverflow" "stackprotector"
-              "fortify" "fortify3" "format"
-            ];
-          });
-        });
-      })
-    ];
-  };
-  # The gcc 11.4.0 mingw cross, NoFp-wrapped: GUIX's vanilla cross-gcc doesn't
-  # inject nixpkgs' -fno-omit-frame-pointer, so strip it (x86_64 -O2 omits FP).
-  nsisGcc11 = stripMingwFpFlags pkgsCrossMingwNsis.buildPackages.gcc11;
-
-  nsis310 = pkgs.callPackage ./nsis-toolchain.nix {
-    nsisCC = nsisGcc11;
-    mingwInclude = "${pkgsCrossMingwNsis.windows.mingw_w64.dev}/include";
-    mingwLib = "${pkgsCrossMingwNsis.windows.mingw_w64}/lib";
-    hostTriple = mingwTriple;
-    # nsisCC's wrapper scripts + bash are nixos-24.05 (glibc 2.39); LD_PRELOADing
-    # 26.05's libfaketime (glibc 2.42) into them fails with a GLIBC_ABI_DT_X86_64_PLT
-    # version mismatch. Use 24.05's libfaketime for ABI compatibility.
-    libfaketime = pkgs2405.libfaketime;
-  };
-
-  setupExeMingw = pkgs.callPackage ./setup.nix {
-    inherit version url sha256 sourceDateEpoch mingwBinutils241;
-    inherit (pkgs) libfaketime;
-    bitcoind = bitcoindMingw;
-    nsis = nsis310;
-    hostTriple = mingwTriple;
+  setupExeMingw = mkArtifactMingw {
+    file = "bitcoin-${version}-win64-setup-unsigned.exe";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-win64-setup-unsigned.exe";
   };
-
-  # ---- win64-codesigning.tar.gz ---------------------------------------------
-  codesigningMingw = pkgs.callPackage ./codesigning.nix {
-    inherit version url sha256 sourceDateEpoch;
-    bitcoind = bitcoindMingw;
-    setupExe = setupExeMingw;
+  codesigningMingw = mkArtifactMingw {
+    file = "bitcoin-${version}-win64-codesigning.tar.gz";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-win64-codesigning.tar.gz";
+  };
+
+  # ---- NSIS 3.11 installer (win64-setup-unsigned.exe) ----------------------
+  # package.sh runs build/GenerateWindowsInstaller.cmake → makensis. The
+  # setup.exe = an NSIS STUB (the installer runtime) + the LZMA-solid-packed
+  # payload. GUIX's make-nsis (installers.scm at pin c5eee3336cc1, nsis 3.11)
+  # cross-compiles the stubs with its DEFAULT mingw cross toolchain:
+  #   xgcc      (cross-gcc triplet #:libc xlibc) — %xgcc = gcc-14 (14.3.0),
+  #             plain: none of bitcoin's gcc flags/patches, gcc's default
+  #             (win32) thread model;
+  #   xbinutils (cross-binutils triplet) — 2.44 + guix's patches, i.e.
+  #             exactly mingwCrtBinutils241 above;
+  #   xlibc     (cross-libc triplet) — mingw-w64 13.0.0 msvcrt, no
+  #             winpthreads, built by the nolibc gcc-14 — i.e. mingwCrt.
+  # (The v31 pin used gcc-11 + mingw-w64 12.0.0 here, which needed a whole
+  # nixos-24.05 side-chain; that is gone.)
+  nsisBintools = pkgsCrossMingw.stdenv.cc.bintools.override {
+    bintools = mingwCrtBinutils241;
+    libc = mingwCrt;
+  };
+  nsisGcc14 = stripMingwFpFlags (pkgsCrossMingw.stdenv.cc.override {
+    bintools = nsisBintools;
+    libc = mingwCrt;
+    cc = (pkgsCrossMingw.buildPackages.gcc14.cc.override {
+      libcCross = mingwCrt;
+      threadsCross = { model = "win32"; package = null; };
+    }).overrideAttrs (old: {
+      # nixpkgs configures its cross gcc with --enable-default-pie; guix's
+      # plain gcc-14 cross has no such default. A default-PIE mingw driver
+      # passes -pie to ld implicitly, which gives the NSIS stub an .edata
+      # export table + .reloc section upstream's stub lacks (every other
+      # section was identical) — and shifts the whole installer payload.
+      configureFlags = (builtins.filter (f: f != "--enable-default-pie") (old.configureFlags or [ ])) ++ [
+        "--with-as=${mingwCrtBinutils241}/bin/${mingwTriple}-as"
+        "--with-ld=${mingwCrtBinutils241}/bin/${mingwTriple}-ld"
+      ];
+    });
+  });
+
+  # Attr name kept (default.nix / flake outputs); it is NSIS 3.11 now.
+  nsis310 = pkgs.callPackage ./nsis-toolchain.nix {
+    nsisCC = nsisGcc14;
+    mingwInclude = "${mingwCrt.dev}/include";
+    mingwLib = "${mingwCrt}/lib";
+    hostTriple = mingwTriple;
   };
 
   # ---- signed win64-setup.exe + win64.zip -----------------------------------
@@ -582,10 +572,14 @@ let
     expectedZipSha256 = upstreamSha256 "bitcoin-${version}-win64.zip";
   };
 in {
-  inherit mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw dependsMingw
+  inherit mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 pkgsCrossMingw
+    dependsMingw dependsNoQtMingw bitcoindMingwNoGui bitcoindMingwGui
     mingwCrtStdenv mingwCrt
-    bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-    nsisGcc11 nsis310 setupExeMingw codesigningMingw
-    osslsigncode25 signedMingw
-    pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv;
+    bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
+    nsisGcc14 nsis310 setupExeMingw codesigningMingw
+    osslsigncode25;
+} // pkgs.lib.optionalAttrs (detachedSigs != null) {
+  # Only wired up when there are detached signatures to apply — see the
+  # detachedSigs note in default.nix.
+  inherit signedMingw;
 }

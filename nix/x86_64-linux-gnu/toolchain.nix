@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch, upstreamSha256 }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch, upstreamSha256 }:
 
 let
   # --- x86_64 cross-to-self toolchain ---
@@ -27,7 +27,9 @@ let
   # so the deflate bytes come from binutils' bundled zlib — drop
   # nixpkgs' --with-system-zlib so ours come from the same bundled code
   # (identical 2.41 tarball ⇒ identical compressed bytes).
-  crossBinutils241X86 = import ../lib/cross-binutils-241.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
+  # (Name kept for diff-minimality; since the v32.x branch-off GUIX's
+  # manifest_build.scm pins binutils 2.46.0 — see cross-binutils-246.nix.)
+  crossBinutils241X86 = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossX86; };
 
   # Stock cross gcc14 wrapper, adjusted on two axes, used as
   # crossGlibc231X86's forced CC. glibc's statically-linked members carry
@@ -87,8 +89,8 @@ let
     src = pkgs.fetchgit {
       name = "glibc-2.31";
       url = "https://sourceware.org/git/glibc.git";
-      rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
-      hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+      rev = "28eb5caf895ced5d895cb02757e109004a2d33e5";
+      hash = "sha256-qNwcD7BCXzHJvKr9m8PuJ8qkQ74KjQczRx5XHViWWR0=";
     };
     patches = [ ];
     configureFlags =
@@ -105,6 +107,8 @@ let
         "--disable-werror"
         "--disable-timezone-tools"
         "--disable-profile"
+        # manifest_build.scm (branch-off): appended after guix's own 3.2.0.
+        "--enable-kernel=3.17.0"
         # Upstream's csu/crt DW_AT_producer has NO -fpie: glibc's
         # static-pie machinery is what passes it explicitly, so GUIX's
         # build had static-pie off. The codegen stays PIE because the
@@ -253,7 +257,9 @@ let
         "--disable-libgomp"
         "--disable-libquadmath"
         "--disable-libsanitizer"
+        "--disable-lto"
         "--disable-nls"
+        "--disable-tm-clone-registry"
         "--with-as=${crossBinutils241X86}/bin/x86_64-linux-gnu-as"
         "--with-ld=${crossBinutils241X86}/bin/x86_64-linux-gnu-ld"
       ];
@@ -350,36 +356,78 @@ let
   ];
 
   # The canonical x86_64 release build, through the cross-to-self toolchain
-  # like GUIX. nix/lib/depends.nix's hostTriple already defaults to
+  # like GUIX, in upstream's TWO passes (see nix/lib/release-cross.nix):
+  # build_linux.sh with a NO_QT depends tree and -DBUILD_GUI=OFF, then
+  # build_linux_gui.sh with the full Qt tree building only bitcoin-gui +
+  # bitcoin-qt. nix/lib/depends.nix's hostTriple already defaults to
   # "x86_64-linux-gnu" (HOST= forces depends' cross-compile mode either
   # way); passing crossInputs makes the HOST packages use the prefixed
   # cross tools (the native helper tools use the plain gcc14Stdenv, exactly
   # like dependsAarch64).
+  #
+  # NOTE: this used to call a bespoke nix/x86_64-linux-gnu/release.nix.
+  # That file (and the aarch64 one) was byte-for-byte the generic
+  # nix/lib/release-cross.nix with canonDepends = true, so the two-pass
+  # rework folded both onto the shared file — see git history at
+  # 4599977e9723 for the bespoke versions.
+  dependsNoQt = pkgs.callPackage ../lib/depends.nix {
+    inherit version src;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = "x86_64-linux-gnu";
+    buildQt = false;
+    crossInputs = x86CrossInputs;
+  };
   depends = pkgs.callPackage ../lib/depends.nix {
-    inherit version url sha256;
+    inherit version src;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "x86_64-linux-gnu";
     buildQt = true;
     crossInputs = x86CrossInputs;
   };
-  bitcoind = pkgs.callPackage ./release.nix {
-    inherit version url sha256 depends;
+  releaseArgs = {
+    inherit version src;
     inherit (pkgs) gcc14Stdenv;
+    hostTriple = "x86_64-linux-gnu";
+    # Route the depends rewrite through the gcc canon mechanism instead of
+    # an argv -ffile-prefix-map: gcc ggc-allocates every fired argv map
+    # rewrite, and the depends rewrite fires on every header → flips
+    # var-tracking's loclist representative choice in blockmanager_tests'
+    # CU (test_bitcoin-only). canon rewrites are malloc'd (GGC-neutral).
+    canonDepends = true;
     crossInputs = x86CrossInputsNoFp;
     guixGcc = crossGuixGccX86.cc;
     linuxHeaders = linuxHeaders61;
   };
-  tarball = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256 sourceDateEpoch bitcoind;
+  bitcoindNoGui = pkgs.callPackage ../lib/release-cross.nix (releaseArgs // {
+    pname = "bitcoind-nogui";
+    depends = dependsNoQt;
+  });
+  bitcoindGui = pkgs.callPackage ../lib/release-cross.nix (releaseArgs // {
+    pname = "bitcoind-gui";
+    inherit depends;
+    guiOnly = true;
+  });
+  # Upstream's libexec/package.sh over the merged install tree.
+  packaged = pkgs.callPackage ../lib/package.nix {
+    inherit version src sourceDateEpoch;
+    hostTriple = "x86_64-linux-gnu";
+    noGui = bitcoindNoGui;
+    gui = bitcoindGui;
+    crossInputs = x86CrossInputsNoFp;
+    pname = "bitcoin-x86_64-packaged";
+  };
+  # The install tree package.sh split the debug info out of.
+  bitcoind = packaged.installed;
+  mkArtifact = args: pkgs.callPackage ../lib/artifact.nix { } ({ inherit packaged; } // args);
+  tarball = mkArtifact {
+    file = "bitcoin-${version}-x86_64-linux-gnu.tar.gz";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-x86_64-linux-gnu.tar.gz";
   };
-  # The separate -debug.tar.gz with the ten .dbg files — also gated.
-  debugTarball = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256 sourceDateEpoch bitcoind;
-    debug = true;
+  debugTarball = mkArtifact {
+    file = "bitcoin-${version}-x86_64-linux-gnu-debug.tar.gz";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-x86_64-linux-gnu-debug.tar.gz";
   };
 in {
-  inherit depends bitcoind tarball debugTarball
+  inherit depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball
     crossGlibc231X86 crossGuixGccX86 crossGuixGccX86NoFp;
 }

@@ -13,14 +13,18 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# Every derivation self-gates against the checked-in noncodesigned.SHA256SUMS
-# / all.SHA256SUMS (both from bitcoin-core/guix.sigs), so a successful
-# `nix build` IS the reproducibility test. The verify steps below re-assert
-# the archive hashes externally for CI-log visibility, reading the expected
-# values from the same checked-in files (single source of truth — no
-# hardcoded hashes in this workflow). Signed darwin/win64 artifacts and the
-# codesignatures archive come from all.SHA256SUMS; everything else from
-# noncodesigned.SHA256SUMS.
+# At the v32.x branch-off there is no upstream SHA256SUMS to gate against:
+# the branch-off commit is not a release, so bitcoin-core/guix.sigs has no
+# attestation for it. The checked-in noncodesigned.SHA256SUMS /
+# all.SHA256SUMS still hold v31.1's hashes, and none of those filenames
+# matches a bitcoin-<short12>-… artifact, so every derivation's byte-match
+# gate resolves to "no upstream gate" and each build PRINTS the sha256 of
+# what it produced instead. The print-hashes job at the end collects every
+# artifact hash in one place to diff against a local guix build of the same
+# commit. Updating the SHA256SUMS file with that build's hashes turns all
+# the nix gates back on by itself; the per-job `Verify …` steps and the
+# build-sha256sums aggregator job that used to re-assert them externally
+# can be restored from git history at commit 4599977e9723.
 jobs:
   # This workflow contains a single job called "build"
   build:
@@ -41,26 +45,13 @@ jobs:
         with:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-      # tarball.nix gates both archive sha256s against the checked-in
-      # noncodesigned.SHA256SUMS during the build. Building the tarballs
-      # also builds .#bitcoind (which prints the per-binary hashes — no
-      # per-binary reference hashes are published). (Building the Qt GUI
-      # makes the first build long; the Cachix cache makes subsequent
-      # runs fast.)
+      # Each archive build prints its own sha256 (ungated — see the note
+      # at the top). Building the tarballs also builds .#bitcoind, which
+      # prints the per-binary and per-.dbg hashes. Building the Qt GUI
+      # makes the first run long; the Cachix cache makes later ones fast.
       - run: nix build .#bitcoind -o result-bitcoind --print-build-logs
       - run: nix build .#tarball -o result-tarball --print-build-logs
       - run: nix build .#debugTarball -o result-debug-tarball --print-build-logs
-      - name: Verify x86_64-linux-gnu archives match checked-in noncodesigned.SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-tarball bitcoin-31.1-x86_64-linux-gnu.tar.gz
-          check result-debug-tarball bitcoin-31.1-x86_64-linux-gnu-debug.tar.gz
 
   # The aarch64 release is cross-compiled on the same x86_64 runner (no qemu —
   # the build only emits aarch64 ELFs, it never runs them). Kept as a separate
@@ -86,17 +77,6 @@ jobs:
       - run: nix build .#bitcoindAarch64 -o result-bitcoind --print-build-logs
       - run: nix build .#tarballAarch64 -o result-tarball --print-build-logs
       - run: nix build .#debugTarballAarch64 -o result-debug-tarball --print-build-logs
-      - name: Verify aarch64-linux-gnu archives match checked-in noncodesigned.SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-tarball bitcoin-31.1-aarch64-linux-gnu.tar.gz
-          check result-debug-tarball bitcoin-31.1-aarch64-linux-gnu-debug.tar.gz
 
   # The riscv64 release, cross-compiled on the same x86_64 runner — the
   # exact analog of build-aarch64 (its own riscv64 cross toolchain +
@@ -119,17 +99,6 @@ jobs:
       - run: nix build .#bitcoindRiscv64 -o result-bitcoind --print-build-logs
       - run: nix build .#tarballRiscv64 -o result-tarball --print-build-logs
       - run: nix build .#debugTarballRiscv64 -o result-debug-tarball --print-build-logs
-      - name: Verify riscv64-linux-gnu archives match checked-in noncodesigned.SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-tarball bitcoin-31.1-riscv64-linux-gnu.tar.gz
-          check result-debug-tarball bitcoin-31.1-riscv64-linux-gnu-debug.tar.gz
 
   # The armhf and powerpc64 releases. The tarball drvs gate both archive
   # sha256s internally; these jobs re-assert them externally.
@@ -150,17 +119,6 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballArmhf -o result-tarball --print-build-logs
       - run: nix build .#debugTarballArmhf -o result-debug-tarball --print-build-logs
-      - name: Verify arm-linux-gnueabihf archives match checked-in noncodesigned.SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-tarball bitcoin-31.1-arm-linux-gnueabihf.tar.gz
-          check result-debug-tarball bitcoin-31.1-arm-linux-gnueabihf-debug.tar.gz
 
   build-ppc64:
     runs-on: ubuntu-latest
@@ -179,17 +137,6 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballPpc64 -o result-tarball --print-build-logs
       - run: nix build .#debugTarballPpc64 -o result-debug-tarball --print-build-logs
-      - name: Verify powerpc64-linux-gnu archives match checked-in noncodesigned.SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename>
-            expected=$(awk -v f="$2" '$2==f{print $1}' noncodesigned.SHA256SUMS)
-            [ -n "$expected" ] || { echo "MISSING: $2 not in noncodesigned.SHA256SUMS"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-tarball bitcoin-31.1-powerpc64-linux-gnu.tar.gz
-          check result-debug-tarball bitcoin-31.1-powerpc64-linux-gnu-debug.tar.gz
 
   # The two macOS releases, cross-built on the same x86_64 runner with the
   # bare clang/lld 19.1.4 toolchain + the Xcode SDK (fetched from the public
@@ -223,22 +170,6 @@ jobs:
       - run: nix build .#tarballDarwinX86 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
-      - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
-      - name: Verify all 5 x86_64-apple-darwin artifacts match checked-in SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename> [<sums-file>]
-            sums="${3:-noncodesigned.SHA256SUMS}"
-            expected=$(awk -v f="$2" '$2==f{print $1}' "$sums")
-            [ -n "$expected" ] || { echo "MISSING: $2 not in $sums"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-unsigned-tar bitcoin-31.1-x86_64-apple-darwin-unsigned.tar.gz
-          check result-unsigned-zip bitcoin-31.1-x86_64-apple-darwin-unsigned.zip
-          check result-codesigning bitcoin-31.1-x86_64-apple-darwin-codesigning.tar.gz
-          check result-signed/bitcoin-31.1-x86_64-apple-darwin.tar.gz bitcoin-31.1-x86_64-apple-darwin.tar.gz all.SHA256SUMS
-          check result-signed/bitcoin-31.1-x86_64-apple-darwin.zip bitcoin-31.1-x86_64-apple-darwin.zip all.SHA256SUMS
 
   build-darwin-arm64:
     runs-on: ubuntu-latest
@@ -260,22 +191,6 @@ jobs:
       - run: nix build .#tarballDarwinArm64 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
-      - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
-      - name: Verify all 5 arm64-apple-darwin artifacts match checked-in SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename> [<sums-file>]
-            sums="${3:-noncodesigned.SHA256SUMS}"
-            expected=$(awk -v f="$2" '$2==f{print $1}' "$sums")
-            [ -n "$expected" ] || { echo "MISSING: $2 not in $sums"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-unsigned-tar bitcoin-31.1-arm64-apple-darwin-unsigned.tar.gz
-          check result-unsigned-zip bitcoin-31.1-arm64-apple-darwin-unsigned.zip
-          check result-codesigning bitcoin-31.1-arm64-apple-darwin-codesigning.tar.gz
-          check result-signed/bitcoin-31.1-arm64-apple-darwin.tar.gz bitcoin-31.1-arm64-apple-darwin.tar.gz all.SHA256SUMS
-          check result-signed/bitcoin-31.1-arm64-apple-darwin.zip bitcoin-31.1-arm64-apple-darwin.zip all.SHA256SUMS
 
   # win64 (x86_64-w64-mingw32). The steps build + assert all 6 published
   # archive/installer artifacts: unsigned + debug zips, NSIS installer,
@@ -301,23 +216,6 @@ jobs:
       - run: nix build .#debugZipMingw -o result-debug-zip --print-build-logs
       - run: nix build .#setupExeMingw -o result-setup-unsigned --print-build-logs
       - run: nix build .#codesigningMingw -o result-codesigning --print-build-logs
-      - run: nix build .#signedMingw -o result-signed --print-build-logs
-      - name: Verify all 6 win64 archive/installer artifacts match checked-in SHA256SUMS
-        run: |
-          check() { # <result-path> <published-filename> [<sums-file>]
-            sums="${3:-noncodesigned.SHA256SUMS}"
-            expected=$(awk -v f="$2" '$2==f{print $1}' "$sums")
-            [ -n "$expected" ] || { echo "MISSING: $2 not in $sums"; return 1; }
-            actual=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "$2"; echo "  expected: $expected"; echo "  actual:   $actual"
-            [ "$actual" = "$expected" ]
-          }
-          check result-unsigned-zip bitcoin-31.1-win64-unsigned.zip
-          check result-debug-zip bitcoin-31.1-win64-debug.zip
-          check result-setup-unsigned bitcoin-31.1-win64-setup-unsigned.exe
-          check result-codesigning bitcoin-31.1-win64-codesigning.tar.gz
-          check result-signed/bitcoin-31.1-win64-setup.exe bitcoin-31.1-win64-setup.exe all.SHA256SUMS
-          check result-signed/bitcoin-31.1-win64.zip bitcoin-31.1-win64.zip all.SHA256SUMS
 
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
@@ -344,13 +242,6 @@ jobs:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarballAarch64 -o result-tarball --print-build-logs
-      - name: Verify aarch64-on-aarch64 (cross-to-self) tarball matches checked-in noncodesigned.SHA256SUMS
-        run: |
-          expected=$(awk '$2=="bitcoin-31.1-aarch64-linux-gnu.tar.gz"{print $1}' noncodesigned.SHA256SUMS)
-          actual=$(sha256sum result-tarball | cut -d' ' -f1)
-          echo "expected: $expected"
-          echo "actual:   $actual"
-          [ -n "$expected" ] && [ "$actual" = "$expected" ]
 
   build-x86-target-on-aarch64-host:
     runs-on: ubuntu-24.04-arm
@@ -367,22 +258,19 @@ jobs:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarball -o result-tarball --print-build-logs
-      - name: Verify x86_64-from-aarch64 tarball matches checked-in noncodesigned.SHA256SUMS
-        run: |
-          expected=$(awk '$2=="bitcoin-31.1-x86_64-linux-gnu.tar.gz"{print $1}' noncodesigned.SHA256SUMS)
-          actual=$(sha256sum result-tarball | cut -d' ' -f1)
-          echo "expected: $expected"
-          echo "actual:   $actual"
-          [ -n "$expected" ] && [ "$actual" = "$expected" ]
 
-  # The aggregators — `.#noncodesignedSha256sums` and `.#sha256sums`
-  # rebuild upstream's noncodesigned.SHA256SUMS and all.SHA256SUMS from
-  # every released artifact. Each sub-derivation already self-gates
-  # against the checked-in files, and this job diffs both aggregates
-  # against them byte-for-byte — the project-wide reproducibility proof.
-  # This job depends on every per-target build job so all sub-drvs are
-  # cache hits via Cachix; the only fresh work is the aggregator files.
-  build-sha256sums:
+  # NOTE (v32.x branch-off): there is no upstream SHA256SUMS to gate
+  # against — the branch-off commit is not a release, so guix.sigs has no
+  # attestation for it. Every `Verify … matches checked-in SHA256SUMS`
+  # step, the signed-artifact builds (no bitcoin-detached-sigs tag) and
+  # the whole `build-sha256sums` aggregator job were dropped here; each
+  # build instead PRINTS the sha256 of what it produced (the per-target
+  # nix derivations do the same for their binaries and .dbg). Compare
+  # those against a local guix build of the same commit. Once a reference
+  # noncodesigned.SHA256SUMS is checked in, restore the verify steps and
+  # the aggregator job from git history at commit 4599977e9723 — the nix
+  # gates themselves turn back on with no code change.
+  print-hashes:
     runs-on: ubuntu-latest
     needs:
       - build
@@ -406,15 +294,22 @@ jobs:
         with:
           name: 0xb10c-bitcoind-gunix
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-      # The darwin unsigned tarballs build inside an unshare/userns
-      # chroot (LC_UUID byte-identity); if anything below the aggregator
-      # is a Cachix miss the rebuild needs CLONE_NEWUSER, blocked by
-      # Ubuntu 24.04+'s AppArmor unprivileged_userns_restriction.
+      # The darwin artifacts build inside an unshare/userns chroot
+      # (LC_UUID byte-identity); a Cachix miss here needs CLONE_NEWUSER,
+      # which Ubuntu 24.04+'s AppArmor blocks by default.
       - name: Allow unprivileged user namespaces (darwin sub-drv rebuild fallback)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: nix build .#noncodesignedSha256sums -o result-noncodesigned-sha256sums --print-build-logs
-      - name: Verify aggregator matches checked-in noncodesigned.SHA256SUMS
-        run: diff noncodesigned.SHA256SUMS result-noncodesigned-sha256sums
-      - run: nix build .#sha256sums -o result-sha256sums --print-build-logs
-      - name: Verify aggregator matches checked-in all.SHA256SUMS
-        run: diff all.SHA256SUMS result-sha256sums
+      - name: Print every artifact hash (compare against the guix reference)
+        run: |
+          set -e
+          for a in tarball debugTarball \
+                   tarballAarch64 debugTarballAarch64 \
+                   tarballRiscv64 debugTarballRiscv64 \
+                   tarballArmhf debugTarballArmhf \
+                   tarballPpc64 debugTarballPpc64 \
+                   tarballDarwinX86 zipDarwinX86 codesigningDarwinX86 \
+                   tarballDarwinArm64 zipDarwinArm64 codesigningDarwinArm64 \
+                   unsignedZipMingw debugZipMingw setupExeMingw codesigningMingw; do
+            p=$(nix build ".#$a" --no-link --print-out-paths --print-build-logs)
+            printf '%s  %s\n' "$(sha256sum "$p" | cut -d' ' -f1)" "$(basename "$p")"
+          done

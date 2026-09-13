@@ -1,7 +1,7 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch, upstreamSha256 }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch, upstreamSha256 }:
 
 let
-  mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
+  mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version src buildSystem sourceDateEpoch; };
 
   # --- powerpc64 (big-endian) cross-compile ---
   # The powerpc64-linux-gnu release. ppc64-specific notes (verified
@@ -51,12 +51,7 @@ let
     # two diverging .dbg are qt CUs, full of depends/Qt headers that our
     # argv map fired on while GUIX's environment fires none.
     canonDepends = true;
-    dynamicLinker = "/lib64/ld64.so.1";
     pnameSuffix = "ppc64";
-    # Per-binary reference hashes are not published for v31.1 (upstream's
-    # noncodesigned.SHA256SUMS covers only the assembled archives, gated
-    # below); the release build prints the per-file hashes for the log.
-    expectedHashes = { };
     tarballSha256 = upstreamSha256 "bitcoin-${version}-powerpc64-linux-gnu.tar.gz";
     debugTarballSha256 = upstreamSha256 "bitcoin-${version}-powerpc64-linux-gnu-debug.tar.gz";
   };

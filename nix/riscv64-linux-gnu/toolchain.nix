@@ -1,7 +1,7 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch, upstreamSha256 }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch, upstreamSha256 }:
 
 let
-  mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version url sha256 buildSystem sourceDateEpoch; };
+  mkLinuxCrossTarget = import ../lib/linux-cross-target.nix { inherit pkgs version src buildSystem sourceDateEpoch; };
 
   # --- riscv64 cross-compile ---
   # The riscv64-linux-gnu release. riscv64-specific notes, all verified
@@ -21,8 +21,10 @@ let
   riscv64Cross = mkLinuxCrossTarget {
     triple = "riscv64-linux-gnu";
     glibcPatches = [ ../patches/glibc-riscv-jumptarget.patch ];
-    dynamicLinker = "/lib/ld-linux-riscv64-lp64d.so.1";
     pnameSuffix = "riscv64";
+    # build_linux.sh skips -Wl,--fatal-warnings for riscv64 only
+    # (boostorg/test#345).
+    fatalLinkWarnings = false;
     # Full canon wiring like armhf/ppc64. v31.0 reproduced without it
     # (big CUs sat below the GGC-allocation flip threshold), but
     # v31.1rc1 trips it: bitcoind.dbg `.debug_loclists` is +129 bytes
@@ -38,10 +40,6 @@ let
     gccExtraPatches = [ ../patches/gcc-debug-canon-prefix-map.patch ];
     debugCanonMap = true;
     canonDepends = true;
-    # Per-binary reference hashes are not published for v31.1 (upstream's
-    # noncodesigned.SHA256SUMS covers only the assembled archives, gated
-    # below); the release build prints the per-file hashes for the log.
-    expectedHashes = { };
     tarballSha256 = upstreamSha256 "bitcoin-${version}-riscv64-linux-gnu.tar.gz";
     debugTarballSha256 = upstreamSha256 "bitcoin-${version}-riscv64-linux-gnu-debug.tar.gz";
   };

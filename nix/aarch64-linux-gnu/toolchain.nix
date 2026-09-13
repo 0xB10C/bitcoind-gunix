@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch, upstreamSha256 }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch, upstreamSha256 }:
 
 let
   # --- aarch64 cross-compile ---
@@ -261,8 +261,8 @@ let
     src = pkgs.fetchgit {
       name = "glibc-2.31";
       url = "https://sourceware.org/git/glibc.git";
-      rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
-      hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+      rev = "28eb5caf895ced5d895cb02757e109004a2d33e5";
+      hash = "sha256-qNwcD7BCXzHJvKr9m8PuJ8qkQ74KjQczRx5XHViWWR0=";
     };
     patches = [ ];
     configureFlags =
@@ -278,6 +278,7 @@ let
         "--disable-werror"
         "--disable-timezone-tools"
         "--disable-profile"
+        "--enable-kernel=3.17.0"
         # No -fpie in upstream's csu/crt DW_AT_producer — see
         # crossGlibc231X86. The codegen stays PIE because the forced CC is
         # default-PIE (gcc14Aarch64NoFpCC).
@@ -381,7 +382,7 @@ let
   # `stdenv.cc.bintools.bintools`, NOT `binutils-unwrapped` (which is the
   # aarch64-native binutils and can't run on the build machine). Same
   # override as crossBinutils241X86.
-  crossBinutils241 = import ../lib/cross-binutils-241.nix { inherit pkgs; pkgsCross = pkgsCrossAarch64; };
+  crossBinutils241 = import ../lib/cross-binutils-246.nix { inherit pkgs; pkgsCross = pkgsCrossAarch64; };
   crossBintools241 = pkgsCrossAarch64.stdenv.cc.bintools.override {
     bintools = crossBinutils241;
     libc = crossGlibc231;
@@ -436,7 +437,9 @@ let
         "--disable-libgomp"
         "--disable-libquadmath"
         "--disable-libsanitizer"
+        "--disable-lto"
         "--disable-nls"
+        "--disable-tm-clone-registry"
         # Re-point the baked --with-as/--with-ld at cross binutils 2.41
         # (nixpkgs bakes the 2.46 wrapper; a second --with-as appended
         # later wins). On aarch64 this is debug-only — gas generates the
@@ -523,36 +526,66 @@ let
   # libcCross above) — which makes all 10 cross-built binaries byte-match the
   # upstream aarch64 release (the dynsym GLIBC symbol versions, .text/.eh_frame
   # all line up; see CLAUDE.md's aarch64 section).
+  # Upstream's TWO build passes (see nix/lib/release-cross.nix): a NO_QT
+  # depends tree + -DBUILD_GUI=OFF for the eight non-GUI binaries, then the
+  # full Qt tree building only bitcoin-gui + bitcoin-qt. The bespoke
+  # nix/aarch64-linux-gnu/release.nix this used to call was byte-for-byte
+  # the generic release-cross.nix with the aarch64 triple, so it folded
+  # onto the shared file (git history at 4599977e9723 has it).
+  dependsNoQtAarch64 = pkgs.callPackage ../lib/depends.nix {
+    inherit version src;
+    inherit (pkgs) gcc14Stdenv;
+    hostTriple = "aarch64-linux-gnu";
+    buildQt = false;
+    crossInputs = aarch64CrossInputs;
+  };
   dependsAarch64 = pkgs.callPackage ../lib/depends.nix {
-    inherit version url sha256;
+    inherit version src;
     inherit (pkgs) gcc14Stdenv;
     hostTriple = "aarch64-linux-gnu";
     buildQt = true;
     crossInputs = aarch64CrossInputs;
   };
-  bitcoindAarch64 = pkgs.callPackage ./release.nix {
-    inherit version url sha256;
+  releaseArgsAarch64 = {
+    inherit version src;
     inherit (pkgs) gcc14Stdenv;
-    depends = dependsAarch64;
+    hostTriple = "aarch64-linux-gnu";
     crossInputs = aarch64CrossInputsNoFp;
     guixGcc = crossGuixGcc.cc;
     linuxHeaders = linuxHeaders61Aarch64;
   };
-  tarballAarch64 = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256 sourceDateEpoch;
-    bitcoind = bitcoindAarch64;
-    arch = "aarch64-linux-gnu";
+  bitcoindNoGuiAarch64 = pkgs.callPackage ../lib/release-cross.nix (releaseArgsAarch64 // {
+    pname = "bitcoind-aarch64-nogui";
+    depends = dependsNoQtAarch64;
+  });
+  bitcoindGuiAarch64 = pkgs.callPackage ../lib/release-cross.nix (releaseArgsAarch64 // {
+    pname = "bitcoind-aarch64-gui";
+    depends = dependsAarch64;
+    guiOnly = true;
+  });
+  # Upstream's libexec/package.sh over the merged install tree.
+  packagedAarch64 = pkgs.callPackage ../lib/package.nix {
+    inherit version src sourceDateEpoch;
+    hostTriple = "aarch64-linux-gnu";
+    noGui = bitcoindNoGuiAarch64;
+    gui = bitcoindGuiAarch64;
+    crossInputs = aarch64CrossInputsNoFp;
+    pname = "bitcoin-aarch64-packaged";
+  };
+  bitcoindAarch64 = packagedAarch64.installed;
+  mkArtifactAarch64 = args:
+    pkgs.callPackage ../lib/artifact.nix { } ({ packaged = packagedAarch64; } // args);
+  tarballAarch64 = mkArtifactAarch64 {
+    file = "bitcoin-${version}-aarch64-linux-gnu.tar.gz";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-aarch64-linux-gnu.tar.gz";
   };
-  debugTarballAarch64 = pkgs.callPackage ../lib/tarball.nix {
-    inherit version url sha256 sourceDateEpoch;
-    bitcoind = bitcoindAarch64;
-    arch = "aarch64-linux-gnu";
-    debug = true;
+  debugTarballAarch64 = mkArtifactAarch64 {
+    file = "bitcoin-${version}-aarch64-linux-gnu-debug.tar.gz";
     expectedSha256 = upstreamSha256 "bitcoin-${version}-aarch64-linux-gnu-debug.tar.gz";
   };
 
 in {
-  inherit dependsAarch64 bitcoindAarch64 tarballAarch64 debugTarballAarch64
+  inherit dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
+    bitcoindNoGuiAarch64 bitcoindGuiAarch64 tarballAarch64 debugTarballAarch64
     crossGlibc231 crossGuixGcc crossGuixGccNoFp;
 }

@@ -7,15 +7,14 @@
 , libtool
 , autoconf
 , automake
-, cmake # needed by boost, libevent, zeromq, capnp
+, cmake # needed by boost, zeromq, capnp
 , which # invoked by upstream depends build scripts
 , bison # libxkbcommon generates its parser with bison/yacc
 , flex # companion lexer generator for the Qt/X11 deps
 , gperf # fontconfig regenerates a gperf hash header
 #
 , version
-, url
-, sha256
+, src
 # Target triple for the depends build. Native x86_64 by default; set to
 # e.g. "aarch64-linux-gnu" to cross-compile (depends then uses
 # <hostTriple>-gcc, which crossInputs must provide on PATH).
@@ -116,14 +115,9 @@ let
   # make the depends sources avaliable beforehand.
   dependsSources = {
     boost = {
-      urlPrefix = "https://github.com/boostorg/boost/releases/download/boost-1.90.0";
-      file = "boost-1.90.0-cmake.tar.gz";
-      sha256 = "913ca43d49e93d1b158c9862009add1518a4c665e7853b349a6492d158b036d4";
-    };
-    libevent = {
-      urlPrefix = "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable";
-      file = "libevent-2.1.12-stable.tar.gz";
-      sha256 = "92e6de1be9ec176428fd2367677e61ceffc2ee1cb119035037a27d346b0403bb";
+      urlPrefix = "https://github.com/boostorg/boost/releases/download/boost-1.91.0-1";
+      file = "boost-1.91.0-1-cmake.tar.gz";
+      sha256 = "8a82bd11a720c70923806c36ee5c26dbd2d630c1eaa1d8fad9a7bd5529908a26";
     };
     systemtap = {
       urlPrefix = "https://sourceware.org/ftp/systemtap/releases/";
@@ -145,46 +139,46 @@ let
     # and renames it locally to `capnproto-cxx-X.Y.Z.tar.gz`.
     capnp = {
       urlPrefix = "https://capnproto.org";
-      downloadFile = "capnproto-c++-1.3.0.tar.gz";
-      file = "capnproto-cxx-1.3.0.tar.gz";
-      sha256 = "098f824a495a1a837d56ae17e07b3f721ac86f8dbaf58896a389923458522108";
+      downloadFile = "capnproto-c++-1.5.0.tar.gz";
+      file = "capnproto-cxx-1.5.0.tar.gz";
+      sha256 = "77dbc13ca82d9c87ddb4581dd49559d45b63096433d3dadea08b7f31b360a5ba";
     };
 
     # --- Qt GUI depends (for bitcoin-qt / bitcoin-gui) ---
     # Versions/hashes mirror bitcoin/depends/packages/*.mk + qt_details.mk.
     qtbase = {
-      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.3/submodules";
-      file = "qtbase-everywhere-src-6.8.3.tar.xz";
-      sha256 = "56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80";
+      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.4/submodules";
+      file = "qtbase-everywhere-opensource-src-6.8.4.tar.xz";
+      sha256 = "532dfbf3fa3cbc68fa37441ea9e81c5009da044eaecda78ffaeafd8bd125532f";
     };
     qttranslations = {
-      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.3/submodules";
-      file = "qttranslations-everywhere-src-6.8.3.tar.xz";
-      sha256 = "c3c61d79c3d8fe316a20b3617c64673ce5b5519b2e45535f49bee313152fa531";
+      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.4/submodules";
+      file = "qttranslations-everywhere-opensource-src-6.8.4.tar.xz";
+      sha256 = "33b1fd1d75598cbf54da12263957f18292c9fb01e42fcc3ab9bd2f8ac79763b7";
     };
     qttools = {
-      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.3/submodules";
-      file = "qttools-everywhere-src-6.8.3.tar.xz";
-      sha256 = "02a4e219248b94f1333df843d25763f35251c1074cdc4fb5bda67d340f8c8b3a";
+      urlPrefix = "https://download.qt.io/archive/qt/6.8/6.8.4/submodules";
+      file = "qttools-everywhere-opensource-src-6.8.4.tar.xz";
+      sha256 = "c6030ea66d7be1ca7e3b40578beb35b0f4ff4014277d8e051d3219759f6ab399";
     };
     # Qt's top-level cmake files are fetched individually from the qt5 repo
     # and staged with a "-<version>" suffix (see qt.mk fetch_file calls).
     qt-top-cmakelists = {
-      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/heads/6.8.3";
+      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/tags/v6.8.4-lts-lgpl";
       downloadFile = "CMakeLists.txt";
-      file = "CMakeLists.txt-6.8.3";
+      file = "CMakeLists.txt-6.8.4";
       sha256 = "54e9a4e554da37792446dda4f52bc308407b01a34bcc3afbad58e4e0f71fac9b";
     };
     qt-top-ecmoptionaladdsubdirectory = {
-      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/heads/6.8.3/cmake";
+      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/tags/v6.8.4-lts-lgpl/cmake";
       downloadFile = "ECMOptionalAddSubdirectory.cmake";
-      file = "ECMOptionalAddSubdirectory.cmake-6.8.3";
+      file = "ECMOptionalAddSubdirectory.cmake-6.8.4";
       sha256 = "97ee8bbfcb0a4bdcc6c1af77e467a1da0c5b386c42be2aa97d840247af5f6f70";
     };
     qt-top-qttoplevelhelpers = {
-      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/heads/6.8.3/cmake";
+      urlPrefix = "https://raw.githubusercontent.com/qt/qt5/refs/tags/v6.8.4-lts-lgpl/cmake";
       downloadFile = "QtTopLevelHelpers.cmake";
-      file = "QtTopLevelHelpers.cmake-6.8.3";
+      file = "QtTopLevelHelpers.cmake-6.8.4";
       sha256 = "e11581b2101a6836ca991817d43d49e1f6016e4e672bbc3523eaa8b3eb3b64c2";
     };
     expat = {
@@ -276,7 +270,7 @@ gcc14Stdenv.mkDerivation (rec {
   pname = "bitcoin-depends";
 
   srcs = [
-    (fetchurl { inherit url sha256; }) # Bitcoin Core
+    src # Bitcoin Core
   ];
 
   postUnpack = ''
@@ -295,13 +289,13 @@ gcc14Stdenv.mkDerivation (rec {
     cp ${../patches/zeromq-disable-tipc.patch} \
       ${dependsDir}/patches/zeromq/zeromq-disable-tipc.patch
     # Wire the new patch into zeromq's `preprocess_cmds` after the
-    # existing no_librt.patch invocation (which is the last patch in
+    # existing add_new_include.patch invocation (which is the last patch in
     # the chain and needs a `&& \` continuation added).
-    sed -i 's|^  patch -p1 < \$(\$(package)_patch_dir)/no_librt\.patch$|  patch -p1 < $($(package)_patch_dir)/no_librt.patch \&\& \\\n  patch -p1 < $($(package)_patch_dir)/zeromq-disable-tipc.patch|' \
+    sed -i 's|^  patch -p1 < \$(\$(package)_patch_dir)/add_new_include\.patch$|  patch -p1 < $($(package)_patch_dir)/add_new_include.patch \&\& \\\n  patch -p1 < $($(package)_patch_dir)/zeromq-disable-tipc.patch|' \
       ${dependsDir}/packages/zeromq.mk
     # Register the patch with $(package)_patches so the build captures
     # its hash for caching / build-id computation.
-    sed -i '/^\$(package)_patches += no_librt\.patch$/a\$(package)_patches += zeromq-disable-tipc.patch' \
+    sed -i '/^\$(package)_patches += add_new_include\.patch$/a\$(package)_patches += zeromq-disable-tipc.patch' \
       ${dependsDir}/packages/zeromq.mk
 
     # Force ZMQ_CACHELINE_SIZE = 64 unconditionally. libzmq's
@@ -330,6 +324,11 @@ gcc14Stdenv.mkDerivation (rec {
       ${dependsDir}/packages/zeromq.mk
     sed -i '/^\$(package)_patches += zeromq-disable-tipc\.patch$/a\$(package)_patches += zeromq-force-cacheline-64.patch' \
       ${dependsDir}/packages/zeromq.mk
+    # Both zeromq seds anchor on upstream text (the LAST entry of
+    # preprocess_cmds / _patches). Fail loudly if upstream adds another
+    # patch after it, instead of silently building an unpatched libzmq.
+    grep -q 'zeromq-force-cacheline-64' ${dependsDir}/packages/zeromq.mk \
+      || { echo "zeromq.mk patch-wiring seds failed"; exit 1; }
 
     # fontconfig's configure detects freetype via pkg-config ("FREETYPE
     # yes"), but in our Nix build env the resulting FREETYPE_CFLAGS don't
@@ -503,7 +502,8 @@ gcc14Stdenv.mkDerivation (rec {
 
     # The depends build hardcodes its absolute build-time staging path
     # (e.g. /build/.../depends/x86_64-linux-gnu) into CMake config
-    # files like libevent's LibeventTargets-static.cmake. Rewrite
+    # files (libevent's LibeventTargets-static.cmake was the original
+    # offender; libevent left depends at the v32.x branch-off). Rewrite
     # those to point at $out so consumers (the bitcoind build) can
     # find the installed libraries and headers.
     # Rewrite both our build-time prefix and the GUIX prefix that Qt bakes
@@ -524,39 +524,29 @@ gcc14Stdenv.mkDerivation (rec {
   preBuild = ''
     unset CC CXX AR RANLIB NM STRIP OBJCOPY OBJDUMP
   '';
-} // lib.optionalAttrs (crossInputs != [ ] && lib.hasPrefix "x86_64" hostTriple && !isDarwin && !isMingw) {
-  # x86_64-target cross builds only (on a non-x86 build machine the make
-  # conditional below is false and the sed is a harmless no-op):
-  # hosts/linux.mk special-cases an x86 build machine —
-  # `ifeq (86,$(findstring 86,$(build_arch)))` forces ALL the x86_64 host
-  # tools to the native unprefixed ones (CC="gcc -m64", AR=ar, RANLIB=
-  # ranlib, NM=nm, STRIP=strip). In GUIX's container that native gcc IS the
-  # pinned 2.31-glibc toolchain, but here it would be the plain build
-  # stdenv (glibc 2.42) — host packages then carry glibc-2.38+ symbol refs
-  # (__isoc23_strtoul in capnp's libkj) that can't link against our 2.31.
-  # Disable the special-case so the `else` branch applies: CC=
-  # $(default_host_CC) -m64 = x86_64-linux-gnu-gcc -m64 and prefixed
-  # binutils — i.e. exactly what depends does for an x86_64-linux-gnu host
-  # on any NON-x86 build machine, and what it already does for the aarch64
-  # cross build. A separate optionalAttrs (not optionalString inside
-  # postUnpack) so the native/aarch64 derivations stay byte-identical.
+} // lib.optionalAttrs (crossInputs != [ ] && !isDarwin && !isMingw) {
+  # LINUX cross builds (every target triple): preseed the Qt configure
+  # check results that come out differently in the Nix sandbox than in
+  # GUIX's container, to upstream's values: HAVE_GETTIME/
+  # HAVE_SHM_OPEN_SHM_UNLINK make FindWrapRt succeed (the WrapRt::WrapRt
+  # target must exist for the posix ipc features), and TEST_posix_shm/
+  # TEST_posix_sem turn on QT_FEATURE_posix_shm/posix_sem like upstream.
+  # The effect on the output is exactly two feature-gated-to-EMPTY objects
+  # (qsharedmemory_posix.cpp, qsystemsemaphore_posix.cpp — the selected ipc
+  # backend is sysv on both sides, and the stripped runtime binaries
+  # byte-matched all along): they contribute the two STT_FILE symtab
+  # entries that were the final 96 bytes between our
+  # bitcoin-qt.dbg/bitcoin-gui.dbg and upstream's.
+  #
+  # NOTE (v32.x branch-off): this used to be TWO blocks, because x86_64
+  # additionally had to disable hosts/linux.mk's
+  # `ifeq (86,$(findstring 86,$(build_arch)))` special case — which forced
+  # ALL x86_64 host tools to the native unprefixed ones on an x86 build
+  # machine, pulling the plain build stdenv's glibc 2.42 into host
+  # packages. Upstream DELETED that conditional (and the i686/x86_64
+  # *_linux_CC overrides with it) at the branch-off, so depends now always
+  # takes the `$(default_host_CC) -m64` path and the workaround is gone.
   postPatch = ''
-    sed -i 's|ifeq (86,$(findstring 86,$(build_arch)))|ifeq (x86-build-machine-special-case,disabled-for-cross-to-self)|' \
-      hosts/linux.mk
-    grep -q 'disabled-for-cross-to-self' hosts/linux.mk || { echo "linux.mk sed failed"; exit 1; }
-
-    # Preseed the Qt configure check results that come out differently in
-    # the Nix sandbox than in GUIX's container, to upstream's values:
-    # HAVE_GETTIME/HAVE_SHM_OPEN_SHM_UNLINK make FindWrapRt succeed (the
-    # WrapRt::WrapRt target must exist for the posix ipc features), and
-    # TEST_posix_shm/TEST_posix_sem turn on
-    # QT_FEATURE_posix_shm/posix_sem like upstream. The effect on the
-    # output is exactly two feature-gated-to-EMPTY objects
-    # (qsharedmemory_posix.cpp, qsystemsemaphore_posix.cpp — the selected
-    # ipc backend is sysv on both sides, and the stripped runtime binaries
-    # byte-matched all along): they contribute the two STT_FILE symtab
-    # entries that were the final 96 bytes between our
-    # bitcoin-qt.dbg/bitcoin-gui.dbg and upstream's.
     sed -i 's|-DCMAKE_PREFIX_PATH=$(host_prefix)$|-DCMAKE_PREFIX_PATH=$(host_prefix) -DHAVE_GETTIME=ON -DHAVE_SHM_OPEN_SHM_UNLINK=ON -DTEST_posix_shm=ON -DTEST_posix_sem=ON|' \
       packages/qt.mk
     grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
@@ -580,7 +570,7 @@ gcc14Stdenv.mkDerivation (rec {
   # PATH=OFF, which also breaks find_program's make/compiler lookup; not
   # -DLIBRT=LIBRT-NOTFOUND, which find_library re-runs on -NOTFOUND).
   # Two seds: funcs.mk's host-package cmake invocation (zeromq, capnp,
-  # boost, libevent, qrencode) and qt.mk's own config.opt mechanism.
+  # boost, qrencode) and qt.mk's own config.opt mechanism.
   postPatch = ''
     sed -i 's|^\$(1)_cmake += -DCMAKE_SYSTEM_NAME=\$(\$(host_os)_cmake_system_name)$|&\n$(1)_cmake += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
       funcs.mk
@@ -636,19 +626,5 @@ EOF
     sed -i 's|^\$(package)_cmake_opts += -DCMAKE_SYSTEM_NAME=\$(\$(host_os)_cmake_system_name)$|&\n$(package)_cmake_opts += -DCMAKE_SYSTEM_IGNORE_PATH=${gcc14Stdenv.cc.libc}/lib|' \
       packages/qt.mk
     grep -q 'CMAKE_SYSTEM_IGNORE_PATH' packages/qt.mk || { echo "qt.mk mingw ignore-path sed failed"; exit 1; }
-  '';
-} // lib.optionalAttrs (crossInputs != [ ] && !lib.hasPrefix "x86_64" hostTriple && !isDarwin) {
-  # Non-x86 LINUX cross builds (aarch64/riscv64/armhf/powerpc64): same Qt posix
-  # ipc preseed as the x86_64 block above (the sandbox-vs-GUIX-container
-  # configure-check divergence is host-independent; the two
-  # feature-gated-to-EMPTY objects contribute STT_FILE symtab entries to
-  # bitcoin-qt.dbg/bitcoin-gui.dbg). The hosts/linux.mk special-case does
-  # NOT apply here (it's x86-build-machine + x86-host only), so no
-  # linux.mk sed. A separate optionalAttrs block so the x86_64 depends
-  # derivation stays byte-identical.
-  postPatch = ''
-    sed -i 's|-DCMAKE_PREFIX_PATH=$(host_prefix)$|-DCMAKE_PREFIX_PATH=$(host_prefix) -DHAVE_GETTIME=ON -DHAVE_SHM_OPEN_SHM_UNLINK=ON -DTEST_posix_shm=ON -DTEST_posix_sem=ON|' \
-      packages/qt.mk
-    grep -q 'TEST_posix_shm' packages/qt.mk || { echo "qt.mk posix preseed sed failed"; exit 1; }
   '';
 })

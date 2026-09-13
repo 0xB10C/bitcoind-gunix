@@ -1,4 +1,4 @@
-{ pkgs, version, url, sha256, buildSystem, sourceDateEpoch }:
+{ pkgs, version, src, buildSystem, sourceDateEpoch }:
 
   # --- generic linux-gnu cross target generator ---
   # The aarch64/riscv64 recipe parameterized over the target triple: cross
@@ -28,7 +28,9 @@
   #   every DW_AT_producer match automatically).
   # - glibcPatches: GUIX glibc-2.31 origin patches that matter for the
   #   target (riscv64: glibc-riscv-jumptarget.patch).
-  # - dynamicLinker/extraCXXFLAGS: build.sh's per-host values.
+  # - extraCXXFLAGS: build_linux.sh's per-host extras (armhf -Wno-psabi).
+  #   The ELF interpreter is NOT a knob: release-cross.nix asks upstream's
+  #   own glibc_dynamic_linker (libexec/setup.sh) for it.
   # The NoFp wrappers strip exactly "-fno-omit-frame-pointer" — on these
   # targets the cc-wrapper injects no leaf-FP variant (x86_64/aarch64-only
   # for gcc 14) and no -march (no gcc.arch platform attrs).
@@ -45,13 +47,13 @@
                            # real /bitcoin) — the extra allocations flip var-tracking loclists
                            # in big CUs (armhf net_processing, ppc64 qt). Needs gccExtraPatches
                            # to include gcc-debug-canon-prefix-map.patch.
-    , dynamicLinker
     , extraCXXFLAGS ? ""
+    , fatalLinkWarnings ? true # build_linux.sh adds -Wl,--fatal-warnings everywhere but riscv64
     , pnameSuffix
     # Upstream-hash gates: the archive hashes come from the checked-in
-    # SHA256SUMS (via default.nix's upstreamSha256 lookup); per-binary
-    # hashes are not published, so expectedHashes stays {} (gate skipped).
-    , expectedHashes ? { }
+    # SHA256SUMS (via default.nix's upstreamSha256 lookup). There is no
+    # per-binary gate any more — upstream publishes no per-binary hashes,
+    # and package.nix prints every binary/.dbg hash for the log instead.
     , tarballSha256 ? null
     , debugTarballSha256 ? null # null = no upstream hash — archive built ungated
     }:
@@ -96,8 +98,8 @@
         src = pkgs.fetchgit {
           name = "glibc-2.31";
           url = "https://sourceware.org/git/glibc.git";
-          rev = "7b27c450c34563a28e634cccb399cd415e71ebfe";
-          hash = "sha256-wIq9cIHkI8HtsYa5UU1IfC8VIhXyz0vJau20WPJt+AQ=";
+          rev = "28eb5caf895ced5d895cb02757e109004a2d33e5";
+          hash = "sha256-qNwcD7BCXzHJvKr9m8PuJ8qkQ74KjQczRx5XHViWWR0=";
         };
         patches = glibcPatches;
         configureFlags =
@@ -113,6 +115,7 @@
             "--disable-werror"
             "--disable-timezone-tools"
             "--disable-profile"
+            "--enable-kernel=3.17.0"
             "--disable-static-pie"
           ];
         env = (old.env or { }) // {
@@ -162,7 +165,7 @@
         '';
       });
 
-      crossBinutils241' = import ./cross-binutils-241.nix { inherit pkgs pkgsCross; };
+      crossBinutils241' = import ./cross-binutils-246.nix { inherit pkgs pkgsCross; };
       crossBintools241' = pkgsCross.stdenv.cc.bintools.override {
         bintools = crossBinutils241';
         libc = crossGlibc231';
@@ -188,7 +191,9 @@
             "--disable-libgomp"
             "--disable-libquadmath"
             "--disable-libsanitizer"
+            "--disable-lto"
             "--disable-nls"
+            "--disable-tm-clone-registry"
             "--with-as=${crossBinutils241'}/bin/${triple}-as"
             "--with-ld=${crossBinutils241'}/bin/${triple}-ld"
           ] ++ gccArchFlags;
@@ -229,42 +234,71 @@
         crossGuixGccNoFp'.bintools
       ];
 
+      # TWO depends trees, like upstream's two build passes: build_linux.sh
+      # builds depends with NO_QT=1 under BASE_CACHE .../GUIX/BUILD,
+      # build_linux_gui.sh builds the full tree under .../GUIX/GUI.
+      dependsNoQt' = pkgs.callPackage ./depends.nix {
+        inherit version src;
+        inherit (pkgs) gcc14Stdenv;
+        hostTriple = triple;
+        buildQt = false;
+        crossInputs = crossInputs';
+      };
       depends' = pkgs.callPackage ./depends.nix {
-        inherit version url sha256;
+        inherit version src;
         inherit (pkgs) gcc14Stdenv;
         hostTriple = triple;
         buildQt = true;
         crossInputs = crossInputs';
       };
-      bitcoind' = pkgs.callPackage ./release-cross.nix {
-        inherit version url sha256;
+      releaseArgs = {
+        inherit version src;
         inherit (pkgs) gcc14Stdenv;
-        inherit dynamicLinker extraCXXFLAGS expectedHashes debugCanonMap canonDepends;
+        inherit extraCXXFLAGS debugCanonMap canonDepends fatalLinkWarnings;
         hostTriple = triple;
-        pname = "bitcoind-${pnameSuffix}";
-        depends = depends';
         crossInputs = crossInputsNoFp';
         guixGcc = crossGuixGcc'.cc;
         linuxHeaders = linuxHeaders61';
       };
-      tarball' = pkgs.callPackage ./tarball.nix {
-        inherit version url sha256 sourceDateEpoch;
-        bitcoind = bitcoind';
-        arch = triple;
+      bitcoindNoGui' = pkgs.callPackage ./release-cross.nix (releaseArgs // {
+        pname = "bitcoind-${pnameSuffix}-nogui";
+        depends = dependsNoQt';
+      });
+      bitcoindGui' = pkgs.callPackage ./release-cross.nix (releaseArgs // {
+        pname = "bitcoind-${pnameSuffix}-gui";
+        depends = depends';
+        guiOnly = true;
+      });
+      # Upstream's libexec/package.sh over the merged install tree: split
+      # debug info, copy the committed extras, build both archives.
+      packaged' = pkgs.callPackage ./package.nix {
+        inherit version src sourceDateEpoch;
+        hostTriple = triple;
+        noGui = bitcoindNoGui';
+        gui = bitcoindGui';
+        crossInputs = crossInputsNoFp';
+        pname = "bitcoin-${pnameSuffix}-packaged";
+      };
+      # The install tree package.sh split the debug info out of — the
+      # binaries and .dbg the archives were made from, kept as its own attr
+      # for per-binary diffing against a reference build.
+      bitcoind' = packaged'.installed;
+      mkArtifact = args: pkgs.callPackage ./artifact.nix { } ({ packaged = packaged'; } // args);
+      tarball' = mkArtifact {
+        file = "bitcoin-${version}-${triple}.tar.gz";
         expectedSha256 = tarballSha256;
       };
-      # -debug.tar.gz is built unconditionally and gated when
-      # debugTarballSha256 is non-null (from the checked-in SHA256SUMS).
-      debugTarball' = pkgs.callPackage ./tarball.nix {
-        inherit version url sha256 sourceDateEpoch;
-        bitcoind = bitcoind';
-        arch = triple;
-        debug = true;
+      debugTarball' = mkArtifact {
+        file = "bitcoin-${version}-${triple}-debug.tar.gz";
         expectedSha256 = debugTarballSha256;
       };
     in {
       depends = depends';
+      dependsNoQt = dependsNoQt';
+      bitcoindNoGui = bitcoindNoGui';
+      bitcoindGui = bitcoindGui';
       bitcoind = bitcoind';
+      packaged = packaged';
       tarball = tarball';
       debugTarball = debugTarball';
       crossGlibc231 = crossGlibc231';

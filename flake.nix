@@ -34,25 +34,30 @@
           pkgs2405 = import nixpkgs2405 { inherit system; };
           drvs = import ./default.nix { inherit pkgs pkgs2405; };
         in {
-          inherit (drvs) depends bitcoind tarball debugTarball dependsAarch64 bitcoindAarch64 tarballAarch64
+          inherit (drvs) depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball
+            dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
+            bitcoindNoGuiAarch64 bitcoindGuiAarch64 tarballAarch64
             debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
             dependsArmhf bitcoindArmhf tarballArmhf debugTarballArmhf
             dependsPpc64 bitcoindPpc64 tarballPpc64 debugTarballPpc64
             riscv64Cross armhfCross ppc64Cross
             crossGlibc231 crossGlibc231X86 crossGuixGccX86
             clangDarwin lldDarwin llvmDarwin darwinSdk
-            dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
+            dependsDarwinX86 dependsDarwinArm64 dependsNoQtDarwinX86 dependsNoQtDarwinArm64
+            bitcoindDarwinX86 bitcoindDarwinArm64
             tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
-            signapple detachedSigs sourceDistArchive codesignaturesArchive
-            codesigningDarwinX86 codesigningDarwinArm64 signedDarwinX86 signedDarwinArm64
-            mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw
+            signapple
+            codesigningDarwinX86 codesigningDarwinArm64
+            mingwGuixGcc mingwGuixGccNoFp mingwBinutils241 dependsMingw dependsNoQtMingw
+            bitcoindMingwNoGui bitcoindMingwGui
             mingwCrtStdenv mingwCrt
-            bitcoindMingw bitcoindMingwNoGate unsignedZipMingw debugZipMingw
-            nsisGcc11 nsis310 setupExeMingw codesigningMingw
-            osslsigncode25 signedMingw
-            pkgsCrossMingwNsis nsisCrtBootSet nsisCrtStdenv
-            sha256sums noncodesignedSha256sums;
-          default = drvs.sha256sums;
+            bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
+            nsisGcc14 nsis310 setupExeMingw codesigningMingw
+            osslsigncode25;
+          # No SHA256SUMS aggregator at the branch-off commit (nothing to
+          # diff it against yet) — the x86_64 release tarball is the
+          # default build target until a guix reference lands.
+          default = drvs.tarball;
         });
     };
 }

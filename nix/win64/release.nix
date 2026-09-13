@@ -9,18 +9,19 @@
 , fetchurl
 , pkg-config
 , cmake
+, python3
 , version
-, url
-, sha256
-, depends          # the win64 depends tree (Qt included)
+, src
+, depends          # the win64 depends tree for THIS pass (Qt-less for pass 1)
 , crossInputs      # NoFp cross cc/bintools (x86_64-w64-mingw32-gcc/-objcopy/…)
 , guixGcc          # the unwrapped cross gcc — for header prefix-maps → /usr
 , mingwCrt         # the mingw-w64 CRT (msvcrt) store path — prefix-mapped → /usr
 , mingwPthreads    # the winpthreads store path — prefix-mapped → /usr
 , hostTriple       # "x86_64-w64-mingw32"
-# {} = no per-binary upstream hashes published (upstream's SHA256SUMS
-# covers only the assembled archives, gated in zip.nix) — gate skipped.
-, expectedHashes ? { }   # rel path -> upstream sha256 (8 binaries + 8 .dbg)
+# false = upstream's build_win.sh pass (everything except the GUI);
+# true  = its build_win_gui.sh pass (ONLY bitcoin-qt — there is no
+# bitcoin-gui on WIN32, ENABLE_IPC is off there).
+, guiOnly ? false
 , pname
 }:
 
@@ -67,24 +68,41 @@ let
     "bin/bitcoin-qt.exe" "libexec/test_bitcoin.exe"
   ];
 in
-gcc14Stdenv.mkDerivation {
+gcc14Stdenv.mkDerivation ({
   inherit pname;
   name = pname;
-  src = fetchurl { inherit url sha256; };
+  inherit src;
 
-  nativeBuildInputs = [ pkg-config cmake ] ++ crossInputs;
+  # manifest_gui.scm ships python-minimal in the GUI pass's container and
+  # build_win_gui.sh configures with -Werror=dev (a missing Python is a
+  # configure warning → hard error there) — see lib/release-cross.nix.
+  nativeBuildInputs = [ pkg-config cmake ] ++ lib.optional guiOnly python3 ++ crossInputs;
 
   cmakeBuildDir = "build";
   cmakeBuildType = "RelWithDebInfo";
+  # Exactly upstream's per-pass cmake flags (build_win.sh /
+  # build_win_gui.sh). NOTE win64 passes NO -DCMAKE_SKIP_RPATH: upstream
+  # dropped it from the mingw scripts at the v32.x branch-off (it only ever
+  # mattered for the ELF targets).
   cmakeFlags = [
     "--toolchain=${depends}/toolchain.cmake"
-    "-DBUILD_GUI_TESTS=OFF"
     "-DBUILD_BENCH=OFF"
     "-DBUILD_FUZZ_BINARY=OFF"
-    "-DWITH_CCACHE=OFF"
+    "-DBUILD_GUI_TESTS=OFF"
     "-DREDUCE_EXPORTS=ON"
-    "-DCMAKE_SKIP_RPATH=TRUE"
-  ];
+    "-DWITH_CCACHE=OFF"
+  ] ++ (if guiOnly then [
+    "-DBUILD_BITCOIN_BIN=OFF"
+    "-DBUILD_CLI=OFF"
+    "-DBUILD_DAEMON=OFF"
+    "-DBUILD_TESTS=OFF"
+    "-DBUILD_TX=OFF"
+    "-DBUILD_UTIL=OFF"
+    "-DBUILD_WALLET_TOOL=OFF"
+    "-Werror=dev"
+  ] else [
+    "-DBUILD_GUI=OFF"
+  ]);
 
   preConfigure = ''
     # nixpkgs' cmake setup-hook passes -DCMAKE_C_COMPILER=$CC etc., which
@@ -113,7 +131,7 @@ gcc14Stdenv.mkDerivation {
     # build.sh mingw HOST_LDFLAGS (CMake reads LDFLAGS to seed the linker
     # flags). bitcoin's own CMakeLists adds -static / the subsystem-version
     # flags for MINGW, so build.sh sets no CMAKE_EXE_LINKER_FLAGS here.
-    LDFLAGS = "-Wl,--no-insert-timestamp";
+    LDFLAGS = "-Wl,--no-insert-timestamp -Wl,--fatal-warnings";
     NIX_DONT_SET_RPATH = "1";
     NIX_NO_SELF_RPATH = "1";
   };
@@ -123,51 +141,20 @@ gcc14Stdenv.mkDerivation {
     "stackclashprotection" "fortify" "fortify3"
     "strictflexarrays1" "libcxxhardeningfast"
   ];
-
-  # Mirror GUIX build.sh's split-debug (contrib/devtools/split-debug.sh) with
-  # the CROSS binutils 2.41 (<hostTriple>-* from crossInputs). No .comment
-  # rewrite: -fno-ident already drops the ident, and PE/COFF has no .comment
-  # section. All .dbg are gated byte-identical below, so --add-gnu-debuglink
-  # computes upstream's CRC naturally — no byte patches.
-  postInstall = ''
-    for rel in ${toString binaries}; do
-      f="$out/$rel"
-      if [ ! -f "$f" ]; then echo "WARN: $rel was not built"; continue; fi
-      ${hostTriple}-objcopy --enable-deterministic-archives -p --only-keep-debug "$f" "$f.dbg"
-      ${hostTriple}-objcopy --enable-deterministic-archives -p --strip-debug "$f" "$f"
-      ${hostTriple}-strip --enable-deterministic-archives -p -s "$f"
-      ${hostTriple}-objcopy --enable-deterministic-archives -p --add-gnu-debuglink="$f.dbg" "$f"
-    done
-  '';
-
-  postFixup = if expectedHashes == { } then ''
-    echo "BUILT (no per-binary upstream gate — archive gates in zip.nix): ${hostTriple}"
-    for rel in ${toString binaries}; do
-      f="$out/$rel"
-      [ -f "$f" ] && echo "  $rel       $(sha256sum "$f" | cut -d' ' -f1)"
-      [ -f "$f.dbg" ] && echo "  $rel.dbg   $(sha256sum "$f.dbg" | cut -d' ' -f1)"
-    done
-  '' else ''
-    declare -A expected=(
-${lib.concatStringsSep "\n" (lib.mapAttrsToList (rel: h: "      [${rel}]=${h}") expectedHashes)}
-    )
-    fail=0
-    for rel in "''${!expected[@]}"; do
-      f="$out/$rel"
-      if [ ! -f "$f" ]; then echo "FAIL: $rel was not built"; fail=1; continue; fi
-      actual=$(sha256sum "$f" | cut -d' ' -f1)
-      if [ "$actual" = "''${expected[$rel]}" ]; then
-        echo "OK:   $rel matches upstream"
-      else
-        echo "FAIL: $rel  expected ''${expected[$rel]}  actual $actual"
-        fail=1
-      fi
-    done
-    [ "$fail" = "0" ] || { echo "FAIL: one or more ${hostTriple} binaries/.dbg diverged from upstream GUIX"; exit 1; }
-    echo "OK: all ${toString (builtins.length (builtins.attrNames expectedHashes))} asserted ${hostTriple} artifacts match upstream"
-  '';
-
+  # split-debug and the archives happen ONCE over the merged install tree,
+  # by upstream's own libexec/package.sh — see nix/lib/package.nix.
   dontStrip = true;
+  # Upstream ships man pages UNCOMPRESSED (they go into the win64 zip as
+  # share/man/man1/*.1); nixpkgs' fixup would gzip them.
+  dontGzipMan = true;
   doCheck = false;
   enableParallelBuilding = true;
-}
+} // lib.optionalAttrs guiOnly {
+  # build_win_gui.sh builds and installs ONLY bitcoin-qt.
+  buildFlags = [ "bitcoin-qt" ];
+  installPhase = ''
+    runHook preInstall
+    cmake --install . --component bitcoin-qt
+    runHook postInstall
+  '';
+})
