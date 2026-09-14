@@ -46,10 +46,9 @@
             mingwCrtStdenv mingwCrt
             bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
             nsisGcc14 nsis setupExeMingw codesigningMingw
-            osslsigncode25;
-          # No SHA256SUMS aggregator at the branch-off commit (it would
-          # include the unbuilt dist archive); the x86_64 release tarball
-          # is the default build target.
+            osslsigncode25
+            sourceDistArchive;
+          # The x86_64 release tarball is the default build target.
           default = drvs.tarball;
         });
     };

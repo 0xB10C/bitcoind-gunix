@@ -13,12 +13,10 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# The v32.x branch-off commit is not a release, so bitcoin-core/guix.sigs
-# has no attestation for it: the checked-in noncodesigned.SHA256SUMS holds
-# the hashes of a local guix build of the same commit. Every artifact
-# derivation gates its own sha256 against that file, so a mismatch fails the
-# nix build and with it the job. The print-hashes job at the end lists all
-# 20 artifact hashes in one place.
+# The checked-in noncodesigned.SHA256SUMS is the guix.sigs attestation for
+# v32.0rc1. Every artifact derivation gates its own sha256 against that
+# file, so a mismatch fails the nix build and with it the job. The
+# print-hashes job at the end lists all 21 artifact hashes in one place.
 jobs:
   # This workflow contains a single job called "build"
   build:
@@ -253,12 +251,11 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarball -o result-tarball --print-build-logs
 
-  # NOTE (v32.x branch-off): the nix derivations gate every artifact
-  # against the checked-in noncodesigned.SHA256SUMS (a local guix build of
-  # this commit). The signed-artifact builds (no bitcoin-detached-sigs tag)
-  # and the build-sha256sums aggregator (it includes the unbuilt dist
-  # archive) are gone; the v31.1 versions are in git history at commit
-  # 4599977e9723. This job only prints all 20 artifact hashes together.
+  # NOTE (v32.0rc1): the nix derivations gate every artifact against the
+  # checked-in noncodesigned.SHA256SUMS. The signed-artifact builds (no
+  # bitcoin-detached-sigs tag yet) and the build-sha256sums aggregator are
+  # not wired up; the v31.1 versions are in git history at commit
+  # 4599977e9723. This job only prints all 21 artifact hashes together.
   print-hashes:
     runs-on: ubuntu-latest
     needs:
@@ -298,7 +295,8 @@ jobs:
                    tarballPpc64 debugTarballPpc64 \
                    tarballDarwinX86 zipDarwinX86 codesigningDarwinX86 \
                    tarballDarwinArm64 zipDarwinArm64 codesigningDarwinArm64 \
-                   unsignedZipMingw debugZipMingw setupExeMingw codesigningMingw; do
+                   unsignedZipMingw debugZipMingw setupExeMingw codesigningMingw \
+                   sourceDistArchive; do
             p=$(nix build ".#$a" --no-link --print-out-paths --print-build-logs)
             printf '%s  %s\n' "$(sha256sum "$p" | cut -d' ' -f1)" "$(basename "$p")"
           done

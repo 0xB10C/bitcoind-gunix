@@ -2,48 +2,27 @@
 }:
 
 let
-  # The v32.x BRANCH-OFF commit on master (bitcoin/bitcoin#36227, "Pre 32.x
-  # branching updates", 2026-09-11). It carries no tag, so GUIX's
-  # prelude.bash `git_head_version` falls back to `git rev-parse
-  # --short=12 HEAD` — that short hash is the VERSION, and hence
-  # DISTNAME = bitcoin-<short12>, that every published artifact name is
-  # built from.
-  commit = "f3fec67c3eeb27d5be1bc9d57ca737b74fcd762d";
-  version = "f3fec67c3eeb";
+  # The v32.0rc1 tag (d0231bb01d83, bitcoin/bitcoin#36246 "[32.x] Bump to
+  # 32.0rc1"). GUIX's prelude.bash `git_head_version` takes the tag name
+  # without its leading `v` as the VERSION, and DISTNAME = bitcoin-<version>
+  # is what every published artifact name is built from.
+  version = "32.0rc1";
 
-  # SOURCE_DATE_EPOCH: the branch-off commit's own commit time
-  # (2026-09-11T17:11:36+01:00), exactly like guix-build derives it
+  # SOURCE_DATE_EPOCH: the tagged commit's own commit time
+  # (2026-09-14T13:51:13+01:00), exactly like guix-build derives it
   # (`git log --format=%at -1`).
-  sourceDateEpoch = 1789143096;
+  sourceDateEpoch = 1789390273;
 
-  # The source tree, repacked under GUIX's DISTNAME prefix.
-  #
-  # GUIX extracts its dist archive (`git archive --prefix=$DISTNAME/`) into
-  # $DISTSRC, so every path the build sees starts with bitcoin-<short12>/.
-  # GitHub's archive of a COMMIT (there is no tag to fetch here) uses the
-  # FULL 40-char sha as its prefix instead, so we unpack and repack it
-  # under bitcoin-${version}/ — the contents are identical (both are
-  # `git archive` of the same tree) and every consumer below keeps its
-  # bitcoin-${version} path assumptions.
-  #
-  # NOTE: this repack is a BUILD INPUT only, never a published artifact.
-  # The dist-archive itself (bitcoin-${version}.tar.gz in upstream's
-  # SHA256SUMS) has to come out of a real `git archive` — its pax headers
-  # for >99-char paths depend on the prefix length, so a rename-repack of
-  # the 40-char-prefixed GitHub archive would NOT be byte-identical. See
-  # the dropped sourceDistArchive note further down.
-  srcArchive = pkgs.fetchurl {
-    url = "https://github.com/bitcoin/bitcoin/archive/${commit}.tar.gz";
-    hash = "sha256-aLcMQjq7YQ7e5TadrhHNOtT5ExXSh9kVIXA0rKtQff0=";
+  # The source tree. GitHub's archive of a TAG is `git archive
+  # --prefix=bitcoin-<version>/` of the tagged commit — the same command
+  # guix's build.sh runs for its dist archive — so it is used as is: every
+  # consumer extracts bitcoin-${version}/ from it, and sourceDistArchive
+  # below re-gzips it into the published dist archive.
+  src = pkgs.fetchurl {
+    name = "bitcoin-${version}.tar.gz";
+    url = "https://github.com/bitcoin/bitcoin/archive/refs/tags/v${version}.tar.gz";
+    hash = "sha256-u0kRh1HFWAH7QONkaoDoLOQaHIaPP0iMeALxvmP5lto=";
   };
-  src = pkgs.runCommand "bitcoin-${version}.tar.gz" { } ''
-    mkdir unpack
-    tar xzf ${srcArchive} -C unpack
-    mv unpack/bitcoin-${commit} unpack/bitcoin-${version}
-    tar --create --sort=name --owner=0 --group=0 --numeric-owner \
-        --mtime=@${toString sourceDateEpoch} -C unpack bitcoin-${version} \
-      | gzip -n > $out
-  '';
 
   # Upstream reference hashes, parsed from the checked-in
   # noncodesigned.SHA256SUMS / all.SHA256SUMS (both from
@@ -52,11 +31,10 @@ let
   # from both files resolves to null and its gate is skipped with a
   # "no upstream gate" log line.
   #
-  # The branch-off commit is not a release, so guix.sigs has no attestation
-  # for it: noncodesigned.SHA256SUMS holds the output/<host>/SHA256SUMS.part
-  # hashes of a LOCAL guix build of the same commit, and all.SHA256SUMS is
-  # absent (no signed artifacts). The file has to stay git-tracked, or flake
-  # eval won't see it.
+  # noncodesigned.SHA256SUMS is the first guix.sigs attestation for
+  # 32.0rc1 (bitcoin-core/guix.sigs#2544, Sjors). all.SHA256SUMS is absent
+  # until detached signatures exist. The files have to stay git-tracked, or
+  # flake eval won't see them.
   parseSha256sums = file:
     if builtins.pathExists file then
       builtins.listToAttrs (builtins.concatMap
@@ -92,26 +70,21 @@ let
   # targets' gates); other hosts re-assert the same gates.
   buildSystem = pkgs.stdenv.hostPlatform.system;
 
-  # Detached signatures + the two `git archive` artifacts are OFF for the
-  # branch-off commit.
-  #
-  # - detachedSigs: bitcoin-core/bitcoin-detached-sigs only ever grows tags
-  #   for RELEASES, so there is nothing to sign against at a master commit.
-  #   Passing null keeps the whole signing pipeline (darwin
-  #   signedDarwin{X86,Arm64}, win64 signedMingw, codesignaturesArchive) out
-  #   of the exposed outputs, exactly as the v31.1rc1 tree did before the
-  #   v31.1 tag landed. The UNSIGNED and -codesigning artifacts do not need
-  #   it and stay wired up.
-  # - sourceDistArchive (bitcoin-${version}.tar.gz): reproducing it means
-  #   reproducing `git archive --prefix=bitcoin-${version}/ HEAD` byte for
-  #   byte. For a tagged release GitHub's own tag archive IS that output, so
-  #   we only had to re-gzip it; for an untagged commit GitHub prefixes with
-  #   the full 40-char sha, which changes the pax long-path headers, so the
-  #   shortcut does not hold. Needs a real `git archive` (fetchgit +
-  #   leaveDotGit, like nix/lib/codesignatures.nix does for the
-  #   detached-sigs repo) — not done yet; its reference hash is already in
-  #   noncodesigned.SHA256SUMS.
+  # Detached signatures are OFF until bitcoin-core/bitcoin-detached-sigs
+  # tags v${version}. Passing null keeps the whole signing pipeline (darwin
+  # signedDarwin{X86,Arm64}, win64 signedMingw, codesignaturesArchive) out
+  # of the exposed outputs; the UNSIGNED and -codesigning artifacts do not
+  # need it and stay wired up.
   detachedSigs = null;
+
+  # bitcoin-${version}.tar.gz: build.sh's `git archive --prefix=
+  # bitcoin-${version}/ HEAD`. GitHub's tag archive is that same tar, so
+  # re-gzipping it with guix's zlib level 6 reproduces the dist archive.
+  # See nix/lib/source-dist-archive.nix.
+  sourceDistArchive = pkgs.callPackage ./nix/lib/source-dist-archive.nix { } {
+    inherit version src;
+    expectedSha256 = upstreamSha256 "bitcoin-${version}.tar.gz";
+  };
 
   aarch64 = import ./nix/aarch64-linux-gnu/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch upstreamSha256; };
   riscv64 = import ./nix/riscv64-linux-gnu/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch upstreamSha256; };
@@ -121,15 +94,10 @@ let
   darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
   win64   = import ./nix/win64/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
-  # The SHA256SUMS aggregators (nix/lib/sha256sums.nix) are dropped for the
-  # branch-off commit, along with the ordered artifact lists they consume.
-  # They exist to be `diff`ed against upstream's published
-  # noncodesigned.SHA256SUMS / all.SHA256SUMS, and neither exists for a
-  # master commit; they also include the two `git archive` artifacts that
-  # are off here (see the detachedSigs note above); they can come back once
-  # the dist archive is built — the v31.1
-  # versions, including the exact upstream ordering comment, are in git
-  # history at commit 4599977e9723.
+  # The SHA256SUMS aggregators (nix/lib/sha256sums.nix) are not wired up:
+  # every artifact is gated individually against the attested file. The
+  # v31.1 versions, including the exact upstream ordering comment, are in
+  # git history at commit 4599977e9723.
 in {
   inherit (x86) depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball;
   inherit (aarch64) dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
@@ -152,5 +120,5 @@ in {
     bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
     nsisGcc14 nsis setupExeMingw codesigningMingw
     osslsigncode25;
-  inherit src srcArchive;
+  inherit src sourceDistArchive;
 }

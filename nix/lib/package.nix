@@ -21,7 +21,7 @@
 #
 #   * TAR_OPTIONS drops the QUOTES around the --mtime date. GNU tar 1.35 as
 #     built in nixpkgs aborts outright ("*** buffer overflow detected ***")
-#     when it parses `--mtime='@1789143096'` out of TAR_OPTIONS; unquoted it
+#     when it parses `--mtime='@<epoch>'` out of TAR_OPTIONS; unquoted it
 #     pins the mtime as intended, which is demonstrably the value upstream's
 #     archives carry (our v31.0/v31.1 archives byte-matched them while
 #     passing --mtime=@epoch explicitly).

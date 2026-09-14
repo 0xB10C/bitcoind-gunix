@@ -12,29 +12,34 @@ branch-off, ~2600 lines) is in git history: see CLAUDE.md at commit
 `90e0ff24483c` and earlier. This file keeps the current state, how the tree
 is built, the root causes that matter, and the method.
 
-## Current state (2026-09-13)
+## Current state (2026-09-14)
 
-- **Target:** the v32.x BRANCH-OFF commit `f3fec67c3eeb27d5be1bc9d57ca737b74fcd762d`
-  (bitcoin/bitcoin#36227), guix time-machine pin `c5eee3336cc1`.
-  `version = "f3fec67c3eeb"` (guix's `git_head_version` falls back to the
-  short hash for an untagged commit), `sourceDateEpoch = 1789143096`.
-- **All 20 published artifacts byte-match** a local guix build of that commit
-  (the user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs,
-  the GUI-pass `distsrc-*/build` trees with CMakeCache.txt and objects, the
-  depends caches). Verified with one `nix build` of all 20 gated attrs plus an
-  independent sha256 against `noncodesigned.SHA256SUMS`:
+- **Target:** the `v32.0rc1` tag (commit `d0231bb01d83`, bitcoin/bitcoin#36246),
+  guix time-machine pin `c5eee3336cc1`. `version = "32.0rc1"`,
+  `sourceDateEpoch = 1789390273`. Reference hashes: the first guix.sigs
+  attestation (bitcoin-core/guix.sigs#2544). Between the branch-off
+  `f3fec67c3eeb` and the tag, `contrib/guix` and `depends/` did not change
+  (only the version bump and a cmake custom target), so no toolchain changed.
+- **The previous target**, the branch-off commit, was verified against a
+  local guix build (the user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`,
+  35 GB: outputs, the GUI-pass `distsrc-*/build` trees with CMakeCache.txt
+  and objects, the depends caches) — still the oracle for single-CU replays,
+  since the toolchains are identical.
+- **All 21 attested non-codesigned artifacts** are gated, checked with one
+  `nix build` over all of them:
+  - the source dist archive `bitcoin-32.0rc1.tar.gz` (`sourceDistArchive`:
+    GitHub's tag archive re-gzipped with `gzip6.c`)
   - 5 linux release + 5 debug tarballs (`tarball`, `debugTarball`, and the
     `Aarch64`/`Riscv64`/`Armhf`/`Ppc64` variants)
   - darwin x86_64/arm64 `-unsigned.tar.gz`, `-unsigned.zip`,
     `-codesigning.tar.gz` (`tarballDarwin*`, `zipDarwin*`, `codesigningDarwin*`)
   - win64 `unsignedZipMingw`, `debugZipMingw`, `setupExeMingw`, `codesigningMingw`
-- **Not built at this commit:** the source dist archive
-  (`bitcoin-f3fec67c3eeb.tar.gz`, listed in the SHA256SUMS file) and everything
-  signed. GitHub's archive of an untagged commit is not guix's `git archive`
-  output (pax long-path headers differ), and bitcoin-detached-sigs only tags
-  releases (`detachedSigs = null`). The kept-but-unreferenced files for those
-  flows: `nix/lib/{source-dist-archive,sha256sums,codesignatures}.nix`,
-  `nix/lib/gzip6.c`, `nix/{darwin,win64}/signed.nix`, `nix/darwin/signapple.nix`.
+- **Not built yet:** everything signed — bitcoin-detached-sigs has no
+  `v32.0rc1` tag (`detachedSigs = null`). The kept-but-unreferenced files for
+  that flow: `nix/lib/{sha256sums,codesignatures}.nix`,
+  `nix/{darwin,win64}/signed.nix`, `nix/darwin/signapple.nix`. (For an
+  UNTAGGED commit the dist archive can't be built either: GitHub's commit
+  archive uses a 40-char prefix, which changes the pax long-path headers.)
 - **Gates:** every artifact derivation looks its expected sha256 up by
   published filename in the git-tracked `noncodesigned.SHA256SUMS` (+ an
   optional `all.SHA256SUMS`); a missing filename builds ungated with a log line.
