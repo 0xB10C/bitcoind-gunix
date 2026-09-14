@@ -43,6 +43,8 @@ is built, the root causes that matter, and the method.
 - **Gates:** every artifact derivation looks its expected sha256 up by
   published filename in the git-tracked `noncodesigned.SHA256SUMS` (+ an
   optional `all.SHA256SUMS`); a missing filename builds ungated with a log line.
+  `.#noncodesignedSha256sums` (the flake default) builds all 21 and writes
+  the file in upstream order, failing unless it equals the checked-in file.
 
 ## How the tree is built
 

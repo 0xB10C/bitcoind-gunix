@@ -47,9 +47,10 @@
             bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
             nsisGcc14 nsis setupExeMingw codesigningMingw
             osslsigncode25
-            sourceDistArchive;
-          # The x86_64 release tarball is the default build target.
-          default = drvs.tarball;
+            sourceDistArchive noncodesignedSha256sums;
+          # noncodesigned.SHA256SUMS over all 21 artifacts is the default
+          # build target.
+          default = drvs.noncodesignedSha256sums;
         });
     };
 }

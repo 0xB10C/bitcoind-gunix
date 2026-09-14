@@ -94,10 +94,57 @@ let
   darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
   win64   = import ./nix/win64/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
-  # The SHA256SUMS aggregators (nix/lib/sha256sums.nix) are not wired up:
-  # every artifact is gated individually against the attested file. The
-  # v31.1 versions, including the exact upstream ordering comment, are in
-  # git history at commit 4599977e9723.
+  # The non-codesigned artifacts in upstream's noncodesigned.SHA256SUMS
+  # order (verified against bitcoin-core/guix.sigs#2544). guix-attest sorts
+  # each per-host SHA256SUMS.part fragment by its pre-basename PATH
+  # (<outdir_base>/<HOST>/<file>), so the effective order is HOSTS
+  # alphabetically, with dist-archive between arm64-apple-darwin and
+  # powerpc64-linux-gnu. all.SHA256SUMS (signed artifacts interleaved ahead
+  # of each darwin/win64 group) comes back with the detached sigs; the v31.1
+  # version is in git history at commit 4599977e9723.
+  noncodesignedArtifacts = [
+    # aarch64-linux-gnu
+    aarch64.debugTarballAarch64
+    aarch64.tarballAarch64
+    # arm-linux-gnueabihf
+    armhf.debugTarballArmhf
+    armhf.tarballArmhf
+    # arm64-apple-darwin
+    darwin.codesigningDarwinArm64
+    darwin.tarballDarwinArm64
+    darwin.zipDarwinArm64
+    # dist-archive
+    sourceDistArchive
+    # powerpc64-linux-gnu
+    ppc64.debugTarballPpc64
+    ppc64.tarballPpc64
+    # riscv64-linux-gnu
+    riscv64.debugTarballRiscv64
+    riscv64.tarballRiscv64
+    # x86_64-apple-darwin
+    darwin.codesigningDarwinX86
+    darwin.tarballDarwinX86
+    darwin.zipDarwinX86
+    # x86_64-linux-gnu
+    x86.debugTarball
+    x86.tarball
+    # x86_64-w64-mingw32 (win64)
+    win64.codesigningMingw
+    win64.debugZipMingw
+    win64.setupExeMingw
+    win64.unsignedZipMingw
+  ];
+
+  # noncodesigned.SHA256SUMS of our 21 artifacts, diffed against the
+  # checked-in attestation (order included) when that file exists.
+  noncodesignedSha256sums = import ./nix/lib/sha256sums.nix
+    { inherit (pkgs) runCommandLocal coreutils gnused diffutils; }
+    {
+      name = "noncodesigned.SHA256SUMS";
+      files = noncodesignedArtifacts;
+      expected = if builtins.pathExists ./noncodesigned.SHA256SUMS
+        then ./noncodesigned.SHA256SUMS else null;
+    };
 in {
   inherit (x86) depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball;
   inherit (aarch64) dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
@@ -120,5 +167,5 @@ in {
     bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
     nsisGcc14 nsis setupExeMingw codesigningMingw
     osslsigncode25;
-  inherit src sourceDistArchive;
+  inherit src sourceDistArchive noncodesignedSha256sums;
 }
