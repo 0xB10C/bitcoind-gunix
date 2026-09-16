@@ -162,6 +162,7 @@ jobs:
       - run: nix build .#tarballDarwinX86 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
+      - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
 
   build-darwin-arm64:
     runs-on: ubuntu-latest
@@ -183,6 +184,7 @@ jobs:
       - run: nix build .#tarballDarwinArm64 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
+      - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
 
   # win64 (x86_64-w64-mingw32). The steps build + assert all 6 published
   # archive/installer artifacts: unsigned + debug zips, NSIS installer,
@@ -208,6 +210,7 @@ jobs:
       - run: nix build .#debugZipMingw -o result-debug-zip --print-build-logs
       - run: nix build .#setupExeMingw -o result-setup-unsigned --print-build-logs
       - run: nix build .#codesigningMingw -o result-codesigning --print-build-logs
+      - run: nix build .#signedMingw -o result-signed --print-build-logs
 
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
@@ -291,3 +294,11 @@ jobs:
           set -e
           nix build .#noncodesignedSha256sums -o noncodesigned.SHA256SUMS.built --print-build-logs
           cat noncodesigned.SHA256SUMS.built
+      # all.SHA256SUMS adds the 6 signed artifacts + the codesignatures
+      # archive. No 32.0rc1 attestation exists yet, so this only prints
+      # them; it starts diffing once an all.SHA256SUMS is checked in.
+      - name: Build and print all.SHA256SUMS (signed artifacts included)
+        run: |
+          set -e
+          nix build .#sha256sums -o all.SHA256SUMS.built --print-build-logs
+          cat all.SHA256SUMS.built

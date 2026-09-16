@@ -34,12 +34,20 @@ is built, the root causes that matter, and the method.
   - darwin x86_64/arm64 `-unsigned.tar.gz`, `-unsigned.zip`,
     `-codesigning.tar.gz` (`tarballDarwin*`, `zipDarwin*`, `codesigningDarwin*`)
   - win64 `unsignedZipMingw`, `debugZipMingw`, `setupExeMingw`, `codesigningMingw`
-- **Not built yet:** everything signed — bitcoin-detached-sigs has no
-  `v32.0rc1` tag (`detachedSigs = null`). The kept-but-unreferenced files for
-  that flow: `nix/lib/{sha256sums,codesignatures}.nix`,
-  `nix/{darwin,win64}/signed.nix`, `nix/darwin/signapple.nix`. (For an
-  UNTAGGED commit the dist archive can't be built either: GitHub's commit
-  archive uses a 40-char prefix, which changes the pax long-path headers.)
+- **Signed artifacts are wired up** against bitcoin-detached-sigs `v32.0rc1`
+  (rev `ef47807a`, == the `32.x` branch tip; carries `osx/` + `win/`):
+  `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw` (2), plus
+  `codesignaturesArchive`. They are UNGATED so far — guix.sigs has no
+  `all.SHA256SUMS` for 32.0rc1 (all 14 signers posted only the
+  noncodesigned one) and bitcoincore.org has no rc directory, so
+  `upstreamSha256` is null for those 7 filenames and each gate only logs
+  "BUILT (no upstream gate)". Checking an `all.SHA256SUMS` into the repo
+  root gates all 7 with no code change.
+- **Aggregators:** `.#noncodesignedSha256sums` (21 artifacts, diffed against
+  the checked-in file) and `.#sha256sums` (all 28, printed only until an
+  all.SHA256SUMS exists). (For an UNTAGGED commit the dist archive can't be
+  built: GitHub's commit archive uses a 40-char prefix, which changes the
+  pax long-path headers.)
 - **Gates:** every artifact derivation looks its expected sha256 up by
   published filename in the git-tracked `noncodesigned.SHA256SUMS` (+ an
   optional `all.SHA256SUMS`); a missing filename builds ungated with a log line.
@@ -234,10 +242,15 @@ glibc `.so` reorders the stubs of big binaries.
 - A host-side scheduled GC (~00:00) deletes every built store path: this
   container's daemon registers no GC roots (`gcroots` not writable). Expect
   full rebuilds after midnight; `result-*` links do not protect anything.
-- Run the full re-verification as ONE `nix build` over all 20 attrs with nix's
-  defaults (max-jobs 24, all cores — the user wants the machine's 128 GB /
-  24 cores used). Two parallel nix clients once got killed by the agent
-  harness's low-memory guard.
+- Run the full re-verification as ONE `nix build` over all the gated attrs.
+  Nix's defaults (max-jobs 24, all cores) are NOT usable for a cold full
+  rebuild under the agent harness: a single client peaked at 88 GB of 125 GB
+  (`/sys/fs/cgroup/memory.peak`, no cgroup limit and no kernel OOM) and the
+  harness's low-memory guard SIGINTed it twice — once at defaults, once at
+  `--max-jobs 6` (which still gives every job all 24 cores: load hit 55+).
+  `--max-jobs 4 --cores 6` completed the cold 28-artifact rebuild with
+  99 GB still available at its lowest point. Two parallel nix clients get
+  killed the same way.
 - `ftpmirror.gnu.org` times out: fetch GNU tarballs from sourceware.org,
   check the hash, `nix-store --add-fixed sha256 <file>`.
 - `/tmp` is a 13 GB tmpfs: keep large scratch on disk.
