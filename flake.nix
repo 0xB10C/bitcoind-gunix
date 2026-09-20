@@ -41,15 +41,13 @@
             tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
             signapple
             codesigningDarwinX86 codesigningDarwinArm64
-            signedDarwinX86 signedDarwinArm64
             mingwGuixGcc mingwGuixGccNoFp mingwBinutils dependsMingw dependsNoQtMingw
             bitcoindMingwNoGui bitcoindMingwGui
             mingwCrtStdenv mingwCrt
             bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
             nsisGcc14 nsis setupExeMingw codesigningMingw
-            osslsigncode25 signedMingw
-            sourceDistArchive codesignaturesArchive
-            noncodesignedSha256sums sha256sums;
+            osslsigncode25
+            sourceDistArchive noncodesignedSha256sums;
           # noncodesigned.SHA256SUMS over all 21 artifacts is the default
           # build target.
           default = drvs.noncodesignedSha256sums;

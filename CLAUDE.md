@@ -12,14 +12,28 @@ branch-off, ~2600 lines) is in git history: see CLAUDE.md at commit
 `90e0ff24483c` and earlier. This file keeps the current state, how the tree
 is built, the root causes that matter, and the method.
 
-## Current state (2026-09-14)
+## Current state (2026-09-20)
 
-- **Target:** the `v32.0rc1` tag (commit `d0231bb01d83`, bitcoin/bitcoin#36246),
-  guix time-machine pin `c5eee3336cc1`. `version = "32.0rc1"`,
-  `sourceDateEpoch = 1789390273`. Reference hashes: the first guix.sigs
-  attestation (bitcoin-core/guix.sigs#2544). Between the branch-off
-  `f3fec67c3eeb` and the tag, `contrib/guix` and `depends/` did not change
-  (only the version bump and a cmake custom target), so no toolchain changed.
+- **Target:** the `v32.0rc2` tag, guix time-machine pin `c5eee3336cc1`
+  (UNCHANGED from rc1). `version = "32.0rc2"`,
+  `sourceDateEpoch = 1789731029`, src
+  `sha256-7qz3Kd/yChMAxm7Yx2bMbtzkLAvtKkjjJi8ZN6WBnq8=`. Reference hashes: the
+  rc2 guix.sigs attestation (4 signers, byte-identical), checked in as the
+  21-line `noncodesigned.SHA256SUMS`.
+- **rc1 → rc2 is a small delta** (13 commits): `depends/` untouched;
+  `contrib/guix/` changes are codesigning-only (osslsigncode 2.5 → 2.14 plus
+  `nss-certs`; `codesign.sh` gained an `osslsigncode verify` pass). Source
+  changes: the asmap-version backport (`netgroup.{cpp,h}`, `rpc/net.cpp`,
+  `init.cpp`), `torcontrol.cpp` backoff, the `0d4d0ce37b9e` static-const
+  refactor, the version bump, docs/man. No toolchain changed.
+- **x86_64 needs `distsrcChroot = true`** (nix/x86_64-linux-gnu/toolchain.nix).
+  rc2's `netgroup.h` change pushed `test/orphanage_tests.cpp` into the regime
+  where the PARSED source path decides var-tracking's location-list choice, so
+  the release passes now compile at GUIX's literal DISTSRC inside an
+  unshare+chroot. Both x86_64 artifacts then match the attestation
+  (`0255103718033e6a…` and `8e8c88785ac4c289…`, verified 2026-09-20). See the
+  `distsrcChroot` entry in the root-cause catalogue for the three traps this
+  re-entry hides — each one produced a build that SUCCEEDED while being wrong.
 - **The previous target**, the branch-off commit, was verified against a
   local guix build (the user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`,
   35 GB: outputs, the GUI-pass `distsrc-*/build` trees with CMakeCache.txt
@@ -27,25 +41,21 @@ is built, the root causes that matter, and the method.
   since the toolchains are identical.
 - **All 21 attested non-codesigned artifacts** are gated, checked with one
   `nix build` over all of them:
-  - the source dist archive `bitcoin-32.0rc1.tar.gz` (`sourceDistArchive`:
+  - the source dist archive `bitcoin-32.0rc2.tar.gz` (`sourceDistArchive`:
     GitHub's tag archive re-gzipped with `gzip6.c`)
   - 5 linux release + 5 debug tarballs (`tarball`, `debugTarball`, and the
     `Aarch64`/`Riscv64`/`Armhf`/`Ppc64` variants)
   - darwin x86_64/arm64 `-unsigned.tar.gz`, `-unsigned.zip`,
     `-codesigning.tar.gz` (`tarballDarwin*`, `zipDarwin*`, `codesigningDarwin*`)
   - win64 `unsignedZipMingw`, `debugZipMingw`, `setupExeMingw`, `codesigningMingw`
-- **Signed artifacts are wired up** against bitcoin-detached-sigs `v32.0rc1`
-  (rev `ef47807a`, == the `32.x` branch tip; carries `osx/` + `win/`):
-  `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw` (2), plus
-  `codesignaturesArchive`. They are UNGATED so far — guix.sigs has no
-  `all.SHA256SUMS` for 32.0rc1 (all 14 signers posted only the
-  noncodesigned one) and bitcoincore.org has no rc directory, so
-  `upstreamSha256` is null for those 7 filenames and each gate only logs
-  "BUILT (no upstream gate)". Checking an `all.SHA256SUMS` into the repo
-  root gates all 7 with no code change.
-- **Aggregators:** `.#noncodesignedSha256sums` (21 artifacts, diffed against
-  the checked-in file) and `.#sha256sums` (all 28, printed only until an
-  all.SHA256SUMS exists). (For an UNTAGGED commit the dist archive can't be
+- **Signed artifacts are NOT wired up at rc2.** `detachedSigs = null`, and
+  `signedDarwin*`/`signedMingw`/`codesignaturesArchive`/`sha256sums` are gone
+  from `default.nix` and `flake.nix`: bitcoin-detached-sigs has no `v32.0rc2`
+  tag yet, and rc2's `manifest_codesign.scm` moves osslsigncode 2.5 → 2.14
+  (+ `nss-certs`), so restoring the wiring needs that bump too. The rc1
+  version of all of it is in git at commit `12b5cdfb1efc`.
+- **Aggregator:** `.#noncodesignedSha256sums` (21 artifacts, diffed against
+  the checked-in file). (For an UNTAGGED commit the dist archive can't be
   built: GitHub's commit archive uses a 40-char prefix, which changes the
   pax long-path headers.)
 - **Gates:** every artifact derivation looks its expected sha256 up by
@@ -131,6 +141,34 @@ a path, a recorded flag, a generated file, or an allocation-order effect.
 - win64 PE: no compressed debug sections in the final binutils (COMDAT
   `.debug_frame$` selection), in-source split mingw header dirs for the CRT,
   gcc-CFI cache vars, frame pointers and hardening off in the CRT.
+
+### Building at GUIX's literal DISTSRC (the `distsrcChroot` re-entry)
+The prefix maps fix what gcc RECORDS, not what it PARSES, and var-tracking's
+GGC trajectory follows the parsed path. At v32.0rc2 that alone decided one
+location list in `test/orphanage_tests.cpp`, so x86_64 sets
+`distsrcChroot = true`: `postPatch` re-execs the builder through
+`unshare --user --map-root-user --mount` into a chroot with the tree bound at
+`/distsrc-base/distsrc-<ver>-<host>`, then runs the ordinary phases there
+(same technique as `nix/darwin/release.nix`). Three traps, all hit at rc2 and
+all invisible as *build failures*:
+- **`bash -ec`, not `bash -c`.** Nix runs the real builder as `bash -e`. Without
+  `-e` a failing `buildPhase` falls through to `fixupPhase` and the derivation
+  SUCCEEDS with an empty `$out` (96 bytes), which nix registers happily; it only
+  surfaces downstream as `Can't open .../bin/*` in packaging. `nix log` is
+  unavailable here (`store = daemon`, no `/nix/var/log/nix`), so capture build
+  output with `-L` into a file and always read the recorded `EXIT=` line.
+- **`NIX_ENFORCE_PURITY=0`.** cc-wrapper drops every absolute `-I`/`-L`/`-isystem`
+  not under `$NIX_STORE`, `$NIX_BUILD_TOP` or `/tmp` (`utils.bash` `badPath`;
+  one purity block each in cc-wrapper and ld-wrapper). Under `/build/...` the
+  tree's own includes were exempt; under `/distsrc-base` they are not, so every
+  project-internal include disappears while depends' store includes still
+  resolve. darwin never hit this — its clang toolchain is bare, no cc-wrapper.
+- **Re-scrub `-frandom-seed`.** `preConfigure` strips it from
+  `NIX_CFLAGS_COMPILE`, but sourcing `$stdenv/setup` inside the chroot re-runs
+  nixpkgs' reproducible-builds hook, which re-appends it AFTER that scrub. It
+  lands in `DW_AT_producer`: 5 distinct producers x 25 bytes = exactly the
+  +125 bytes of `.debug_str` that made all 10 binaries differ from GUIX, with
+  every other debug section (`.debug_line_str` included) already identical.
 
 ### GGC/var-tracking loclists flips (the chaotic class)
 gcc's `.debug_loclists` choice among equivalent locations depends on GGC

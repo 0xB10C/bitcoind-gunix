@@ -29,6 +29,7 @@
 , gcc14Stdenv
 , pkg-config
 , cmake
+, util-linux # unshare, for the distsrcChroot path layout
 , python3
 , version
 , src
@@ -42,6 +43,11 @@
 , canonDepends ? false # rewrite depends→/bitcoin via the canon env var instead of -ffile-prefix-map
                        # (an argv map that FIRES ggc-allocates each rewrite and flips var-tracking
                        # loclists in big CUs — GUIX fires no map on its real-/bitcoin depends)
+, distsrcChroot ? false # compile at GUIX's LITERAL /distsrc-base/distsrc-<ver>-<host> inside an
+                        # unshare chroot, instead of at /build/bitcoin-<ver> with the path rewritten
+                        # afterwards. The rewrite fixes what is RECORDED, not what gcc PARSES, and
+                        # the parsed path feeds the GGC/var-tracking trajectory — see the postPatch
+                        # note below.
 # false = upstream's build_linux.sh pass (everything except the GUI);
 # true  = its build_linux_gui.sh pass (ONLY bitcoin-gui + bitcoin-qt).
 , guiOnly ? false
@@ -72,7 +78,7 @@ let
     + " -ffile-prefix-map=${guixGcc}/${hostTriple}/sys-include=/usr/include"
     + " -ffile-prefix-map=${guixGcc}/lib/gcc=/usr/lib/gcc"
     + " -ffile-prefix-map=${linuxHeaders}/include=/usr/include"
-    + (if debugCanonMap
+    + (if debugCanonMap || distsrcChroot
        then " -fdebug-prefix-map=${distsrc}/src=."
        else " -fdebug-prefix-map=/build/bitcoin-${version}=${distsrc}"
           + " -fdebug-prefix-map=/build/bitcoin-${version}/src=.");
@@ -80,8 +86,10 @@ let
   # canon env pairs (first match wins; the prefixes are disjoint). The
   # /build pair must stay FIRST so ppc64's pre-canonDepends single-pair
   # behavior is unchanged.
+  # With distsrcChroot there IS no /build/bitcoin-<ver> path to rewrite: the
+  # compile already happens at DISTSRC, so the pair would never fire.
   canonPairs =
-    lib.optional debugCanonMap "/build/bitcoin-${version}=${distsrc}"
+    lib.optional (debugCanonMap && !distsrcChroot) "/build/bitcoin-${version}=${distsrc}"
     ++ lib.optional canonDepends "${depends}=/bitcoin/depends/${hostTriple}";
   # build_linux.sh's HOST_LDFLAGS + the -static-libstdc++/-static-libgcc it
   # passes through CMAKE_EXE_LINKER_FLAGS. The ELF interpreter itself is
@@ -103,7 +111,8 @@ gcc14Stdenv.mkDerivation ({
   # package.sh), and build_linux_gui.sh configures with -Werror=dev, which
   # turns CMakeLists' "Minimum required Python not found" warning into a
   # hard error. manifest_build.scm has no python, so pass 1 stays without.
-  nativeBuildInputs = [ pkg-config cmake ] ++ lib.optional guiOnly python3 ++ crossInputs;
+  nativeBuildInputs = [ pkg-config cmake ] ++ lib.optional guiOnly python3
+    ++ lib.optional distsrcChroot util-linux ++ crossInputs;
 
   cmakeBuildDir = "build";
   # GUIX passes no build type, so bitcoin's CMakeLists defaults to
@@ -211,6 +220,72 @@ gcc14Stdenv.mkDerivation ({
   dontGzipMan = true;
   doCheck = false;
   enableParallelBuilding = true;
+} // lib.optionalAttrs distsrcChroot {
+  # GUIX compiles at /distsrc-base/distsrc-<ver>-<host>; we compiled at
+  # /build/bitcoin-<ver> and mapped the strings back afterwards. The
+  # RECORDED paths matched upstream byte-for-byte (.debug_line_str is
+  # identical), but gcc PARSES the real path, and var-tracking's GGC
+  # allocation order depends on it. At v32.0rc2 that flipped exactly one
+  # location list — the `this` of ~basic_stringbuf() in
+  # test/orphanage_tests.cpp's CU — which changed test_bitcoin.dbg by 21
+  # bytes and, through .gnu_debuglink's CRC, the stripped test_bitcoin too.
+  # Measured: with the tree at DISTSRC, net.cpp/validation.cpp/net_tests/
+  # validation_tests/setup_common all compile BYTE-IDENTICALLY; only the
+  # sensitive CU moves, onto upstream's side.
+  #
+  # The Nix sandbox root is read-only (builder is uid 1000), so the layout
+  # is recreated the way nix/darwin/release.nix already does it: unshare a
+  # user+mount namespace, assemble a new root, bind the unpacked tree at
+  # DISTSRC, chroot, and re-enter the ordinary phases there. This attribute
+  # must stay inside optionalAttrs: an always-present postPatch (even "")
+  # is an env var in the .drv and would rehash every other linux target.
+  # THREE traps live in the re-entry line below; all three were hit at rc2:
+  #  1. `bash -ec`, not `bash -c`: nix runs the real builder as `bash -e`
+  #     (see the .drv's args). Without -e a failing buildPhase falls through
+  #     to fixupPhase and the derivation SUCCEEDS with an empty $out — a
+  #     96-byte output that nix happily registers and that only shows up
+  #     downstream as "Can't open .../bin/*" in packaging.
+  #  2. NIX_ENFORCE_PURITY=0: nixpkgs' cc-wrapper drops every absolute
+  #     -I/-L/-isystem whose path is not under $NIX_STORE, $NIX_BUILD_TOP or
+  #     /tmp (utils.bash badPath, cc-wrapper.sh's single purity block). At
+  #     /build/bitcoin-<ver> the tree's own -I paths were exempt; at
+  #     /distsrc-base they are NOT, so every project-internal include
+  #     ("crypto/aes.h", "db/builder.h", …) vanishes while depends' store
+  #     includes still resolve. nix/darwin/release.nix never hit this: its
+  #     clang toolchain is bare, with no cc-wrapper.
+  #  3. The -frandom-seed scrub must be REDONE here. preConfigure strips it
+  #     from NIX_CFLAGS_COMPILE, but sourcing $stdenv/setup inside the chroot
+  #     re-runs nixpkgs' reproducible-builds hook, which re-appends
+  #     -frandom-seed=<out-hash> AFTER that scrub. It lands in DW_AT_producer:
+  #     5 distinct producers x 25 bytes = exactly the +125 bytes of
+  #     .debug_str that made all 10 binaries differ from GUIX (every other
+  #     debug section, .debug_line_str included, was already identical).
+  postPatch = ''
+    if [ -z "''${IN_DISTSRC_CHROOT:-}" ]; then
+      nr="$NIX_BUILD_TOP/nr"
+      # $stdenv/setup is a BASH script (shopt, arrays), and the sandbox's
+      # /bin/sh is busybox — running it there dies with "shopt: not found".
+      # Bake in bash's store path, reachable through the /nix/store bind;
+      # nix/darwin/release.nix likewise chroots into bash, not sh.
+      bash_bin="$(command -v bash)"
+      mkdir -p "$nr/nix/store" "$nr/proc" "$nr/dev" "$nr/bin" "$nr/usr" \
+        "$nr/etc" "$nr/tmp" "$nr$NIX_BUILD_TOP" "$nr${distsrc}"
+      cat > "$NIX_BUILD_TOP/enter-distsrc.sh" <<EOF
+    set -eu
+    mount --rbind /nix/store "$nr/nix/store"
+    mount --rbind /proc "$nr/proc"
+    mount --rbind /dev "$nr/dev"
+    mount --rbind /bin "$nr/bin"
+    if [ -d /usr ]; then mount --rbind /usr "$nr/usr"; fi
+    if [ -d /etc ]; then mount --rbind /etc "$nr/etc"; fi
+    mount --rbind /tmp "$nr/tmp"
+    mount --rbind "$NIX_BUILD_TOP" "$nr$NIX_BUILD_TOP"
+    mount --bind "$PWD" "$nr${distsrc}"
+    exec chroot "$nr" $bash_bin -ec 'export IN_DISTSRC_CHROOT=1; export NIX_ENFORCE_PURITY=0; . "\$stdenv/setup"; export NIX_CFLAGS_COMPILE=\$(echo "\$NIX_CFLAGS_COMPILE" | sed "s/-frandom-seed=[^ ]*//"); cd "${distsrc}"; phases="configurePhase buildPhase installPhase fixupPhase" genericBuild'
+    EOF
+      exec unshare --user --map-root-user --mount "$bash_bin" "$NIX_BUILD_TOP/enter-distsrc.sh"
+    fi
+  '';
 } // lib.optionalAttrs guiOnly {
   # build_linux_gui.sh builds and installs ONLY these two targets.
   buildFlags = [ "bitcoin-gui" "bitcoin-qt" ];

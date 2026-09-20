@@ -2,16 +2,23 @@
 }:
 
 let
-  # The v32.0rc1 tag (d0231bb01d83, bitcoin/bitcoin#36246 "[32.x] Bump to
-  # 32.0rc1"). GUIX's prelude.bash `git_head_version` takes the tag name
-  # without its leading `v` as the VERSION, and DISTNAME = bitcoin-<version>
-  # is what every published artifact name is built from.
-  version = "32.0rc1";
+  # The v32.0rc2 tag (bc795e60dbb2, "Bitcoin Core 32.0 release candidate 2").
+  # GUIX's prelude.bash `git_head_version` takes the tag name without its
+  # leading `v` as the VERSION, and DISTNAME = bitcoin-<version> is what
+  # every published artifact name is built from.
+  #
+  # Between v32.0rc1 and v32.0rc2 (13 commits) `depends/` is untouched and
+  # the only contrib/guix changes are codesigning-only (codesign.sh gained
+  # an `osslsigncode verify` step, manifest_codesign.scm moved to
+  # osslsigncode 2.14 + nss-certs), so no toolchain and no packaging logic
+  # changed — only src/ (netgroup, torcontrol, init, rpc/net) and the
+  # version bump, which move the binaries but not how they are built.
+  version = "32.0rc2";
 
   # SOURCE_DATE_EPOCH: the tagged commit's own commit time
-  # (2026-09-14T13:51:13+01:00), exactly like guix-build derives it
+  # (2026-09-18T11:30:29Z), exactly like guix-build derives it
   # (`git log --format=%at -1`).
-  sourceDateEpoch = 1789390273;
+  sourceDateEpoch = 1789731029;
 
   # The source tree. GitHub's archive of a TAG is `git archive
   # --prefix=bitcoin-<version>/` of the tagged commit — the same command
@@ -21,7 +28,7 @@ let
   src = pkgs.fetchurl {
     name = "bitcoin-${version}.tar.gz";
     url = "https://github.com/bitcoin/bitcoin/archive/refs/tags/v${version}.tar.gz";
-    hash = "sha256-u0kRh1HFWAH7QONkaoDoLOQaHIaPP0iMeALxvmP5lto=";
+    hash = "sha256-7qz3Kd/yChMAxm7Yx2bMbtzkLAvtKkjjJi8ZN6WBnq8=";
   };
 
   # Upstream reference hashes, parsed from the checked-in
@@ -31,10 +38,10 @@ let
   # from both files resolves to null and its gate is skipped with a
   # "no upstream gate" log line.
   #
-  # noncodesigned.SHA256SUMS is the first guix.sigs attestation for
-  # 32.0rc1 (bitcoin-core/guix.sigs#2544, Sjors). all.SHA256SUMS is absent
-  # until detached signatures exist. The files have to stay git-tracked, or
-  # flake eval won't see them.
+  # noncodesigned.SHA256SUMS is the guix.sigs attestation for 32.0rc2 —
+  # hebasto, pinheadmz and sedited all published a byte-identical file.
+  # all.SHA256SUMS is absent until detached signatures exist. The files have
+  # to stay git-tracked, or flake eval won't see them.
   parseSha256sums = file:
     if builtins.pathExists file then
       builtins.listToAttrs (builtins.concatMap
@@ -70,46 +77,19 @@ let
   # targets' gates); other hosts re-assert the same gates.
   buildSystem = pkgs.stdenv.hostPlatform.system;
 
-  # Detached signatures (bitcoin-core/bitcoin-detached-sigs @ v32.0rc1) —
-  # used by both the darwin and win64 signed-artifact flows, so they live
-  # here rather than inside either target's toolchain. The v32.0rc1 tag
-  # peels to ef47807a, the same commit the 32.x branch points at, and
-  # carries both the osx/ and win/ signatures for this rc.
+  # Detached signatures: NONE for 32.0rc2. bitcoin-core/bitcoin-detached-sigs
+  # has no v32.0rc2 tag yet (its newest is v32.0rc1) and no signer has
+  # published an all.SHA256SUMS for this rc, so there is nothing to apply
+  # and nothing to gate the result against. null switches off the signed
+  # darwin/win64 attrs (both toolchains guard them with optionalAttrs) and,
+  # with them, the codesignatures archive and the all.SHA256SUMS aggregator.
   #
-  # NOTE (2026-09-16): guix.sigs has no all.SHA256SUMS for 32.0rc1 yet (all
-  # 14 signers posted only noncodesigned.SHA256SUMS), and bitcoincore.org
-  # has no rc directory, so the 6 SIGNED artifacts + the codesignatures
-  # archive have no upstream reference hash: upstreamSha256 returns null for
-  # them and their gates only log "BUILT (no upstream gate)". Drop an
-  # all.SHA256SUMS into the repo root once it exists and every one of them
-  # is gated with no further change.
-  detachedSigsRev = "ef47807a9112c7d8d2533f8545dc022a5cef50c8"; # v32.0rc1
-  detachedSigs = pkgs.fetchFromGitHub {
-    owner = "bitcoin-core";
-    repo = "bitcoin-detached-sigs";
-    rev = detachedSigsRev;
-    hash = "sha256-6ac/N05/wim20P6Qa3K/rVvjgur1M07tk5NQnohqcb4=";
-  };
-
-  # bitcoin-${version}-codesignatures-${version}.tar.gz: codesign.sh's
-  # `git archive HEAD` of the bitcoin-detached-sigs repo at the v${version}
-  # tag — GENERATED from the same repo detachedSigs is fetched from, with
-  # .git metadata this time so `git archive` has a tree to work from. See
-  # nix/lib/codesignatures.nix for the byte-exact git-archive + gzip.
-  detachedSigsGit = pkgs.fetchgit {
-    url = "https://github.com/bitcoin-core/bitcoin-detached-sigs";
-    rev = detachedSigsRev;
-    leaveDotGit = true;
-    hash = "sha256-ugT+uq6BhkjoYelvTw7/ULeFbt1IVbRZ2CGVf9zYDik=";
-  };
-  codesignaturesArchive = import ./nix/lib/codesignatures.nix
-    { inherit (pkgs) runCommand gcc git zlib; }
-    {
-      name = "bitcoin-${version}-codesignatures-${version}.tar.gz";
-      src = detachedSigsGit;
-      # In all.SHA256SUMS only (not part of the noncodesigned set).
-      expectedSha256 = upstreamSha256 "bitcoin-${version}-codesignatures-${version}.tar.gz";
-    };
+  # The full wiring is in git history at commit 12b5cdfb1efc ("nix: wire up
+  # the v32.0rc1 detached signatures"). Restoring it for rc2 needs the new
+  # tag's rev + hashes AND an osslsigncode bump: rc2's manifest_codesign.scm
+  # moved win64 from osslsigncode 2.5 to 2.14 (and codesign.sh now runs an
+  # `osslsigncode verify` pass after attach-signature).
+  detachedSigs = null;
 
   # bitcoin-${version}.tar.gz: build.sh's `git archive --prefix=
   # bitcoin-${version}/ HEAD`. GitHub's tag archive is that same tar, so
@@ -129,7 +109,7 @@ let
   win64   = import ./nix/win64/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
   # The non-codesigned artifacts in upstream's noncodesigned.SHA256SUMS
-  # order (verified against bitcoin-core/guix.sigs#2544). guix-attest sorts
+  # order (verified against guix.sigs 32.0rc2). guix-attest sorts
   # each per-host SHA256SUMS.part fragment by its pre-basename PATH
   # (<outdir_base>/<HOST>/<file>), so the effective order is HOSTS
   # alphabetically, with dist-archive between arm64-apple-darwin and
@@ -169,51 +149,6 @@ let
     win64.unsignedZipMingw
   ];
 
-  # all.SHA256SUMS = noncodesignedArtifacts with the 6 SIGNED darwin/win64
-  # outputs and the codesignatures archive interleaved into the
-  # arm64-apple-darwin, dist-archive, x86_64-apple-darwin and win64 groups,
-  # ahead of that group's noncodesigned entries — see the ordering note
-  # above.
-  allArtifactsOrdered = [
-    # aarch64-linux-gnu
-    aarch64.debugTarballAarch64
-    aarch64.tarballAarch64
-    # arm-linux-gnueabihf
-    armhf.debugTarballArmhf
-    armhf.tarballArmhf
-    # arm64-apple-darwin (signed first)
-    "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.tar.gz"
-    "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.zip"
-    darwin.codesigningDarwinArm64
-    darwin.tarballDarwinArm64
-    darwin.zipDarwinArm64
-    # dist-archive
-    codesignaturesArchive
-    sourceDistArchive
-    # powerpc64-linux-gnu
-    ppc64.debugTarballPpc64
-    ppc64.tarballPpc64
-    # riscv64-linux-gnu
-    riscv64.debugTarballRiscv64
-    riscv64.tarballRiscv64
-    # x86_64-apple-darwin (signed first)
-    "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.tar.gz"
-    "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.zip"
-    darwin.codesigningDarwinX86
-    darwin.tarballDarwinX86
-    darwin.zipDarwinX86
-    # x86_64-linux-gnu
-    x86.debugTarball
-    x86.tarball
-    # x86_64-w64-mingw32 (win64) (signed first)
-    "${win64.signedMingw}/bitcoin-${version}-win64-setup.exe"
-    "${win64.signedMingw}/bitcoin-${version}-win64.zip"
-    win64.codesigningMingw
-    win64.debugZipMingw
-    win64.setupExeMingw
-    win64.unsignedZipMingw
-  ];
-
   # noncodesigned.SHA256SUMS of our 21 artifacts, diffed against the
   # checked-in attestation (order included) when that file exists.
   noncodesignedSha256sums = import ./nix/lib/sha256sums.nix
@@ -225,17 +160,9 @@ let
         then ./noncodesigned.SHA256SUMS else null;
     };
 
-  # all.SHA256SUMS over all 28 artifacts. No attestation exists for 32.0rc1
-  # yet, so this only PRINTS the hashes; it starts diffing the moment an
-  # all.SHA256SUMS is checked in.
-  sha256sums = import ./nix/lib/sha256sums.nix
-    { inherit (pkgs) runCommandLocal coreutils gnused diffutils; }
-    {
-      name = "all.SHA256SUMS";
-      files = allArtifactsOrdered;
-      expected = if builtins.pathExists ./all.SHA256SUMS
-        then ./all.SHA256SUMS else null;
-    };
+  # (The all.SHA256SUMS aggregator over the 28 signed + non-codesigned
+  # artifacts is off with the detached signatures — see the detachedSigs
+  # note above; it lives in git history at commit 12b5cdfb1efc.)
 in {
   inherit (x86) depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball;
   inherit (aarch64) dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
@@ -251,14 +178,12 @@ in {
   inherit (darwin) llvmPackages1914 clangDarwin lldDarwin llvmDarwin darwinSdk dependsNoQtDarwinX86 dependsNoQtDarwinArm64
     dependsDarwinX86 dependsDarwinArm64 bitcoindDarwinX86 bitcoindDarwinArm64
     tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
-    signapple codesigningDarwinX86 codesigningDarwinArm64
-    signedDarwinX86 signedDarwinArm64;
+    signapple codesigningDarwinX86 codesigningDarwinArm64;
   inherit (win64) mingwGuixGcc mingwGuixGccNoFp mingwBinutils pkgsCrossMingw dependsMingw dependsNoQtMingw
     bitcoindMingwNoGui bitcoindMingwGui
     mingwCrtStdenv mingwCrt
     bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
     nsisGcc14 nsis setupExeMingw codesigningMingw
-    osslsigncode25 signedMingw;
-  inherit src sourceDistArchive noncodesignedSha256sums
-    detachedSigs codesignaturesArchive sha256sums;
+    osslsigncode25;
+  inherit src sourceDistArchive noncodesignedSha256sums;
 }

@@ -9,11 +9,13 @@ binutils 2.41 for the Linux targets, clang/lld 19.1.4 for darwin, gcc
 14.3.0 + mingw-w64 12.0.0 for win64) — **cross-compiled from a single
 Linux host** (x86_64 or aarch64, no qemu).
 
-**Currently tracking v31.1rc1 (release candidate).** No
-`SHA256SUMS`/`bitcoin-detached-sigs` are published for the rc yet,
-so the per-binary/tarball byte-match gates and the darwin/win64
-signing pipeline are turned off — the artifacts still build, they
-just aren't asserted against unpublished upstream hashes.
+**Currently tracking v32.0rc2 (release candidate).** The 21
+non-codesigned artifacts ARE gated: each derivation asserts its own
+sha256 against the checked-in `noncodesigned.SHA256SUMS` (the
+guix.sigs attestation for this rc), so a mismatch fails the build.
+No `bitcoin-detached-sigs` tag exists for this rc yet, so the
+darwin/win64 signing pipeline and the `all.SHA256SUMS` aggregator
+are not exposed.
 
 The build only requires upstream sources (`fetchurl`/`fetchgit`) — nothing
 is taken from a pre-existing GUIX build or binary.
@@ -33,11 +35,15 @@ mirrored — every derivation gates the same upstream hashes either way.
 
 ### Per-target builds
 
-> **rc1 note**: while v31.1rc1 is in flight, the `sha256sums` /
-> `noncodesignedSha256sums` aggregators and the `codesigningDarwin*` /
-> `signedDarwin*` / `codesigningMingw` / `signedMingw` derivations
-> are not exposed (no published SHA256SUMS / detached-sigs to gate
-> against). They'll come back once v31.1 final ships.
+> **rc note**: the current target is v32.0rc2. Its 21 non-codesigned
+> artifacts are gated against the guix.sigs attestation and aggregated by
+> `.#noncodesignedSha256sums` (the flake default). The `sha256sums`
+> (all.SHA256SUMS) aggregator and the `signedDarwin*` / `signedMingw` /
+> `codesignaturesArchive` derivations are **not** exposed: no detached
+> signatures are published for this rc yet, so there is nothing to apply
+> and no all.SHA256SUMS to gate against. They come back with the
+> bitcoin-detached-sigs v32.0rc2 tag (the v32.0rc1 wiring is in git
+> history at commit 12b5cdfb1efc).
 
 ```sh
 # x86_64-linux-gnu (cross-to-self)
@@ -67,9 +73,9 @@ The first build is long — it rebuilds every target's GUIX-exact toolchain
 and the full Qt6 depends tree. A binary cache makes repeat builds fast.
 
 If a build fails and you want to inspect intermediate state, add
-`--keep-failed`. When upstream-hash gates are wired (post-rc), they
-print `OK:`/`FAIL:` lines with the hashes; in rc mode they print
-`BUILT (rc1, no upstream gate)` instead.
+`--keep-failed`. Gated artifacts print `OK:`/`FAIL:` lines with the
+hashes; an artifact whose filename is not in the checked-in
+SHA256SUMS builds ungated and prints `BUILT (no upstream gate)`.
 
 ## License
 

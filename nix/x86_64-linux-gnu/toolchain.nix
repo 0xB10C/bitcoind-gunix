@@ -399,6 +399,12 @@ let
     # var-tracking's loclist representative choice in blockmanager_tests'
     # CU (test_bitcoin-only). canon rewrites are malloc'd (GGC-neutral).
     canonDepends = true;
+    # Compile at GUIX's literal DISTSRC instead of /build/bitcoin-<ver>.
+    # v32.0rc2's netgroup.h change pushed test/orphanage_tests.cpp into the
+    # regime where the PARSED source path (not the recorded one) decides
+    # var-tracking's location-list choice; upstream parses DISTSRC, we did
+    # not. See the postPatch note in nix/lib/release-cross.nix.
+    distsrcChroot = true;
     crossInputs = x86CrossInputsNoFp;
     guixGcc = crossGuixGccX86.cc;
     linuxHeaders = linuxHeaders61;
