@@ -134,46 +134,61 @@ let
   darwin  = import ./nix/darwin/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
   win64   = import ./nix/win64/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
-  # The non-codesigned artifacts in upstream's noncodesigned.SHA256SUMS
-  # order (verified against guix.sigs 32.0rc2). guix-attest sorts
-  # each per-host SHA256SUMS.part fragment by its pre-basename PATH
+  # EVERY published artifact, in upstream's all.SHA256SUMS order (verified
+  # against guix.sigs 32.0rc2). guix-attest sorts each per-host
+  # SHA256SUMS.part fragment by its pre-basename PATH
   # (<outdir_base>/<HOST>/<file>), so the effective order is HOSTS
   # alphabetically, with dist-archive between arm64-apple-darwin and
-  # powerpc64-linux-gnu. all.SHA256SUMS (signed artifacts interleaved ahead
-  # of each darwin/win64 group) comes back with the detached sigs; the v31.1
-  # version is in git history at commit 4599977e9723.
-  noncodesignedArtifacts = [
+  # powerpc64-linux-gnu, and each group's SIGNED entries ahead of that
+  # group's noncodesigned ones.
+  #
+  # noncodesigned.SHA256SUMS is EXACTLY this list with the `signed = true`
+  # rows removed — checked line-for-line against both checked-in
+  # attestations — so both aggregators are derived from this one table
+  # rather than kept in sync by hand. (The v31.1 ordering is in git history
+  # at commit 4599977e9723.)
+  artifactTable = [
     # aarch64-linux-gnu
-    aarch64.debugTarballAarch64
-    aarch64.tarballAarch64
+    { file = aarch64.debugTarballAarch64; }
+    { file = aarch64.tarballAarch64; }
     # arm-linux-gnueabihf
-    armhf.debugTarballArmhf
-    armhf.tarballArmhf
-    # arm64-apple-darwin
-    darwin.codesigningDarwinArm64
-    darwin.tarballDarwinArm64
-    darwin.zipDarwinArm64
+    { file = armhf.debugTarballArmhf; }
+    { file = armhf.tarballArmhf; }
+    # arm64-apple-darwin (signed first)
+    { signed = true; file = "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.tar.gz"; }
+    { signed = true; file = "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.zip"; }
+    { file = darwin.codesigningDarwinArm64; }
+    { file = darwin.tarballDarwinArm64; }
+    { file = darwin.zipDarwinArm64; }
     # dist-archive
-    sourceDistArchive
+    { signed = true; file = codesignaturesArchive; }
+    { file = sourceDistArchive; }
     # powerpc64-linux-gnu
-    ppc64.debugTarballPpc64
-    ppc64.tarballPpc64
+    { file = ppc64.debugTarballPpc64; }
+    { file = ppc64.tarballPpc64; }
     # riscv64-linux-gnu
-    riscv64.debugTarballRiscv64
-    riscv64.tarballRiscv64
-    # x86_64-apple-darwin
-    darwin.codesigningDarwinX86
-    darwin.tarballDarwinX86
-    darwin.zipDarwinX86
+    { file = riscv64.debugTarballRiscv64; }
+    { file = riscv64.tarballRiscv64; }
+    # x86_64-apple-darwin (signed first)
+    { signed = true; file = "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.tar.gz"; }
+    { signed = true; file = "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.zip"; }
+    { file = darwin.codesigningDarwinX86; }
+    { file = darwin.tarballDarwinX86; }
+    { file = darwin.zipDarwinX86; }
     # x86_64-linux-gnu
-    x86.debugTarball
-    x86.tarball
-    # x86_64-w64-mingw32 (win64)
-    win64.codesigningMingw
-    win64.debugZipMingw
-    win64.setupExeMingw
-    win64.unsignedZipMingw
+    { file = x86.debugTarball; }
+    { file = x86.tarball; }
+    # x86_64-w64-mingw32 (win64) (signed first)
+    { signed = true; file = "${win64.signedMingw}/bitcoin-${version}-win64-setup.exe"; }
+    { signed = true; file = "${win64.signedMingw}/bitcoin-${version}-win64.zip"; }
+    { file = win64.codesigningMingw; }
+    { file = win64.debugZipMingw; }
+    { file = win64.setupExeMingw; }
+    { file = win64.unsignedZipMingw; }
   ];
+  allArtifactsOrdered = map (a: a.file) artifactTable;
+  noncodesignedArtifacts =
+    map (a: a.file) (builtins.filter (a: !(a.signed or false)) artifactTable);
 
   # noncodesigned.SHA256SUMS of our 21 artifacts, diffed against the
   # checked-in attestation (order included) when that file exists.
@@ -185,51 +200,6 @@ let
       expected = if builtins.pathExists ./noncodesigned.SHA256SUMS
         then ./noncodesigned.SHA256SUMS else null;
     };
-
-  # all.SHA256SUMS = noncodesignedArtifacts with the 6 SIGNED darwin/win64
-  # outputs and the codesignatures archive interleaved into the
-  # arm64-apple-darwin, dist-archive, x86_64-apple-darwin and win64 groups,
-  # ahead of that group's noncodesigned entries — the order of the
-  # checked-in guix.sigs all.SHA256SUMS, line for line.
-  allArtifactsOrdered = [
-    # aarch64-linux-gnu
-    aarch64.debugTarballAarch64
-    aarch64.tarballAarch64
-    # arm-linux-gnueabihf
-    armhf.debugTarballArmhf
-    armhf.tarballArmhf
-    # arm64-apple-darwin (signed first)
-    "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.tar.gz"
-    "${darwin.signedDarwinArm64}/bitcoin-${version}-arm64-apple-darwin.zip"
-    darwin.codesigningDarwinArm64
-    darwin.tarballDarwinArm64
-    darwin.zipDarwinArm64
-    # dist-archive
-    codesignaturesArchive
-    sourceDistArchive
-    # powerpc64-linux-gnu
-    ppc64.debugTarballPpc64
-    ppc64.tarballPpc64
-    # riscv64-linux-gnu
-    riscv64.debugTarballRiscv64
-    riscv64.tarballRiscv64
-    # x86_64-apple-darwin (signed first)
-    "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.tar.gz"
-    "${darwin.signedDarwinX86}/bitcoin-${version}-x86_64-apple-darwin.zip"
-    darwin.codesigningDarwinX86
-    darwin.tarballDarwinX86
-    darwin.zipDarwinX86
-    # x86_64-linux-gnu
-    x86.debugTarball
-    x86.tarball
-    # x86_64-w64-mingw32 (win64) (signed first)
-    "${win64.signedMingw}/bitcoin-${version}-win64-setup.exe"
-    "${win64.signedMingw}/bitcoin-${version}-win64.zip"
-    win64.codesigningMingw
-    win64.debugZipMingw
-    win64.setupExeMingw
-    win64.unsignedZipMingw
-  ];
 
   # all.SHA256SUMS over all 28 artifacts, diffed against the checked-in
   # guix.sigs attestation (10 signers posted a byte-identical one for rc2).

@@ -26,30 +26,15 @@
         let
           pkgs = import nixpkgs { inherit system; };
           drvs = import ./default.nix { inherit pkgs; };
-        in {
-          inherit (drvs) depends dependsNoQt bitcoind bitcoindNoGui bitcoindGui packaged tarball debugTarball
-            dependsAarch64 dependsNoQtAarch64 bitcoindAarch64 packagedAarch64
-            bitcoindNoGuiAarch64 bitcoindGuiAarch64 tarballAarch64
-            debugTarballAarch64 dependsRiscv64 bitcoindRiscv64 tarballRiscv64 debugTarballRiscv64
-            dependsArmhf bitcoindArmhf tarballArmhf debugTarballArmhf
-            dependsPpc64 bitcoindPpc64 tarballPpc64 debugTarballPpc64
-            riscv64Cross armhfCross ppc64Cross
-            crossGlibc231 crossGlibc231X86 crossGuixGccX86
-            clangDarwin lldDarwin llvmDarwin darwinSdk
-            dependsDarwinX86 dependsDarwinArm64 dependsNoQtDarwinX86 dependsNoQtDarwinArm64
-            bitcoindDarwinX86 bitcoindDarwinArm64
-            tarballDarwinX86 tarballDarwinArm64 zipDarwinX86 zipDarwinArm64
-            signapple
-            codesigningDarwinX86 codesigningDarwinArm64
-            signedDarwinX86 signedDarwinArm64
-            mingwGuixGcc mingwGuixGccNoFp mingwBinutils dependsMingw dependsNoQtMingw
-            bitcoindMingwNoGui bitcoindMingwGui
-            mingwCrtStdenv mingwCrt
-            bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
-            nsisGcc14 nsis setupExeMingw codesigningMingw
-            osslsigncode214 signedMingw
-            sourceDistArchive codesignaturesArchive
-            noncodesignedSha256sums sha256sums;
+          lib = nixpkgs.lib;
+        in
+        # Everything default.nix defines, minus the handful of attrs that are
+        # package SETS rather than derivations (pkgsCrossMingw,
+        # llvmPackages1914 and the per-target <arch>Cross bundles) — a flake
+        # `packages` attrset may only hold derivations, and three of those
+        # bundles used to be listed here by hand. Deriving the list both
+        # fixes that and stops it drifting out of sync with default.nix.
+        lib.filterAttrs (_: lib.isDerivation) drvs // {
           # noncodesigned.SHA256SUMS over all 21 artifacts is the default
           # build target.
           default = drvs.noncodesignedSha256sums;
