@@ -548,16 +548,21 @@ let
   };
 
   # ---- signed win64-setup.exe + win64.zip -----------------------------------
-  # GUIX's osslsigncode is 2.5 (manifest.scm); nixpkgs ships 2.13. attach-
-  # signature's PE-patching changed between versions, so pin the version for
-  # byte-identical output.
-  osslsigncode25 = pkgs.osslsigncode.overrideAttrs (old: {
-    version = "2.5";
+  # attach-signature's PE-patching changed between versions, so pin GUIX's
+  # exact osslsigncode. v32.0rc2's manifest_codesign.scm defines
+  # osslsigncode-2.14 (git tag "2.14" of mtrojnar/osslsigncode) — up from
+  # 2.5 at rc1 — alongside nss-certs for codesign.sh's new `osslsigncode
+  # verify` pass. That verify pass reads the file attach-signature already
+  # wrote, so it cannot change the emitted bytes (and nix/win64/signed.nix
+  # reimplements this flow rather than running codesign.sh); only the
+  # attach-signature version matters here.
+  osslsigncode214 = pkgs.osslsigncode.overrideAttrs (old: {
+    version = "2.14";
     src = pkgs.fetchFromGitHub {
       owner = "mtrojnar";
       repo = "osslsigncode";
-      rev = "2.5";
-      sha256 = "sha256-33uT9PFD1YEIMzifZkpbl2EAoC98IsM72K4rRjDfh8g=";
+      rev = "2.14";
+      hash = "sha256-jAiGW6B3wxasESvpMRYxh0sWIPkV7L37owpwlNNlyxs=";
     };
     doCheck = false;
   });
@@ -567,7 +572,7 @@ let
   # checked-in file.
   signedMingw = pkgs.callPackage ./signed.nix {
     inherit version sourceDateEpoch detachedSigs;
-    osslsigncode = osslsigncode25;
+    osslsigncode = osslsigncode214;
     codesigningTarball = codesigningMingw;
     expectedSetupSha256 = upstreamSha256 "bitcoin-${version}-win64-setup.exe";
     expectedZipSha256 = upstreamSha256 "bitcoin-${version}-win64.zip";
@@ -578,7 +583,7 @@ in {
     mingwCrtStdenv mingwCrt
     bitcoindMingw packagedMingw unsignedZipMingw debugZipMingw
     nsisGcc14 nsis setupExeMingw codesigningMingw
-    osslsigncode25;
+    osslsigncode214;
 } // pkgs.lib.optionalAttrs (detachedSigs != null) {
   # Only wired up when there are detached signatures to apply — see the
   # detachedSigs note in default.nix.

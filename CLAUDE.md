@@ -48,14 +48,21 @@ is built, the root causes that matter, and the method.
   - darwin x86_64/arm64 `-unsigned.tar.gz`, `-unsigned.zip`,
     `-codesigning.tar.gz` (`tarballDarwin*`, `zipDarwin*`, `codesigningDarwin*`)
   - win64 `unsignedZipMingw`, `debugZipMingw`, `setupExeMingw`, `codesigningMingw`
-- **Signed artifacts are NOT wired up at rc2.** `detachedSigs = null`, and
-  `signedDarwin*`/`signedMingw`/`codesignaturesArchive`/`sha256sums` are gone
-  from `default.nix` and `flake.nix`: bitcoin-detached-sigs has no `v32.0rc2`
-  tag yet, and rc2's `manifest_codesign.scm` moves osslsigncode 2.5 → 2.14
-  (+ `nss-certs`), so restoring the wiring needs that bump too. The rc1
-  version of all of it is in git at commit `12b5cdfb1efc`.
-- **Aggregator:** `.#noncodesignedSha256sums` (21 artifacts, diffed against
-  the checked-in file). (For an UNTAGGED commit the dist archive can't be
+- **Signed artifacts are wired up AND gated** against bitcoin-detached-sigs
+  `v32.0rc2` (tag `23d1304d`, peels to `c573e805`; carries `osx/` + `win/`):
+  `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw` (2), plus
+  `codesignaturesArchive`. Unlike rc1, this rc HAS an `all.SHA256SUMS` — 10
+  of the 11 guix.sigs signers published a byte-identical one — so it is
+  checked in at the repo root and `upstreamSha256` resolves all 7 extra
+  filenames with no code change. win64 needs osslsigncode **2.14**
+  (`osslsigncode214`), per rc2's `manifest_codesign.scm`; `codesign.sh`'s new
+  `osslsigncode verify` pass only re-reads what `attach-signature` already
+  wrote, so it cannot change the emitted bytes. **Verified 2026-09-21: all
+  28 artifacts reproduce and `.#sha256sums` equals the checked-in
+  all.SHA256SUMS** (see the win64 note on 2.14's `-CAfile` removal).
+- **Aggregators:** `.#noncodesignedSha256sums` (21 artifacts) and
+  `.#sha256sums` (all 28), each diffed against its checked-in attestation.
+  (For an UNTAGGED commit the dist archive can't be
   built: GitHub's commit archive uses a 40-char prefix, which changes the
   pax long-path headers.)
 - **Gates:** every artifact derivation looks its expected sha256 up by
@@ -232,6 +239,17 @@ glibc `.so` reorders the stubs of big binaries.
   guix's default cross binutils, no unaligned-vector patch.
 - `package.nix` sets `dontUseCmakeConfigure` (cmake is an input only for
   `cmake -P GenerateWindowsInstaller.cmake`).
+- **osslsigncode 2.14 (v32.0rc2) removed `-CAfile` from `attach-signature`.**
+  2.5 verified in-process after attaching and still wrote the output; 2.14
+  split verification into a separate `verify` command, so `-CAfile` there is
+  a hard `Unknown option` error that writes NOTHING. That is why upstream's
+  codesign.sh gained a standalone `osslsigncode verify … -ignore-crl
+  -ignore-cdp` (and nss-certs) in the same change. `nix/win64/signed.nix`
+  passes only `-in/-out/-sigin`, and must NOT wrap the call in `|| true`:
+  with no verification step left to tolerate, swallowing the exit code just
+  turns a missing signature into a later `mv: cannot stat`. The separate
+  verify pass re-reads what was already written, so it changes no bytes and
+  is not reproduced.
 
 ## Retargeting to a new commit or release
 

@@ -9,13 +9,12 @@ binutils 2.41 for the Linux targets, clang/lld 19.1.4 for darwin, gcc
 14.3.0 + mingw-w64 12.0.0 for win64) — **cross-compiled from a single
 Linux host** (x86_64 or aarch64, no qemu).
 
-**Currently tracking v32.0rc2 (release candidate).** The 21
-non-codesigned artifacts ARE gated: each derivation asserts its own
-sha256 against the checked-in `noncodesigned.SHA256SUMS` (the
-guix.sigs attestation for this rc), so a mismatch fails the build.
-No `bitcoin-detached-sigs` tag exists for this rc yet, so the
-darwin/win64 signing pipeline and the `all.SHA256SUMS` aggregator
-are not exposed.
+**Currently tracking v32.0rc2 (release candidate).** All 28 published
+artifacts ARE gated: each derivation asserts its own sha256 against a
+checked-in guix.sigs attestation — `noncodesigned.SHA256SUMS` for the
+21 non-codesigned artifacts, `all.SHA256SUMS` for those plus the 6
+signed darwin/win64 artifacts and the codesignatures archive — so a
+mismatch fails the build.
 
 The build only requires upstream sources (`fetchurl`/`fetchgit`) — nothing
 is taken from a pre-existing GUIX build or binary.

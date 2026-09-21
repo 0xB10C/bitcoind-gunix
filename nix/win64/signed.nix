@@ -10,11 +10,18 @@
 # detached-sigs .pem (codesignatures/win/...), then `find|sort|zip -X@` the
 # resulting bitcoin-<version>/ tree.
 #
-# osslsigncode's attach-signature writes the signed PE (incl. the recomputed
-# PE checksum) BEFORE its post-attach `-CAfile` verification step, and keeps
-# the output even if that verification fails — so the output bytes don't
-# depend on -CAfile content; `|| true` just keeps a verification-only
-# nonzero exit from aborting the build.
+# osslsigncode 2.14 (GUIX's pin since v32.0rc2; 2.5 before that) REMOVED
+# -CAfile from attach-signature — `osslsigncode attach-signature --help`
+# lists only -add-msi-dse/-h/-in/-nest/-out/-sigin, and -CAfile now exists
+# only under the separate `verify` command. Passing it makes 2.14 exit with
+# "Unknown option: -CAfile" and write NO output. That split is exactly why
+# upstream's codesign.sh gained a standalone `osslsigncode verify -CAfile …
+# -ignore-crl -ignore-cdp` pass (and manifest_codesign.scm gained nss-certs)
+# at the same time. That verify pass only re-reads the file attach-signature
+# already wrote, so it cannot change the emitted bytes and is not reproduced
+# here. Do NOT add `|| true` back: with 2.14 there is no verification step
+# left to tolerate, so any nonzero exit is a real failure, and swallowing it
+# only turns a missing signature into a confusing `mv: cannot stat` later.
 { lib
 , runCommand
 , gnutar
@@ -22,7 +29,6 @@
 , coreutils
 , findutils
 , osslsigncode
-, cacert
 , version
 , sourceDateEpoch    # release tag commit epoch (== GUIX SOURCE_DATE_EPOCH)
 , codesigningTarball # win64-codesigning.tar.gz drv (codesigningMingw)
@@ -61,9 +67,7 @@ runCommand "bitcoin-${version}-win64-signed"
     osslsigncode attach-signature \
       -in "unsigned/$bin_base" \
       -out "$WORKDIR/$out_base" \
-      -CAfile ${cacert}/etc/ssl/certs/ca-bundle.crt \
-      -sigin codesignatures/win/"$bin_base".pem \
-      || true
+      -sigin codesignatures/win/"$bin_base".pem
   }
 
   sign "${distname}-win64-setup-unsigned.exe"
