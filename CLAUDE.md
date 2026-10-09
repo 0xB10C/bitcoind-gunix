@@ -40,10 +40,11 @@ is built, the root causes that matter, and the method.
   codesignatures archive. x86_64 keeps `distsrcChroot = true`.
 - **The 6 win64 artifacts do NOT reproduce** (4 unsigned + the 2 signed
   derived from them) — a single var-tracking location list in a single CU.
-  Localized to the byte; see the `win64 at v32.0rc3` entry in the
-  GGC/var-tracking section of the root-cause catalogue for the evidence,
-  the ten hypotheses ruled out, the single-CU replay harness, and what is
-  still missing to close it.
+  CAUSE LOCALIZED to our mingw gcc BINARY: GUIX's own cross gcc, run against
+  OUR inputs, reproduces GUIX's loclist exactly. See the `win64 at v32.0rc3`
+  entry in the GGC/var-tracking section of the root-cause catalogue for the
+  decisive experiment, the ten ruled-out hypotheses, the single-CU replay
+  harness, and the remaining bisect of our gcc build.
 - **The branch-off commit** was verified against a local guix build (the
   user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs, the
   GUI-pass `distsrc-*/build` trees with CMakeCache.txt and objects, the
@@ -211,8 +212,11 @@ differences flip ONE location list in a big CU while everything else matches.
   flip it back and forth non-monotonically, so look for ANY preprocessor-visible
   input difference, not for a count.
 
-**win64 at v32.0rc3 — OPEN.** The 6 win64 artifacts miss; everything else
-reproduces. Localized completely, cause not yet found:
+**win64 at v32.0rc3 — CAUSE LOCALIZED to OUR mingw gcc BINARY (2026-10-09).**
+The 6 win64 artifacts miss; everything else reproduces. GUIX's own cross gcc,
+run against OUR inputs in our replay chroot, produces GUIX's loclist exactly
+(214854, `.debug_info` 0x280df4) where ours produces 214863 from the same
+inputs — see "THE DECISIVE EXPERIMENT" below. The localization:
 - `unsigned.zip`: of 26 members only `libexec/test_bitcoin.exe` differs
   (same uncompressed size, different CRC); the other 8 binaries, the
   man pages and the configs are byte-identical. `debug.zip`: only
@@ -333,38 +337,63 @@ map where we pass two (`/build→DISTSRC` plus `/build/src=.`); the
 `distsrcChroot` arm above already collapsed ours to that single map and
 changed nothing, so the map count is not the lever either.
 
-WHAT IS STILL MISSING TO CLOSE THIS. Every input has now been shown
-identical and every path and allocator knob shown inert, which leaves the
-compiler BINARY itself — and we have GUIX's output bytes but not GUIX's
-mingw compiler, so the decisive comparison cannot be run. The local
-branch-off reference does NOT fill the gap: its win64 distsrc tree is the
-GUI pass only (377 objects, no `test_bitcoin.dir`, no
-`cuckoocache_tests.cpp.obj`) and `guix-x86_64-toolchain.tar.gz` contains no
-mingw store paths. What would close it, in order of value:
-1. GUIX's mingw cross toolchain closure for pin `c5eee3336cc1`
-   (`gcc-cross-x86_64-w64-mingw32-14.3.0` + its `-lib`,
-   `binutils-cross-…-2.46.0`, the mingw-w64 libc/winpthreads), e.g.
-   `tar czf win64-toolchain.tar.gz $(guix gc --requisites <gcc-cross path>)`
-   after a win64 guix build. Bind-mounted at its literal `/gnu/store` paths
-   (the replay chroot already does this), compiling this one CU with GUIX's
-   own cc1plus against OUR inputs splits "compiler binary" from "inputs" in
-   a single ~1-minute run.
-2. The single object `build/src/test/CMakeFiles/test_bitcoin.dir/
-   cuckoocache_tests.cpp.obj` from a guix win64 rc3 build — the .o oracle
-   this CU has never had, which turns the comparison into a DIE-level diff
-   instead of an inference from the linked `.dbg`.
-3. The whole NoQt-pass (`build_win.sh`) distsrc tree, which is where
-   test_bitcoin is built; the GUI pass does not build it.
+THE DECISIVE EXPERIMENT (2026-10-09). The user supplied GUIX's win64
+toolchain closure for pin `c5eee3336cc1` (92 store paths, 1.8 GB, extracted
+from `/home/infra/win64-profile-closure.tar.gz` to
+`/home/infra/guix-win64-store/gnu/store`). Bind-mounted at `/gnu/store` in
+the replay chroot, GUIX's cross gcc runs natively on this machine, and
+compiling `cuckoocache_tests.cpp` with it against OUR inputs gives:
+
+    ours (control)          loclists_unit=214863   debug_info=0x00280df4
+    GUIX gcc + our inputs   loclists_unit=214854   debug_info=0x00280df4
+    GUIX published target   loclists_unit=214854   debug_info=0x00280df4
+
+So the INPUTS were never the problem — consistent with all ten negatives —
+and OUR GCC BINARY is. Mechanics for re-running it (`/home/infra/rc3-replay`,
+`goG3.sh` + `innerG3.sh`): GUIX's cross gcc lists NO `sys-include`; the mingw
+CRT comes from the winpthreads package via `CROSS_CPLUS_INCLUDE_PATH` /
+`CROSS_CPATH` (guix's cross-environment patch), and plain `CPATH` /
+`CPLUS_INCLUDE_PATH` are IGNORED — verified by probing all six. `-idirafter
+<winpthreads>/include` yields an identical search chain and is what the
+harness uses, because the CRT dir MUST come after the built-in `include/c++`
+or `cstdlib`'s `#include_next <stdlib.h>` cannot resolve. Its `include/c++`
+is version-LESS (hence our `--with-gxx-include-dir` map). Strip nixpkgs'
+mcfgthread `-isystem` entries from `NIX_CFLAGS_COMPILE` for that arm or the
+two CRTs collide. `gcc -v` prints NO configure string (guix patches it out),
+so diff against guix's package definition rather than the binary.
+
+NEXT: bisect our gcc build against guix's. Our configure carries nixpkgs
+extras guix lacks (`--enable-plugin`, `--with-system-zlib`,
+`--disable-libstdcxx-pch`, `--enable-default-pie`, `--enable-__cxa_atexit`,
+`--with-build-sysroot=/` vs guix's `--with-sysroot=/`, isl 0.20 vs 0.24, mpc
+1.4.0 vs 1.3.1, and a versioned `--with-gxx-include-dir` vs guix's
+version-less), and nixpkgs patches guix lacks. Of those patches only three
+touch cc1plus at all — `gcc-12-no-sys-dirs.patch` (cppdefault.cc),
+`mangle-NIX_STORE-in-__FILE__.patch` (file-prefix-map.cc, and it
+ggc-allocates) and `cfi_startproc-reorder-label-14-1.diff` (DWARF/final) —
+the rest are libsanitizer/ppc/riscv/c++tools/libstdc++-only and cannot
+affect a mingw cc1plus run. Read those three before building variants; the
+replay makes each variant a ~1-minute check once its gcc exists.
+
+HISTORICAL NOTE on getting here: the local branch-off reference could NOT
+supply the oracle — its win64 distsrc tree is the GUI pass only (377
+objects, no `test_bitcoin.dir`, no `cuckoocache_tests.cpp.obj`), because
+`build_win.sh` ends with `rm -rf "$DISTSRC"/build`, so the NoQt pass's
+objects never survive a completed guix build; and
+`guix-x86_64-toolchain.tar.gz` holds no mingw paths. Hence the toolchain
+closure rather than the object was the thing to ask for — and it is the
+better artifact anyway, since it generates the oracle for ANY CU at any
+future rc without another round trip.
 
 Where that leaves it: GGC allocation order is deterministic given the gcc
-source plus the input, the input is identical by every measure above, and
-our build is deterministic (two independent builds, one of them at a
-different path, produced identical bytes). So the divergence is a GGC-margin
-difference whose source is not yet identified. The next untried angle is a
-gcc instrumented to log ggc allocation counts at the point var-tracking
-chooses this list, compared between a trigger and a non-trigger compile —
-the same "patch the tool to print its internal order" technique the linker
-stub-order entry below used.
+source plus the input; the input is identical by every measure above, and
+our build is deterministic (two independent builds, one at a different path,
+produced identical bytes). The experiment above closes the loop: same
+inputs, different compiler binary, different answer — so what remains is to
+find which difference in OUR gcc BUILD moves it, not to hunt further for an
+input difference. The instrumented-gcc idea (logging ggc counts around
+var-tracking's choice) is no longer the next step, because a direct A/B
+against GUIX's own compiler is now available and far cheaper.
 
 Classified: the CU is GGC-timing sensitive. `--param ggc-min-expand=30`
 reproduces GUIX's loclists length exactly (214854) and is NOT recorded in
