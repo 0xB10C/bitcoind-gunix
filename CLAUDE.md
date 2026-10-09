@@ -42,7 +42,8 @@ is built, the root causes that matter, and the method.
   derived from them) — a single var-tracking location list in a single CU.
   Localized to the byte; see the `win64 at v32.0rc3` entry in the
   GGC/var-tracking section of the root-cause catalogue for the evidence,
-  the seven hypotheses ruled out, and the single-CU replay harness.
+  the nine hypotheses ruled out, the single-CU replay harness, and what is
+  still missing to close it.
 - **The branch-off commit** was verified against a local guix build (the
   user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs, the
   GUI-pass `distsrc-*/build` trees with CMakeCache.txt and objects, the
@@ -288,6 +289,42 @@ Ruled out, each with evidence:
   `--enable-default-pie`) are all either codegen-neutral or demonstrably
   inert here: ANY codegen-affecting default would move all 8 binaries, and 7
   of 8 are byte-identical.
+- **Our own `gcc-debug-canon-prefix-map.patch`** — the ONLY source-level
+  difference between our mingw gcc and GUIX's. A gcc rebuilt with that patch
+  dropped (8 patches instead of 9; store path
+  `gh0r8bi2siym0fk8dgvkwfis71008aqx`) compiles this CU to the IDENTICAL
+  214863 / `.debug_info` 0x280df4. So the patch is not the cause — and this
+  is also the positive half of the "validate both directions" rule for it:
+  inert when it does not fire, exactly as its header claims.
+- **Host allocator state.** `MALLOC_PERTURB_=165`, `MALLOC_TOP_PAD_`,
+  `MALLOC_MMAP_THRESHOLD_`, `MALLOC_ARENA_MAX=1` and
+  `GLIBC_TUNABLES=glibc.malloc.tcache_count=0` all leave it at 214863. The
+  decision therefore does not read heap ADDRESSES — consistent with our
+  builds being bit-reproducible under ASLR, and it means the lever is an
+  allocation SEQUENCE / sort-tie difference, not an address one.
+
+WHAT IS STILL MISSING TO CLOSE THIS. Every input has now been shown
+identical and every path and allocator knob shown inert, which leaves the
+compiler BINARY itself — and we have GUIX's output bytes but not GUIX's
+mingw compiler, so the decisive comparison cannot be run. The local
+branch-off reference does NOT fill the gap: its win64 distsrc tree is the
+GUI pass only (377 objects, no `test_bitcoin.dir`, no
+`cuckoocache_tests.cpp.obj`) and `guix-x86_64-toolchain.tar.gz` contains no
+mingw store paths. What would close it, in order of value:
+1. GUIX's mingw cross toolchain closure for pin `c5eee3336cc1`
+   (`gcc-cross-x86_64-w64-mingw32-14.3.0` + its `-lib`,
+   `binutils-cross-…-2.46.0`, the mingw-w64 libc/winpthreads), e.g.
+   `tar czf win64-toolchain.tar.gz $(guix gc --requisites <gcc-cross path>)`
+   after a win64 guix build. Bind-mounted at its literal `/gnu/store` paths
+   (the replay chroot already does this), compiling this one CU with GUIX's
+   own cc1plus against OUR inputs splits "compiler binary" from "inputs" in
+   a single ~1-minute run.
+2. The single object `build/src/test/CMakeFiles/test_bitcoin.dir/
+   cuckoocache_tests.cpp.obj` from a guix win64 rc3 build — the .o oracle
+   this CU has never had, which turns the comparison into a DIE-level diff
+   instead of an inference from the linked `.dbg`.
+3. The whole NoQt-pass (`build_win.sh`) distsrc tree, which is where
+   test_bitcoin is built; the GUI pass does not build it.
 
 Where that leaves it: GGC allocation order is deterministic given the gcc
 source plus the input, the input is identical by every measure above, and
