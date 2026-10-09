@@ -580,6 +580,23 @@ glibc `.so` reorders the stubs of big binaries.
 
 ## Ops hazards on this machine
 
+- **NEVER `nix build -o <a git-tracked SHA256SUMS name>`.** `-o` deletes
+  whatever is at that path and puts a result SYMLINK there, so
+  `nix build .#sha256sums -o all.SHA256SUMS` destroys the checked-in
+  attestation, and `-o noncodesigned.SHA256SUMS` turns it into a symlink into
+  the store. Because `parseSha256sums` reads those files at EVAL time, the
+  next evaluation then follows the symlink to an absolute store path and dies
+  with `access to absolute path '/nix/store/…-noncodesigned.SHA256SUMS' is
+  forbidden in pure evaluation mode` — an error that names the store path and
+  gives no hint that a tracked file was clobbered. Recovery is
+  `git checkout -- all.SHA256SUMS noncodesigned.SHA256SUMS` (check
+  `git status` for a ` D` delete and a ` T` type-change). The aggregators
+  already diff themselves against the checked-in files and fail on mismatch,
+  so there is nothing to gain from `-o`: use
+  `nix build .#sha256sums --no-link --print-out-paths` (then `cmp` if you want
+  to see it), or `-o all.SHA256SUMS.built` like `.github/workflows/nix-ci.yml`
+  does.
+
 - A host-side scheduled GC (~00:00) deletes every built store path: this
   container's daemon registers no GC roots (`gcroots` not writable). Expect
   full rebuilds after midnight; `result-*` links do not protect anything.
