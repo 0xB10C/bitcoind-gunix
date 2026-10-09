@@ -310,6 +310,29 @@ Ruled out, each with evidence:
   builds being bit-reproducible under ASLR, and it means the lever is an
   allocation SEQUENCE / sort-tie difference, not an address one.
 
+CONFIRMED BY AN INDEPENDENT GUIX BUILD (2026-10-09, the user's own, on
+DIFFERENT hardware from this machine): all four published win64 hashes
+reproduce exactly —
+`d8cee48e…` codesigning.tar.gz, `c0f44ca3…` debug.zip, `4aa93275…`
+setup-unsigned.exe, `d74c5c55…` unsigned.zip. Two consequences:
+- The published win64 bytes ARE reproducible from guix pin `c5eee3336cc1`
+  on arbitrary hardware, so the divergence is entirely on OUR side; it is
+  not an artifact of whatever machine produced the release.
+- It definitively kills any "GUIX's builder had unusual GGC state" theory
+  (different physmem/rlimits on a second machine would have to land on the
+  same answer by luck), which matches the `ggc-min-expand=30` red herring
+  above.
+That build's win64 `CMakeCache.txt` also confirms the toolchain is unchanged
+from the branch-off: every store path is identical (`6ydp3m6z…`
+gcc-cross-14.3.0, `gca8j0n2v…` binutils-cross-2.46.0, `bcm8is7b…`
+cmake-minimal-3.31.10, `z6ykgdnq…` winpthreads-13.0.0, `x0iw1v0m…`
+posix-toolchain, `fzsjy9a5…` gcc-cross-lib), with 89 distinct `/gnu/store`
+paths in the `-ffile-prefix-map` set. Its base `CXX_FLAGS` are
+`-O2 -g <89 maps> -fdebug-prefix-map=<DISTSRC>/src=. -fno-ident` — ONE debug
+map where we pass two (`/build→DISTSRC` plus `/build/src=.`); the
+`distsrcChroot` arm above already collapsed ours to that single map and
+changed nothing, so the map count is not the lever either.
+
 WHAT IS STILL MISSING TO CLOSE THIS. Every input has now been shown
 identical and every path and allocator knob shown inert, which leaves the
 compiler BINARY itself — and we have GUIX's output bytes but not GUIX's
