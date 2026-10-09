@@ -42,7 +42,7 @@ is built, the root causes that matter, and the method.
   derived from them) — a single var-tracking location list in a single CU.
   Localized to the byte; see the `win64 at v32.0rc3` entry in the
   GGC/var-tracking section of the root-cause catalogue for the evidence,
-  the nine hypotheses ruled out, the single-CU replay harness, and what is
+  the ten hypotheses ruled out, the single-CU replay harness, and what is
   still missing to close it.
 - **The branch-off commit** was verified against a local guix build (the
   user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs, the
@@ -296,6 +296,13 @@ Ruled out, each with evidence:
   214863 / `.debug_info` 0x280df4. So the patch is not the cause — and this
   is also the positive half of the "validate both directions" rule for it:
   inert when it does not fire, exactly as its header claims.
+- **The HOST compiler that builds our cross gcc.** This was the strongest
+  remaining non-input hypothesis, by direct precedent: CLAUDE.md's darwin entry
+  has rcc's `std::sort` tie breaking differently under libc++ vs libstdc++. It
+  is dead — `mingwGuixGcc.cc.stdenv.cc` is **gcc 14.3.0**, the same version
+  GUIX builds its cross gcc with (its win64 `CMakeCache.txt` store paths show
+  `gcc-14.3.0`), so cc1plus is compiled by the same libstdc++ release and any
+  `std::sort`/`qsort` tie is broken the same way.
 - **Host allocator state.** `MALLOC_PERTURB_=165`, `MALLOC_TOP_PAD_`,
   `MALLOC_MMAP_THRESHOLD_`, `MALLOC_ARENA_MAX=1` and
   `GLIBC_TUNABLES=glibc.malloc.tcache_count=0` all leave it at 214863. The
