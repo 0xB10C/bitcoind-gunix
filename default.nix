@@ -2,23 +2,25 @@
 }:
 
 let
-  # The v32.0rc2 tag (bc795e60dbb2, "Bitcoin Core 32.0 release candidate 2").
-  # GUIX's prelude.bash `git_head_version` takes the tag name without its
-  # leading `v` as the VERSION, and DISTNAME = bitcoin-<version> is what
-  # every published artifact name is built from.
+  # The v32.0rc3 tag (2633a1ded5cd, "Merge bitcoin/bitcoin#36400: [32.x]
+  # 32.0rc3"). GUIX's prelude.bash `git_head_version` takes the tag name
+  # without its leading `v` as the VERSION, and DISTNAME = bitcoin-<version>
+  # is what every published artifact name is built from.
   #
-  # Between v32.0rc1 and v32.0rc2 (13 commits) `depends/` is untouched and
-  # the only contrib/guix changes are codesigning-only (codesign.sh gained
-  # an `osslsigncode verify` step, manifest_codesign.scm moved to
-  # osslsigncode 2.14 + nss-certs), so no toolchain and no packaging logic
-  # changed — only src/ (netgroup, torcontrol, init, rpc/net) and the
-  # version bump, which move the binaries but not how they are built.
-  version = "32.0rc2";
+  # Between v32.0rc2 and v32.0rc3 (28 commits) `contrib/guix/` and
+  # `depends/` are untouched ENTIRELY — so the guix time-machine pin stays
+  # c5eee3336cc1, every toolchain pin stays put, and package.sh/codesign.sh
+  # are the same scripts rc2 was verified against. The delta is src/ (the
+  # fee-estimator fallbacks, wallet descriptor hashing, net/net_processing,
+  # init, logging categories), the version bump, generated docs/man and
+  # share/examples, plus test/ci-only churn: it moves the binaries but not
+  # how they are built.
+  version = "32.0rc3";
 
   # SOURCE_DATE_EPOCH: the tagged commit's own commit time
-  # (2026-09-18T11:30:29Z), exactly like guix-build derives it
+  # (2026-10-01T16:41:23Z), exactly like guix-build derives it
   # (`git log --format=%at -1`).
-  sourceDateEpoch = 1789731029;
+  sourceDateEpoch = 1790872883;
 
   # The source tree. GitHub's archive of a TAG is `git archive
   # --prefix=bitcoin-<version>/` of the tagged commit — the same command
@@ -28,7 +30,7 @@ let
   src = pkgs.fetchurl {
     name = "bitcoin-${version}.tar.gz";
     url = "https://github.com/bitcoin/bitcoin/archive/refs/tags/v${version}.tar.gz";
-    hash = "sha256-7qz3Kd/yChMAxm7Yx2bMbtzkLAvtKkjjJi8ZN6WBnq8=";
+    hash = "sha256-IjnYm1qV2lVOYClwDZvhRi7We8wGZQh1aP01U/laSX0=";
   };
 
   # Upstream reference hashes, parsed from the checked-in
@@ -38,10 +40,10 @@ let
   # from both files resolves to null and its gate is skipped with a
   # "no upstream gate" log line.
   #
-  # noncodesigned.SHA256SUMS is the guix.sigs attestation for 32.0rc2 —
-  # hebasto, pinheadmz and sedited all published a byte-identical file.
-  # all.SHA256SUMS is absent until detached signatures exist. The files have
-  # to stay git-tracked, or flake eval won't see them.
+  # Both files are the guix.sigs 32.0rc3 attestations: all 13 signers
+  # published a byte-identical noncodesigned.SHA256SUMS, and 11 of them a
+  # byte-identical all.SHA256SUMS. The files have to stay git-tracked, or
+  # flake eval won't see them.
   parseSha256sums = file:
     if builtins.pathExists file then
       builtins.listToAttrs (builtins.concatMap
@@ -77,22 +79,23 @@ let
   # targets' gates); other hosts re-assert the same gates.
   buildSystem = pkgs.stdenv.hostPlatform.system;
 
-  # Detached signatures (bitcoin-core/bitcoin-detached-sigs @ v32.0rc2) —
+  # Detached signatures (bitcoin-core/bitcoin-detached-sigs @ v32.0rc3) —
   # used by both the darwin and win64 signed-artifact flows, so they live
-  # here rather than inside either target's toolchain. The v32.0rc2 tag
-  # (23d1304d) peels to c573e805 and carries both osx/ and win/.
+  # here rather than inside either target's toolchain. The v32.0rc3 tag
+  # (c77aa3c5) peels to 146215d4 and carries both osx/ (45ca23e, "osx sig
+  # for rc3") and win/ (146215d, "win sig for rc3").
   #
-  # UNLIKE rc1, this rc HAS an all.SHA256SUMS: 10 of the 11 guix.sigs
-  # signers published a byte-identical one, checked in at the repo root, so
-  # upstreamSha256 resolves the 6 signed artifacts + the codesignatures
-  # archive and all 28 are gated. (The file must stay git-tracked or a pure
-  # flake eval cannot read it — see parseSha256sums above.)
-  detachedSigsRev = "c573e805f4f68c898e83dd203bc911a351f8a248"; # v32.0rc2
+  # Like rc2, this rc HAS an all.SHA256SUMS (11 byte-identical signers),
+  # checked in at the repo root, so upstreamSha256 resolves the 6 signed
+  # artifacts + the codesignatures archive and all 28 are gated. (The file
+  # must stay git-tracked or a pure flake eval cannot read it — see
+  # parseSha256sums above.)
+  detachedSigsRev = "146215d4189b28ff1c615359bcd9df1f81fdcd57"; # v32.0rc3
   detachedSigs = pkgs.fetchFromGitHub {
     owner = "bitcoin-core";
     repo = "bitcoin-detached-sigs";
     rev = detachedSigsRev;
-    hash = "sha256-3wI/jptVvOyE45WNl+7Coq5utCjqXcl5sX+9B+GThIE=";
+    hash = "sha256-awd9PyejmzZbrPI6WRYaTfEAmil6vzfCwhoVUjWN+a8=";
   };
 
   # bitcoin-${version}-codesignatures-${version}.tar.gz: codesign.sh's
@@ -106,7 +109,7 @@ let
     url = "https://github.com/bitcoin-core/bitcoin-detached-sigs";
     rev = detachedSigsRev;
     leaveDotGit = true;
-    hash = "sha256-L8foDdKu+oQiZXqiUDurJxyaPvbEYouJ+eveGNtQ0Es=";
+    hash = "sha256-k0nIRKy+fK3zTldbXnisL5fayEYAi4NsI+JRCj+9ZcM=";
   };
   codesignaturesArchive = import ./nix/lib/codesignatures.nix
     { inherit (pkgs) runCommand gcc git zlib; }
@@ -135,7 +138,7 @@ let
   win64   = import ./nix/win64/toolchain.nix { inherit pkgs version src buildSystem sourceDateEpoch detachedSigs upstreamSha256; };
 
   # EVERY published artifact, in upstream's all.SHA256SUMS order (verified
-  # against guix.sigs 32.0rc2). guix-attest sorts each per-host
+  # against guix.sigs 32.0rc3). guix-attest sorts each per-host
   # SHA256SUMS.part fragment by its pre-basename PATH
   # (<outdir_base>/<HOST>/<file>), so the effective order is HOSTS
   # alphabetically, with dist-archive between arm64-apple-darwin and
@@ -202,7 +205,7 @@ let
     };
 
   # all.SHA256SUMS over all 28 artifacts, diffed against the checked-in
-  # guix.sigs attestation (10 signers posted a byte-identical one for rc2).
+  # guix.sigs attestation (11 signers posted a byte-identical one for rc3).
   sha256sums = import ./nix/lib/sha256sums.nix
     { inherit (pkgs) runCommandLocal coreutils gnused diffutils; }
     {

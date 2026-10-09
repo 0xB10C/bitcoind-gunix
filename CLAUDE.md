@@ -12,36 +12,53 @@ branch-off, ~2600 lines) is in git history: see CLAUDE.md at commit
 `90e0ff24483c` and earlier. This file keeps the current state, how the tree
 is built, the root causes that matter, and the method.
 
-## Current state (2026-09-20)
+## Current state (2026-10-09)
 
-- **Target:** the `v32.0rc2` tag, guix time-machine pin `c5eee3336cc1`
-  (UNCHANGED from rc1). `version = "32.0rc2"`,
-  `sourceDateEpoch = 1789731029`, src
-  `sha256-7qz3Kd/yChMAxm7Yx2bMbtzkLAvtKkjjJi8ZN6WBnq8=`. Reference hashes: the
-  rc2 guix.sigs attestation (4 signers, byte-identical), checked in as the
-  21-line `noncodesigned.SHA256SUMS`.
-- **rc1 → rc2 is a small delta** (13 commits): `depends/` untouched;
-  `contrib/guix/` changes are codesigning-only (osslsigncode 2.5 → 2.14 plus
-  `nss-certs`; `codesign.sh` gained an `osslsigncode verify` pass). Source
-  changes: the asmap-version backport (`netgroup.{cpp,h}`, `rpc/net.cpp`,
-  `init.cpp`), `torcontrol.cpp` backoff, the `0d4d0ce37b9e` static-const
-  refactor, the version bump, docs/man. No toolchain changed.
-- **x86_64 needs `distsrcChroot = true`** (nix/x86_64-linux-gnu/toolchain.nix).
-  rc2's `netgroup.h` change pushed `test/orphanage_tests.cpp` into the regime
-  where the PARSED source path decides var-tracking's location-list choice, so
-  the release passes now compile at GUIX's literal DISTSRC inside an
-  unshare+chroot. Both x86_64 artifacts then match the attestation
-  (`0255103718033e6a…` and `8e8c88785ac4c289…`, verified 2026-09-20). See the
-  `distsrcChroot` entry in the root-cause catalogue for the three traps this
-  re-entry hides — each one produced a build that SUCCEEDED while being wrong.
-- **The previous target**, the branch-off commit, was verified against a
-  local guix build (the user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`,
-  35 GB: outputs, the GUI-pass `distsrc-*/build` trees with CMakeCache.txt
-  and objects, the depends caches) — still the oracle for single-CU replays,
-  since the toolchains are identical.
+- **Target:** the `v32.0rc3` tag (`2633a1ded5cd`), guix time-machine pin
+  `c5eee3336cc1` (UNCHANGED since rc1). `version = "32.0rc3"`,
+  `sourceDateEpoch = 1790872883`, src
+  `sha256-IjnYm1qV2lVOYClwDZvhRi7We8wGZQh1aP01U/laSX0=`. Reference hashes:
+  the rc3 guix.sigs attestations — all 13 signers published a byte-identical
+  `noncodesigned.SHA256SUMS`, 11 of them a byte-identical `all.SHA256SUMS`;
+  both are checked in at the repo root.
+- **rc2 → rc3 is the smallest delta yet** (28 commits): `contrib/guix/` and
+  `depends/` are untouched ENTIRELY, so every toolchain pin and every
+  packaging script is the one rc2 was verified against. `depends/` has in
+  fact not moved since the branch-off, which makes the GUIX win64 depends
+  tree at `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/depends/x86_64-w64-mingw32`
+  the exact tree rc3 builds against (all 4106 of its headers verified
+  byte-identical to ours). Source changes: fee-estimator fallbacks, wallet
+  descriptor hashing, net/net_processing, init, a new logging category,
+  generated docs/man + share/examples, tests and CI.
+- **Detached signatures:** bitcoin-detached-sigs `v32.0rc3` (tag `c77aa3c5`,
+  peels to `146215d4`) already carries both `osx/` and `win/`, so all 28
+  artifacts are gated from the first build — unlike rc2, which needed the
+  signed set wired up in a second commit.
+- **22 of the 28 artifacts reproduce** (verified 2026-10-09, one
+  `nix build`): the source dist archive, all 5 linux release + 5 debug
+  tarballs, all 10 darwin artifacts INCLUDING the signed ones, and the
+  codesignatures archive. x86_64 keeps `distsrcChroot = true`.
+- **The 6 win64 artifacts do NOT reproduce** (4 unsigned + the 2 signed
+  derived from them) — a single var-tracking location list in a single CU.
+  Localized to the byte; see the `win64 at v32.0rc3` entry in the
+  GGC/var-tracking section of the root-cause catalogue for the evidence,
+  the three hypotheses ruled out, and the single-CU replay harness.
+- **The branch-off commit** was verified against a local guix build (the
+  user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs, the
+  GUI-pass `distsrc-*/build` trees with CMakeCache.txt and objects, the
+  depends caches) — still the oracle for single-CU replays, since the
+  toolchains are identical. Its win64 `CMakeCache.txt` is also the only
+  local record of GUIX's real `/gnu/store` toolchain paths and of the ~90
+  `-ffile-prefix-map` arguments build.sh generates from `find /gnu/store`.
+- **Published rc artifacts are downloadable**, which gives byte-level
+  oracles even without a local guix build:
+  `https://bitcoincore.org/bin/bitcoin-core-32.0/test.rc3/` carries all 28
+  files (both win64 zips verified against the attestation on 2026-10-09 and
+  kept in `/home/infra/rc3-reference/`). Note the directory is
+  `bitcoin-core-<final version>/test.rc<N>/`, not `bitcoin-core-<rc>/`.
 - **All 21 attested non-codesigned artifacts** are gated, checked with one
   `nix build` over all of them:
-  - the source dist archive `bitcoin-32.0rc2.tar.gz` (`sourceDistArchive`:
+  - the source dist archive `bitcoin-32.0rc3.tar.gz` (`sourceDistArchive`:
     GitHub's tag archive re-gzipped with `gzip6.c`)
   - 5 linux release + 5 debug tarballs (`tarball`, `debugTarball`, and the
     `Aarch64`/`Riscv64`/`Armhf`/`Ppc64` variants)
@@ -49,17 +66,12 @@ is built, the root causes that matter, and the method.
     `-codesigning.tar.gz` (`tarballDarwin*`, `zipDarwin*`, `codesigningDarwin*`)
   - win64 `unsignedZipMingw`, `debugZipMingw`, `setupExeMingw`, `codesigningMingw`
 - **Signed artifacts are wired up AND gated** against bitcoin-detached-sigs
-  `v32.0rc2` (tag `23d1304d`, peels to `c573e805`; carries `osx/` + `win/`):
-  `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw` (2), plus
-  `codesignaturesArchive`. Unlike rc1, this rc HAS an `all.SHA256SUMS` — 10
-  of the 11 guix.sigs signers published a byte-identical one — so it is
-  checked in at the repo root and `upstreamSha256` resolves all 7 extra
-  filenames with no code change. win64 needs osslsigncode **2.14**
-  (`osslsigncode214`), per rc2's `manifest_codesign.scm`; `codesign.sh`'s new
-  `osslsigncode verify` pass only re-reads what `attach-signature` already
-  wrote, so it cannot change the emitted bytes. **Verified 2026-09-21: all
-  28 artifacts reproduce and `.#sha256sums` equals the checked-in
-  all.SHA256SUMS** (see the win64 note on 2.14's `-CAfile` removal).
+  `v32.0rc3`: `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw`
+  (2), plus `codesignaturesArchive`. win64 needs osslsigncode **2.14**
+  (`osslsigncode214`), per rc2's `manifest_codesign.scm` (unchanged at rc3);
+  `codesign.sh`'s `osslsigncode verify` pass only re-reads what
+  `attach-signature` already wrote, so it cannot change the emitted bytes
+  (see the win64 note on 2.14's `-CAfile` removal).
 - **Aggregators:** `.#noncodesignedSha256sums` (21 artifacts) and
   `.#sha256sums` (all 28), each diffed against its checked-in attestation.
   (For an UNTAGGED commit the dist archive can't be
@@ -197,6 +209,81 @@ differences flip ONE location list in a big CU while everything else matches.
   riscv64 bitcoind CUs. Sweeps showed even k unused `extern`s or `#define`s
   flip it back and forth non-monotonically, so look for ANY preprocessor-visible
   input difference, not for a count.
+
+**win64 at v32.0rc3 — OPEN.** The 6 win64 artifacts miss; everything else
+reproduces. Localized completely, cause not yet found:
+- `unsigned.zip`: of 26 members only `libexec/test_bitcoin.exe` differs
+  (same uncompressed size, different CRC); the other 8 binaries, the
+  man pages and the configs are byte-identical. `debug.zip`: only
+  `test_bitcoin.exe.dbg`.
+- the stripped `.exe` differs in exactly **6 bytes**: the PE optional-header
+  CheckSum (file offset 0xd8) and the last 4 bytes of `.gnu_debuglink` (the
+  CRC32 of the `.dbg`, at 0x1e47200+24). Code and data are identical — both
+  diffs are derived from the `.dbg`. That is why all four published
+  artifacts miss on one CU.
+- in the 1 GB `.dbg`, `.debug_line`, `.debug_str`, `.debug_line_str`,
+  `.debug_abbrev` and `.debug_rnglists` are byte-identical; only
+  `.debug_loclists` (ours +9 B) and `.debug_info` differ. Of 547 loclists
+  units exactly ONE differs — unit 36 = CU 36 = `test/cuckoocache_tests.cpp`
+  (body 214855 B vs GUIX's 214846 B). All 7 518 828 differing byte-runs in
+  `.debug_info` were mechanically verified to be nothing but that shift: a
+  4-byte LE loclist offset +9 (the 4 apparent exceptions are carry-crossing
+  adjacent offsets plus the one `DW_AT_location` that moved +2).
+- the difference itself: over `[0x65,0x6b)` GUIX emits ONE entry
+  (`DW_OP_regval_type r1; DW_OP_stack_value`), we split the range and use
+  `DW_OP_breg2 +0x48; DW_OP_stack_value` for `[0x65,0x6a)` — equivalent
+  locations, a different var-tracking representative. 21 B vs 30 B.
+
+Ruled out, each with evidence:
+- **The parsed source path** (the lever that fixed x86_64-linux at rc2).
+  `distsrcChroot` was implemented for win64 and confirmed to engage
+  (`Build files have been written to: /distsrc-base/distsrc-32.0rc3-x86_64-w64-mingw32/build`);
+  it produced BYTE-IDENTICAL output, so it was reverted. Unlike x86_64-linux,
+  win64 is path-insensitive here.
+- **The parsed depends path.** GUIX parses depends headers at the short real
+  `/bitcoin/depends/<host>` (35 chars) and fires no prefix map on them; we
+  parse them at the 67-char store path and rewrite via the canon env var.
+  Bind-mounting our depends at GUIX's literal path, rewriting
+  `includes_CXX.rsp` and unsetting `NIX_DEBUG_CANON_PREFIX_MAP` changed
+  NOTHING (214863 both ways) — even though this CU is boost-test-heavy.
+- **depends header content.** All 4106 headers byte-identical to GUIX's own
+  win64 depends tree (see Current state).
+- **The toolchain pins.** `contrib/guix/` is untouched since rc2, which
+  matched byte-for-byte; `manifest_build.scm`'s `mingw-w64-base-gcc` is
+  unchanged. GUIX's mingw-only gcc extras are not candidates either:
+  `gcc-7-cross-mingw.patch` touches only `libsupc++/new_opa.cc` (a library
+  source, not a parsed header) and `cross-gcc-snippet`'s
+  `os/mingw32-w64 → os/newlib` copy is dead for a mingw target
+  (`configure.host` picks `os/mingw32-w64` directly).
+
+Classified: the CU is GGC-timing sensitive. `--param ggc-min-expand=30`
+reproduces GUIX's loclists length exactly (214854) and is NOT recorded in
+`DW_AT_producer` (`.debug_str` identical) — but it is a red herring: it also
+makes the object's `.debug_info` 26 B LARGER than GUIX's CU, which our
+baseline already matches, so it is a different outcome that happens to share
+one length. `ggc-min-heapsize` (4096…262144) and a dummy `-D` macro move
+nothing. 30 is gcc's `params.opt` default; `ggc_min_expand_heuristic()`
+returns `30 + 70*min(physmem_GB,1)` = 100 on any machine with ≥1 GB and no
+RSS rlimit, so GUIX's builders are on 100 too — if they were not, every
+target would diverge, not one CU.
+Remaining suspicion: a GGC-allocation-volume difference between our mingw
+gcc binary and GUIX's, which the two targets below can discriminate.
+
+Single-CU replay harness (in `/home/infra/rc3-replay`, ~1 min per
+iteration instead of an hours-long rebuild): `nix print-dev-env` of
+`.#bitcoindMingwNoGui` → `devenv.sh`; `go.sh` unshares a user+mount
+namespace, binds the tree at `/build/bitcoin-<ver>` and runs
+`phases="configurePhase"`; then the exact compile line is lifted from
+`build/src/test/CMakeFiles/test_bitcoin.dir/flags.make` (+
+`includes_CXX.rsp`) and run directly, so one `.cpp` is recompiled per
+iteration. Two traps: source `devenv.sh` WITHOUT `set -u` (nixpkgs hooks
+reference unset vars like `shareDocName`) and resolve bash with
+`readlink -f` (the chroot has no `/run/current-system`). Validation: the
+object's `.debug_loclists` body size equals the linked `.dbg`'s unit body
+exactly, so the two numbers to hit are **loclists body 214846** and
+**`.debug_info` 0x280df4 (2 625 012)**; our baseline gives 214855 /
+0x280df4. A direct byte compare of object vs linked loclists does NOT work
+(unrelocated addresses diverge at byte 71) — compare sizes.
 
 ### Linker stub order (armhf, ppc64)
 GNU ld names ppc64 long-branch and ARM long-branch/Cortex-A8-erratum stubs
