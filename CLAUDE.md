@@ -42,7 +42,7 @@ is built, the root causes that matter, and the method.
   derived from them) — a single var-tracking location list in a single CU.
   Localized to the byte; see the `win64 at v32.0rc3` entry in the
   GGC/var-tracking section of the root-cause catalogue for the evidence,
-  the three hypotheses ruled out, and the single-CU replay harness.
+  the seven hypotheses ruled out, and the single-CU replay harness.
 - **The branch-off commit** was verified against a local guix build (the
   user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs, the
   GUI-pass `distsrc-*/build` trees with CMakeCache.txt and objects, the
@@ -255,6 +255,49 @@ Ruled out, each with evidence:
   source, not a parsed header) and `cross-gcc-snippet`'s
   `os/mingw32-w64 → os/newlib` copy is dead for a mingw target
   (`configure.host` picks `os/mingw32-w64` directly).
+- **The parsed TOOLCHAIN header path**, tested properly with a controlled
+  two-arm compile: both arms use `-nostdinc -nostdinc++` plus the same six
+  `-isystem` dirs in our gcc's own order, so the ONLY variable is the prefix
+  string; arm A at our 73-char `/nix/store/…-x86_64-w64-mingw32-gcc-14.3.0`,
+  arm B at GUIX's 79-char
+  `/gnu/store/6ydp3m6zfiznlzzkgp0appz217dcygyb-gcc-cross-x86_64-w64-mingw32-14.3.0`
+  (bind-mounted onto our tree), with the `-ffile-prefix-map` rewritten to
+  match. Arm A reproduces the baseline 214863 (so the `-nostdinc`
+  reconstruction is faithful) and arm B gives 214863 too — no change. NOTE:
+  do NOT test this by just invoking the relocated driver. gcc relocates via
+  `make_relative_prefix(argv[0])`, and the relocated search list comes out in
+  a DIFFERENT ORDER (the `include/c++` dirs move from first to last), which
+  breaks `cstdlib`'s `#include_next <stdlib.h>` outright — that arm changes
+  two variables and fails to compile.
+- **nixpkgs' mcfgthread `-isystem` noise.** `NIX_CFLAGS_COMPILE` carries
+  `-isystem <mcfgthread-dev>/include` FOUR times, which GUIX has no
+  counterpart for (it uses winpthreads via the cross libc). Stripping all
+  four changes nothing. (Consistent with `.debug_line` being identical: no
+  mcfgthread header is actually reached.)
+- **The CMake-generated `bitcoin-build-config.h`.** Its macro set is
+  identical to the GUIX branch-off win64 tree's apart from `USE_QRCODE`,
+  which is expected because the local GUIX tree is the GUI pass and the
+  replay is the NoQt pass — every `HAVE_*`/platform check agrees. (This was
+  the best remaining "parsed but invisible" candidate, in the same class as
+  the Qt posix shm/sem preseed and the empty glibc `gnu/stubs-*.h`.)
+- **Our gcc's configure line.** It carries GUIX's `mingw-w64-base-gcc`
+  flags verbatim (`--enable-default-ssp=yes --enable-gprofng=no
+  --enable-host-bind-now=yes --enable-threads=posix --disable-{gcov,libgomp,
+  libsanitizer,lto,nls}`). The nixpkgs extras that GUIX lacks
+  (`--enable-plugin`, `--with-system-zlib`, `--disable-libstdcxx-pch`,
+  `--enable-default-pie`) are all either codegen-neutral or demonstrably
+  inert here: ANY codegen-affecting default would move all 8 binaries, and 7
+  of 8 are byte-identical.
+
+Where that leaves it: GGC allocation order is deterministic given the gcc
+source plus the input, the input is identical by every measure above, and
+our build is deterministic (two independent builds, one of them at a
+different path, produced identical bytes). So the divergence is a GGC-margin
+difference whose source is not yet identified. The next untried angle is a
+gcc instrumented to log ggc allocation counts at the point var-tracking
+chooses this list, compared between a trigger and a non-trigger compile —
+the same "patch the tool to print its internal order" technique the linker
+stub-order entry below used.
 
 Classified: the CU is GGC-timing sensitive. `--param ggc-min-expand=30`
 reproduces GUIX's loclists length exactly (214854) and is NOT recorded in
