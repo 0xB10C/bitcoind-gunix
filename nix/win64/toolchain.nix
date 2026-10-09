@@ -335,7 +335,21 @@ let
       # build compiler.
       threadsCross = { model = "posix"; package = null; };
     }).overrideAttrs (old: {
-      configureFlags = (old.configureFlags or [ ]) ++ [
+      # nixpkgs configures its cross gcc with --enable-default-pie; guix's
+      # mingw-w64-base-gcc does NOT, so FILTER it (the same filter nsisGcc14
+      # below already applies, for a different symptom). It is not cosmetic:
+      # a default-PIE driver leaves flag_pie=2, and at v32.0rc3 that alone
+      # flipped one var-tracking location list — the `this` of
+      # ~basic_stringbuf() in test/cuckoocache_tests.cpp — which moved
+      # test_bitcoin.exe.dbg and, through .gnu_debuglink's CRC and the PE
+      # checksum, all four published win64 artifacts. Verified against GUIX's
+      # own cross gcc from the pinned toolchain closure: with the flag our
+      # loclists unit is 214863, GUIX's and ours-without-it are 214854.
+      # (The predefined __PIE__/__pie__ macros are NOT the lever — undefining
+      # them changes nothing; flag_pie itself is. And -fno-pie on the command
+      # line is NOT a substitute: it lands in DW_AT_producer.)
+      configureFlags = (builtins.filter (f: f != "--enable-default-pie")
+        (old.configureFlags or [ ])) ++ [
         "--enable-default-ssp=yes"
         "--enable-gprofng=no"
         "--enable-host-bind-now=yes"

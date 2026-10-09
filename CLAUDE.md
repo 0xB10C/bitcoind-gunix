@@ -34,17 +34,19 @@ is built, the root causes that matter, and the method.
   peels to `146215d4`) already carries both `osx/` and `win/`, so all 28
   artifacts are gated from the first build — unlike rc2, which needed the
   signed set wired up in a second commit.
-- **22 of the 28 artifacts reproduce** (verified 2026-10-09, one
-  `nix build`): the source dist archive, all 5 linux release + 5 debug
-  tarballs, all 10 darwin artifacts INCLUDING the signed ones, and the
-  codesignatures archive. x86_64 keeps `distsrcChroot = true`.
-- **The 6 win64 artifacts do NOT reproduce** (4 unsigned + the 2 signed
-  derived from them) — a single var-tracking location list in a single CU.
-  CAUSE LOCALIZED to our mingw gcc BINARY: GUIX's own cross gcc, run against
-  OUR inputs, reproduces GUIX's loclist exactly. See the `win64 at v32.0rc3`
-  entry in the GGC/var-tracking section of the root-cause catalogue for the
-  decisive experiment, the ten ruled-out hypotheses, the single-CU replay
-  harness, and the remaining bisect of our gcc build.
+- **ALL 28 artifacts reproduce** (verified 2026-10-09 in one `nix build`:
+  both `.#sha256sums` and `.#noncodesignedSha256sums` come out byte-identical
+  to the checked-in guix.sigs attestations): the source dist archive, all 5
+  linux release + 5 debug tarballs, all 10 darwin artifacts including the
+  signed ones, the codesignatures archive, and all 6 win64 artifacts.
+  x86_64 keeps `distsrcChroot = true`.
+- **win64 was the last holdout** and is fixed by filtering nixpkgs'
+  `--enable-default-pie` from the mingw cross gcc: it left `flag_pie = 2`,
+  which emits no different code on mingw but flipped one var-tracking
+  location list and with it all six artifacts. See the `win64 at v32.0rc3`
+  entry in the root-cause catalogue for the full chain, the four cheap
+  compiler-diff techniques that pinpointed it, and the ten hypotheses ruled
+  out before them.
 - **The branch-off commit** was verified against a local guix build (the
   user's `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/`, 35 GB: outputs, the
   GUI-pass `distsrc-*/build` trees with CMakeCache.txt and objects, the
@@ -212,11 +214,17 @@ differences flip ONE location list in a big CU while everything else matches.
   flip it back and forth non-monotonically, so look for ANY preprocessor-visible
   input difference, not for a count.
 
-**win64 at v32.0rc3 — CAUSE LOCALIZED to OUR mingw gcc BINARY (2026-10-09).**
-The 6 win64 artifacts miss; everything else reproduces. GUIX's own cross gcc,
-run against OUR inputs in our replay chroot, produces GUIX's loclist exactly
-(214854, `.debug_info` 0x280df4) where ours produces 214863 from the same
-inputs — see "THE DECISIVE EXPERIMENT" below. The localization:
+**win64 at v32.0rc3 — ROOT CAUSE: nixpkgs' `--enable-default-pie` on our
+mingw cross gcc (2026-10-09).** GUIX's `mingw-w64-base-gcc` does not enable
+default PIE; nixpkgs' cross gcc does, leaving `flag_pie = 2`. On a mingw
+target that changes no code — `.text` was always byte-identical — but it
+flipped ONE var-tracking location list, and through it all six win64
+artifacts. The fix is one filtered configure flag in
+`nix/win64/toolchain.nix` (`mingwGuixGcc`), the same filter `nsisGcc14`
+already applied for a different symptom; with it our `.debug_loclists` is
+byte-identical to the section GUIX's own compiler emits.
+
+How it was localized, and why the obvious suspects were all wrong:
 - `unsigned.zip`: of 26 members only `libexec/test_bitcoin.exe` differs
   (same uncompressed size, different CRC); the other 8 binaries, the
   man pages and the configs are byte-identical. `debug.zip`: only
@@ -374,6 +382,57 @@ ggc-allocates) and `cfi_startproc-reorder-label-14-1.diff` (DWARF/final) —
 the rest are libsanitizer/ppc/riscv/c++tools/libstdc++-only and cannot
 affect a mingw cc1plus run. Read those three before building variants; the
 replay makes each variant a ~1-minute check once its gcc exists.
+
+THE PINPOINT (2026-10-09). With GUIX's compiler available for A/B, the chain
+closed quickly, and the steps are worth keeping because each one eliminated a
+whole class:
+- `cc1plus` OPTIONS are identical. `gcc -###` on both drivers, normalized to
+  real options, gives 30 options and ZERO differences — so the driver was not
+  passing anything different.
+- Internal DEFAULTS are identical: `-Q --help=optimizers` (271 flags) and
+  `-Q --help=params` (291 params) match exactly, same version. So no
+  configure-visible default differed.
+- The PURE ASSEMBLY differs by exactly NINE LINES out of 701 015
+  (`-dA -S`, trailing annotations stripped): our var-tracking emits one extra
+  loclist entry, `DW_OP_breg2 -56; DW_OP_stack_value`, splitting a range GUIX
+  covers with a single `DW_OP_regval_type`. Everything else — all code, all
+  other debug data — is identical. Backtracking the `.LLST` label to its DIE
+  names the variable: the `this` of
+  `_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEED1Ev`, i.e. the
+  SAME `this` of `~basic_stringbuf()` that the x86_64-linux flip hit at rc2.
+- Every PARSED FILE is byte-identical, which is worth knowing for next time:
+  libstdc++ headers 825 files (identical), the mingw CRT headers (all 1701 of
+  GUIX's identical to ours — our 327 extras are `.idl` files, never
+  `#include`d), gcc's builtin `include` (differing only by
+  `ISO_Fortran_binding.h`, which GUIX has because its cross gcc also builds
+  fortran, and which C++ never includes) and `include-fixed`.
+- The var-tracking RTL dumps (`-fdump-rtl-vartrack`, 15.6 MB each) differ
+  almost entirely in printed POINTER ADDRESSES — but among them sit shifted
+  DECL UIDs (`D.690680` vs `D.690691`, a constant +11). A header-free TU gives
+  the SAME uid base (`D.2558`) in both, so the shift arises during parsing, not
+  at init — the signature of a `#if` taken differently.
+- `g++ -dM -E` finally names it: our compiler predefines `__PIE__ 2` and
+  `__pie__ 2`, GUIX's predefines neither. 492 macros vs 490, nothing else.
+
+The confirmation, and a trap: `-U__PIE__ -U__pie__` changes NOTHING (214863),
+so the predefined macros are not themselves the lever — `flag_pie` is.
+`-fno-pie -fno-PIE` does reach 214854, but it is NOT a usable fix: it lands in
+`DW_AT_producer` (and grew `.debug_info` by 9 bytes in the test). The fix has
+to be the configure flag, so that the compiler simply has no default PIE, and
+that is what `mingwGuixGcc` now filters. A gcc rebuilt with only that one flag
+removed drops `__PIE__` entirely and emits `.debug_loclists` BYTE-IDENTICAL to
+GUIX's own compiler (`0x3474a`, sha 3569f92e6d0c20f8 for both; ours before was
+`0x34753`), with `.debug_info` back at GUIX's `0x280df4`.
+
+A methodological note worth carrying forward: a `-###` option diff, a
+`-Q --help=params` diff, a `-dA -S` assembly diff and a `-dM -E` macro diff
+are four cheap, decisive comparisons that between them separate "driver
+flags", "configure defaults", "codegen vs debug-only" and "parsed inputs".
+Reach for them BEFORE sweeping GGC parameters or building compiler variants;
+they would have found this in one session instead of ten negatives. The ten
+negatives were not wasted — they proved the inputs identical, which is what
+made the `__PIE__` difference meaningful rather than one more candidate — but
+the macro diff should have come first.
 
 HISTORICAL NOTE on getting here: the local branch-off reference could NOT
 supply the oracle — its win64 distsrc tree is the GUI pass only (377
