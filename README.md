@@ -5,11 +5,11 @@ byte-for-byte: every binary, release archive, debug-symbols archive,
 codesigning tarball and signed artifact, for all 8 GUIX release
 targets. Everything is built the way GUIX builds it — through **cross
 toolchains for the vendor-less target triples** (gcc 14.3.0 / glibc 2.31 /
-binutils 2.41 for the Linux targets, clang/lld 19.1.4 for darwin, gcc
-14.3.0 + mingw-w64 12.0.0 for win64) — **cross-compiled from a single
+binutils 2.46.0 for the Linux targets, clang/lld 19.1.7 for darwin, gcc
+14.3.0 + mingw-w64 13.0.0 for win64) — **cross-compiled from a single
 Linux host** (x86_64 or aarch64, no qemu).
 
-**Currently tracking v32.0rc2 (release candidate).** All 28 published
+**Currently tracking v32.0rc4 (release candidate).** All 28 published
 artifacts ARE gated: each derivation asserts its own sha256 against a
 checked-in guix.sigs attestation — `noncodesigned.SHA256SUMS` for the
 21 non-codesigned artifacts, `all.SHA256SUMS` for those plus the 6
@@ -34,15 +34,13 @@ mirrored — every derivation gates the same upstream hashes either way.
 
 ### Per-target builds
 
-> **rc note**: the current target is v32.0rc2. Its 21 non-codesigned
-> artifacts are gated against the guix.sigs attestation and aggregated by
-> `.#noncodesignedSha256sums` (the flake default). The `sha256sums`
-> (all.SHA256SUMS) aggregator and the `signedDarwin*` / `signedMingw` /
-> `codesignaturesArchive` derivations are **not** exposed: no detached
-> signatures are published for this rc yet, so there is nothing to apply
-> and no all.SHA256SUMS to gate against. They come back with the
-> bitcoin-detached-sigs v32.0rc2 tag (the v32.0rc1 wiring is in git
-> history at commit 12b5cdfb1efc).
+> **rc note**: the current target is v32.0rc4. All 28 artifacts are gated:
+> the 21 non-codesigned ones against `noncodesigned.SHA256SUMS` (aggregated
+> by `.#noncodesignedSha256sums`, the flake default), and the 6 signed
+> darwin/win64 artifacts plus the codesignatures archive against
+> `all.SHA256SUMS` (aggregated by `.#sha256sums`). The signed flows apply
+> the bitcoin-detached-sigs `v32.0rc4` tag, which carries both `osx/` and
+> `win/`.
 
 ```sh
 # x86_64-linux-gnu (cross-to-self)

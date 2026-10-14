@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 # The checked-in noncodesigned.SHA256SUMS is the guix.sigs attestation for
-# v32.0rc3. Every artifact derivation gates its own sha256 against that
+# v32.0rc4. Every artifact derivation gates its own sha256 against that
 # file, so a mismatch fails the nix build and with it the job. The
 # print-hashes job at the end builds and prints noncodesigned.SHA256SUMS.
 jobs:
@@ -255,9 +255,9 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarball -o result-tarball --print-build-logs
 
-  # NOTE (v32.0rc3): the nix derivations gate every artifact against the
+  # NOTE (v32.0rc4): the nix derivations gate every artifact against the
   # checked-in noncodesigned.SHA256SUMS / all.SHA256SUMS, both of which
-  # exist for this rc (bitcoin-detached-sigs is tagged v32.0rc3). This job
+  # exist for this rc (bitcoin-detached-sigs is tagged v32.0rc4). This job
   # builds both aggregators, each of which fails unless the whole file
   # equals the checked-in attestation, and prints them.
   print-hashes:
