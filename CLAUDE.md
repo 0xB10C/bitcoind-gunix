@@ -12,48 +12,65 @@ branch-off, ~2600 lines) is in git history: see CLAUDE.md at commit
 `90e0ff24483c` and earlier. This file keeps the current state, how the tree
 is built, the root causes that matter, and the method.
 
-## Current state (2026-10-14)
+## Current state (2026-10-21)
 
-- **Target:** the `v32.0rc4` tag (`310071f8d0c5`), guix time-machine pin
-  `c5eee3336cc1` (UNCHANGED since rc1). `version = "32.0rc4"`,
-  `sourceDateEpoch = 1791777494`, src
-  `sha256-2xfyhsN8kc9UW8l4gSBm5OPtMCow7DBNXLktB48kXgA=`. Reference hashes:
-  the rc4 guix.sigs attestations — all 12 signers published a byte-identical
-  `noncodesigned.SHA256SUMS`, 10 of them a byte-identical `all.SHA256SUMS`
-  (fanquake and svanstaa posted no `all`); both are checked in at the repo
-  root.
-- **rc3 → rc4 is a pure retarget** (15 commits, 33 files): `contrib/guix/`
-  and `depends/` are untouched ENTIRELY, so every toolchain pin and every
-  packaging script is the one rc2 and rc3 were verified against — the
-  `--enable-default-pie` filter that fixed win64 at rc3 included. `depends/`
-  has in fact not moved since the branch-off, which makes the GUIX win64
-  depends tree at
-  `/home/infra/guix-ref-f3fec67c3eeb/bitcoin/depends/x86_64-w64-mingw32`
-  the exact tree rc4 builds against (all 4106 of its headers verified
-  byte-identical to ours). Source changes: private-broadcast completion,
-  httpserver per-read byte logging, a `Sock::WaitMany` timeout cap,
-  `bitcoin-util`'s genesis hash display order, an OpenRPC hex pattern,
-  generated doc/man, tests and CI.
-  Both attestations keep rc3's line ORDER exactly (checked filename by
-  filename), and `all.SHA256SUMS` minus the 7 `signed = true` rows is
-  `noncodesigned.SHA256SUMS` byte-for-byte — so `artifactTable` needed no
-  edit. Worth re-checking at each retarget: it is what lets both
-  aggregators derive from one table.
-- **Detached signatures:** bitcoin-detached-sigs `v32.0rc4` (tag
-  `07e61362`, peels to `760896cf`) already carries both `osx/` and `win/`,
-  so all 28 artifacts are gated from the first build — unlike rc2, which
-  needed the signed set wired up in a second commit.
-- **ALL 28 artifacts reproduce** (verified 2026-10-14 from a COLD store in
-  one `nix build`, ~2h05m at `--max-jobs 4 --cores 6`: both
-  `.#sha256sums` and `.#noncodesignedSha256sums` come out byte-identical to
-  the checked-in guix.sigs attestations): the source dist archive, all 5
-  linux release + 5 debug tarballs, all 10 darwin artifacts including the
-  signed ones, the codesignatures archive, and all 6 win64 artifacts.
-  x86_64 keeps `distsrcChroot = true`. Log:
-  `/home/infra/rc4-evidence/allsums-rc4-0706.log`. The only two
-  "no upstream gate" lines are the intermediate `packaged` derivations for
-  aarch64/armhf (package.sh's outdir has no published filename) — expected,
-  not a missed gate.
+- **Target:** the `v32.0` tag (`465dde277447`, "Merge bitcoin/bitcoin#36508:
+  [32.0] Finalize") — the FINAL release, not a candidate. Guix time-machine
+  pin `c5eee3336cc1` (UNCHANGED since rc1). `version = "32.0"`,
+  `sourceDateEpoch = 1792588906`, src
+  `sha256-lHUfic44I0vLUbRA63tZkmARyAt0ws75j13CDGWSsJ4=`. Reference hashes:
+  the 32.0 guix.sigs `noncodesigned.SHA256SUMS`, checked in at the repo
+  root — the three signers who have posted so far (hebasto, svanstaa,
+  willcl-ark) all published a byte-identical 21-line file.
+- **rc4 → final changes nothing about how anything is built**, and the
+  top-level tree SHAs prove it outright: at `310071f8d0c5` (rc4) and
+  `465dde277447` (final) `src` is the same tree `de61fd90d2b6`, `contrib`
+  the same `f78f367f9a35`, `depends` the same `4b6789e5e351`. The whole
+  delta is 4 commits / 9 files: the `CMakeLists.txt` version bump, the
+  generated `doc/man/*.1`, and `doc/release-notes.md`. So the ONLY input
+  that moves is the version string — which still moves every artifact: the
+  embedded version, every published filename, and DISTSRC
+  (`/distsrc-base/distsrc-32.0-<host>`, three chars shorter than rc4's),
+  the parsed path the var-tracking flip class is sensitive to. The chroot
+  derives that path from `version`, so it tracks by itself.
+  **Comparing the `src`/`contrib`/`depends` tree SHAs at the old and new
+  commit is the cheapest retarget pre-check there is** — one API call per
+  commit, and it subsumes the `contrib/guix` + `depends` diff of step 2
+  below whenever they come out equal.
+- **The signed flow is OFF until the code signatures are up** (deliberate,
+  and wanted back the moment they land). bitcoin-detached-sigs has no
+  `v32.0` tag — its newest is still `v32.0rc4` — so there is nothing to
+  apply, and guix.sigs has no `all.SHA256SUMS` for 32.0 either, so those 7
+  artifacts could be neither built nor gated. `detachedSigsPin = null` in
+  `default.nix` therefore drops `signedDarwin{X86,Arm64}`, `signedMingw`,
+  `codesignaturesArchive` and `.#sha256sums` from the exposed outputs (the
+  `lib.optionalAttrs` blocks in both toolchains and at the bottom of
+  `default.nix`), and the stale rc4 `all.SHA256SUMS` was deleted from the
+  repo root rather than left to go quietly unmatched.
+  **To restore it:** set `detachedSigsPin = { rev = <the v32.0 sigs tag's
+  peeled commit>; hash = …; gitHash = …; }` (the rc4 triple is recorded in
+  the comment right above it as a template), check in the 32.0
+  `all.SHA256SUMS`, and un-comment the four `nix build .#signed*` /
+  `.#sha256sums` steps in `.github/workflows/nix-ci.yml`. Nothing else
+  changes: `artifactTable` already carries the 7 `signed = true` rows in
+  upstream order, and because `builtins.filter` only reads each row's
+  `signed` field, their `file` thunks are never forced while the pin is
+  null — that laziness is what lets one table serve both states.
+- **ALL 21 non-codesigned artifacts reproduce at the final tag** (verified
+  2026-10-21 from a COLD store in one `nix build`, 19:40→21:43 (~2h03m) at
+  `--max-jobs 4 --cores 6`: `.#noncodesignedSha256sums` comes out
+  byte-identical to the checked-in guix.sigs attestation, 21 `OK:` artifact
+  gates + the aggregator verdict, 0 `FAIL:`): the source dist archive, all
+  5 linux release + 5 debug tarballs, the 6 unsigned/codesigning darwin
+  artifacts, and the 4 non-codesigned win64 artifacts. x86_64 keeps
+  `distsrcChroot = true`. Log:
+  `/home/infra/v320-evidence/noncodesigned-v320-1940.log`. The 7 signed
+  artifacts are not in this build at all (see the signed-flow bullet); the
+  only "no upstream gate" lines are the six intermediate `packaged`
+  derivations, one per host — package.sh's outdir has no published
+  filename, so that log line is expected there and nowhere else. (At rc4
+  only two of the six printed it, because the other four were store hits;
+  a cold store shows all six.)
 - **win64 was the last holdout** and is fixed by filtering nixpkgs'
   `--enable-default-pie` from the mingw cross gcc: it left `flag_pie = 2`,
   which emits no different code on mingw but flipped one var-tracking
@@ -68,36 +85,39 @@ is built, the root causes that matter, and the method.
   toolchains are identical. Its win64 `CMakeCache.txt` is also the only
   local record of GUIX's real `/gnu/store` toolchain paths and of the ~90
   `-ffile-prefix-map` arguments build.sh generates from `find /gnu/store`.
-- **Published rc artifacts are downloadable** once bitcoincore.org has
-  them, which gives byte-level oracles even without a local guix build:
+- **Published artifacts are downloadable** once bitcoincore.org has them,
+  which gives byte-level oracles even without a local guix build:
   `https://bitcoincore.org/bin/bitcoin-core-32.0/test.rc3/` carries all 28
   rc3 files (both win64 zips verified against the attestation on 2026-10-09
   and kept in `/home/infra/rc3-reference/`). Note the directory is
-  `bitcoin-core-<final version>/test.rc<N>/`, not `bitcoin-core-<rc>/`, and
-  that it lags the guix.sigs attestations: `test.rc4/` still 404s, so rc4
-  was gated against the attestations alone. That is sufficient — every gate
-  is a sha256 over the artifact we built — but it means a hash miss at a
-  fresh rc has no downloadable counterpart to diff against until the
-  directory appears.
+  `bitcoin-core-<final version>/test.rc<N>/` for a candidate — the final
+  release lands directly in `bitcoin-core-32.0/` — and that it lags
+  guix.sigs: at 32.0's tagging only `test.rc2…rc4/` existed, so the final
+  release was gated against the attestation alone. That is sufficient —
+  every gate is a sha256 over the artifact we built — but it means a hash
+  miss at a fresh target has no downloadable counterpart to diff against
+  until the directory appears.
 - **All 21 attested non-codesigned artifacts** are gated, checked with one
   `nix build` over all of them:
-  - the source dist archive `bitcoin-32.0rc4.tar.gz` (`sourceDistArchive`:
+  - the source dist archive `bitcoin-32.0.tar.gz` (`sourceDistArchive`:
     GitHub's tag archive re-gzipped with `gzip6.c`)
   - 5 linux release + 5 debug tarballs (`tarball`, `debugTarball`, and the
     `Aarch64`/`Riscv64`/`Armhf`/`Ppc64` variants)
   - darwin x86_64/arm64 `-unsigned.tar.gz`, `-unsigned.zip`,
     `-codesigning.tar.gz` (`tarballDarwin*`, `zipDarwin*`, `codesigningDarwin*`)
   - win64 `unsignedZipMingw`, `debugZipMingw`, `setupExeMingw`, `codesigningMingw`
-- **Signed artifacts are wired up AND gated** against bitcoin-detached-sigs
-  `v32.0rc4`: `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw`
-  (2), plus `codesignaturesArchive`. win64 needs osslsigncode **2.14**
-  (`osslsigncode214`), per rc2's `manifest_codesign.scm` (unchanged at rc3
-  and rc4);
+- **The signed artifacts reproduced at rc2, rc3 and rc4** and are wired for
+  32.0 the moment its sigs tag exists (see the signed-flow bullet above):
+  `signedDarwinX86`/`signedDarwinArm64` (2 each), `signedMingw` (2), plus
+  `codesignaturesArchive`. win64 needs osslsigncode **2.14**
+  (`osslsigncode214`), per rc2's `manifest_codesign.scm` (unchanged through
+  rc4 and the final tag — `contrib/` is the same tree);
   `codesign.sh`'s `osslsigncode verify` pass only re-reads what
   `attach-signature` already wrote, so it cannot change the emitted bytes
   (see the win64 note on 2.14's `-CAfile` removal).
-- **Aggregators:** `.#noncodesignedSha256sums` (21 artifacts) and
-  `.#sha256sums` (all 28), each diffed against its checked-in attestation.
+- **Aggregators:** `.#noncodesignedSha256sums` (21 artifacts), diffed
+  against its checked-in attestation, is the flake default; `.#sha256sums`
+  (all 28) exists only while `detachedSigsPin` is set.
   (For an UNTAGGED commit the dist archive can't be
   built: GitHub's commit archive uses a 40-char prefix, which changes the
   pax long-path headers.)
@@ -559,16 +579,24 @@ glibc `.so` reorders the stubs of big binaries.
 ## Retargeting to a new commit or release
 
 1. Bump `commit`/`version`/`sourceDateEpoch` in `default.nix` (the repack
-   handles untagged commits).
-2. Diff upstream `contrib/guix/` (manifest pins and patches, `setup.sh`,
-   `build_*.sh`, `package.sh`) and `depends/packages/` against the previous
-   target; follow the guix time-machine pin into the guix checkout
-   (`guix/` in the repo) for binutils/glibc/gcc/mingw/nsis/clang versions and
-   package phases. `CMakeCache.txt` of a guix build lists the exact store paths.
+   handles untagged commits). `sourceDateEpoch` is the tagged commit's own
+   commit time, like guix-build's `git log --format=%at -1`.
+2. Compare the top-level `src`/`contrib`/`depends` TREE SHAs at the old and
+   new commit first (`git/trees/<commit>` on the API, one call each). Equal
+   trees end the toolchain question outright. Otherwise diff upstream
+   `contrib/guix/` (manifest pins and patches, `setup.sh`, `build_*.sh`,
+   `package.sh`) and `depends/packages/`; follow the guix time-machine pin
+   into the guix checkout (`guix/` in the repo) for
+   binutils/glibc/gcc/mingw/nsis/clang versions and package phases.
+   `CMakeCache.txt` of a guix build lists the exact store paths.
 3. Get reference hashes (guix.sigs for releases, or a local guix build) into
-   `noncodesigned.SHA256SUMS`, build all 20 attrs in ONE `nix build`, then
-   localize any gate failure with the method below.
-
+   `noncodesigned.SHA256SUMS`. Check its line ORDER against the previous
+   target's filename-for-filename, and — when an `all.SHA256SUMS` exists —
+   that it minus the 7 `signed = true` rows IS `noncodesigned.SHA256SUMS`
+   byte-for-byte; that invariant is what lets `artifactTable` feed both
+   aggregators, and if it holds the table needs no edit. Then build every
+   gated attr in ONE `nix build` and localize any gate failure with the
+   method below.
 ## Method
 
 - Localize: archive → files (`cmp`), file → ELF sections (objcopy

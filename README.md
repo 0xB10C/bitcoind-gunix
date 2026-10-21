@@ -9,12 +9,14 @@ binutils 2.46.0 for the Linux targets, clang/lld 19.1.7 for darwin, gcc
 14.3.0 + mingw-w64 13.0.0 for win64) — **cross-compiled from a single
 Linux host** (x86_64 or aarch64, no qemu).
 
-**Currently tracking v32.0rc4 (release candidate).** All 28 published
-artifacts ARE gated: each derivation asserts its own sha256 against a
-checked-in guix.sigs attestation — `noncodesigned.SHA256SUMS` for the
-21 non-codesigned artifacts, `all.SHA256SUMS` for those plus the 6
-signed darwin/win64 artifacts and the codesignatures archive — so a
-mismatch fails the build.
+**Currently tracking v32.0 (final release).** 21 of the 28 published
+artifacts are gated: each derivation asserts its own sha256 against the
+checked-in guix.sigs attestation `noncodesigned.SHA256SUMS`, so a mismatch
+fails the build. The 7 remaining artifacts — the 6 signed darwin/win64
+ones and the codesignatures archive — are OFF until
+bitcoin-core/bitcoin-detached-sigs tags `v32.0`; they reproduced at
+v32.0rc2, rc3 and rc4 and come back with a one-line pin change plus an
+`all.SHA256SUMS`.
 
 The build only requires upstream sources (`fetchurl`/`fetchgit`) — nothing
 is taken from a pre-existing GUIX build or binary.
@@ -34,13 +36,15 @@ mirrored — every derivation gates the same upstream hashes either way.
 
 ### Per-target builds
 
-> **rc note**: the current target is v32.0rc4. All 28 artifacts are gated:
-> the 21 non-codesigned ones against `noncodesigned.SHA256SUMS` (aggregated
-> by `.#noncodesignedSha256sums`, the flake default), and the 6 signed
-> darwin/win64 artifacts plus the codesignatures archive against
-> `all.SHA256SUMS` (aggregated by `.#sha256sums`). The signed flows apply
-> the bitcoin-detached-sigs `v32.0rc4` tag, which carries both `osx/` and
-> `win/`.
+> **note**: the current target is the v32.0 final release. The 21
+> non-codesigned artifacts are gated against `noncodesigned.SHA256SUMS`
+> (aggregated by `.#noncodesignedSha256sums`, the flake default). The
+> signed darwin/win64 artifacts and the codesignatures archive are not
+> exposed yet: bitcoin-detached-sigs has no `v32.0` tag, so there is
+> nothing to apply and guix.sigs has no `all.SHA256SUMS` to gate them
+> against. `.#signedDarwinX86`, `.#signedDarwinArm64`, `.#signedMingw`,
+> `.#codesignaturesArchive` and `.#sha256sums` reappear as soon as the tag
+> is pinned in `default.nix`.
 
 ```sh
 # x86_64-linux-gnu (cross-to-self)
