@@ -13,11 +13,11 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# The checked-in noncodesigned.SHA256SUMS is the guix.sigs attestation for
-# v32.0 (the final release). Every artifact derivation gates its own
-# sha256 against that file, so a mismatch fails the nix build and with it
-# the job. The print-hashes job at the end builds and prints
-# noncodesigned.SHA256SUMS.
+# The checked-in noncodesigned.SHA256SUMS and all.SHA256SUMS are the
+# guix.sigs attestations for v32.0 (the final release). Every artifact
+# derivation gates its own sha256 against them, so a mismatch fails the
+# nix build and with it the job. The print-hashes job at the end builds
+# and prints both files.
 jobs:
   # This workflow contains a single job called "build"
   build:
@@ -136,7 +136,7 @@ jobs:
   # bitcoincore.org mirror). Each job builds the full chain for one host —
   # three published non-codesigned artifacts (-unsigned.tar.gz/.zip and
   # -codesigning.tar.gz, all from noncodesigned.SHA256SUMS; the signed
-  # .tar.gz/.zip wait for detached signatures). The bitcoind step builds inside an
+  # .tar.gz/.zip come from all.SHA256SUMS). The bitcoind step builds inside an
   # unshare/userns chroot (for byte-identical LC_UUIDs), which needs
   # CLONE_NEWUSER; Ubuntu 24.04+'s AppArmor unprivileged_userns_restriction
   # blocks that for unconfined processes (`unshare: write failed
@@ -163,9 +163,7 @@ jobs:
       - run: nix build .#tarballDarwinX86 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinX86 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinX86 -o result-codesigning --print-build-logs
-      # The signed artifacts are not exposed at v32.0 (no
-      # bitcoin-detached-sigs tag yet); restore with the pin:
-      # - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
+      - run: nix build .#signedDarwinX86 -o result-signed --print-build-logs
 
   build-darwin-arm64:
     runs-on: ubuntu-latest
@@ -187,15 +185,13 @@ jobs:
       - run: nix build .#tarballDarwinArm64 -o result-unsigned-tar --print-build-logs
       - run: nix build .#zipDarwinArm64 -o result-unsigned-zip --print-build-logs
       - run: nix build .#codesigningDarwinArm64 -o result-codesigning --print-build-logs
-      # The signed artifacts are not exposed at v32.0 (no
-      # bitcoin-detached-sigs tag yet); restore with the pin:
-      # - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
+      - run: nix build .#signedDarwinArm64 -o result-signed --print-build-logs
 
   # win64 (x86_64-w64-mingw32). The steps build + assert the 4 published
   # non-codesigned archive/installer artifacts: unsigned + debug zips, NSIS
   # installer and the codesigning tarball (all from
-  # noncodesigned.SHA256SUMS). The signed installer + zip wait for detached
-  # signatures.
+  # noncodesigned.SHA256SUMS), plus the signed installer + zip from
+  # all.SHA256SUMS.
   build-win64:
     runs-on: ubuntu-latest
 
@@ -216,9 +212,7 @@ jobs:
       - run: nix build .#debugZipMingw -o result-debug-zip --print-build-logs
       - run: nix build .#setupExeMingw -o result-setup-unsigned --print-build-logs
       - run: nix build .#codesigningMingw -o result-codesigning --print-build-logs
-      # The signed artifacts are not exposed at v32.0 (no
-      # bitcoin-detached-sigs tag yet); restore with the pin:
-      # - run: nix build .#signedMingw -o result-signed --print-build-logs
+      - run: nix build .#signedMingw -o result-signed --print-build-logs
 
   # "Cross everywhere" verification on an AARCH64 build host. The flake
   # exposes the same pipeline per build system (attr names refer to the
@@ -262,12 +256,11 @@ jobs:
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
       - run: nix build .#tarball -o result-tarball --print-build-logs
 
-  # NOTE (v32.0): the nix derivations gate all 21 non-codesigned artifacts
-  # against the checked-in noncodesigned.SHA256SUMS. There is no
-  # all.SHA256SUMS for the final release yet (bitcoin-detached-sigs has not
-  # tagged v32.0), so `.#sha256sums` and the signed artifacts are not
-  # exposed and this job builds the one aggregator, which fails unless the
-  # whole file equals the checked-in attestation.
+  # NOTE (v32.0): the nix derivations gate every artifact against the
+  # checked-in noncodesigned.SHA256SUMS / all.SHA256SUMS, both of which
+  # exist for the final release (bitcoin-detached-sigs is tagged v32.0).
+  # This job builds both aggregators, each of which fails unless the whole
+  # file equals the checked-in attestation, and prints them.
   print-hashes:
     runs-on: ubuntu-latest
     needs:
@@ -302,12 +295,12 @@ jobs:
           set -e
           nix build .#noncodesignedSha256sums -o noncodesigned.SHA256SUMS.built --print-build-logs
           cat noncodesigned.SHA256SUMS.built
-      # all.SHA256SUMS (the 6 signed artifacts + the codesignatures
-      # archive on top of the 21 above) is NOT built: `.#sha256sums` is
-      # only exposed once default.nix pins a bitcoin-detached-sigs tag for
-      # this version. Restore this step together with that pin:
-      #   - name: Build and print all.SHA256SUMS (signed artifacts included)
-      #     run: |
-      #       set -e
-      #       nix build .#sha256sums -o all.SHA256SUMS.built --print-build-logs
-      #       cat all.SHA256SUMS.built
+      # all.SHA256SUMS adds the 6 signed artifacts + the codesignatures
+      # archive. Three guix.sigs signers published a byte-identical one for
+      # the final release, so this job DIFFS against the checked-in file
+      # and fails the build on any mismatch.
+      - name: Build and print all.SHA256SUMS (signed artifacts included)
+        run: |
+          set -e
+          nix build .#sha256sums -o all.SHA256SUMS.built --print-build-logs
+          cat all.SHA256SUMS.built

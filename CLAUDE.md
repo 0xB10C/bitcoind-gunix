@@ -12,7 +12,7 @@ branch-off, ~2600 lines) is in git history: see CLAUDE.md at commit
 `90e0ff24483c` and earlier. This file keeps the current state, how the tree
 is built, the root causes that matter, and the method.
 
-## Current state (2026-10-21)
+## Current state (2026-10-22)
 
 - **Target:** the `v32.0` tag (`465dde277447`, "Merge bitcoin/bitcoin#36508:
   [32.0] Finalize") — the FINAL release, not a candidate. Guix time-machine
@@ -37,40 +37,47 @@ is built, the root causes that matter, and the method.
   commit is the cheapest retarget pre-check there is** — one API call per
   commit, and it subsumes the `contrib/guix` + `depends` diff of step 2
   below whenever they come out equal.
-- **The signed flow is OFF until the code signatures are up** (deliberate,
-  and wanted back the moment they land). bitcoin-detached-sigs has no
-  `v32.0` tag — its newest is still `v32.0rc4` — so there is nothing to
-  apply, and guix.sigs has no `all.SHA256SUMS` for 32.0 either, so those 7
-  artifacts could be neither built nor gated. `detachedSigsPin = null` in
-  `default.nix` therefore drops `signedDarwin{X86,Arm64}`, `signedMingw`,
-  `codesignaturesArchive` and `.#sha256sums` from the exposed outputs (the
-  `lib.optionalAttrs` blocks in both toolchains and at the bottom of
-  `default.nix`), and the stale rc4 `all.SHA256SUMS` was deleted from the
-  repo root rather than left to go quietly unmatched.
-  **To restore it:** set `detachedSigsPin = { rev = <the v32.0 sigs tag's
-  peeled commit>; hash = …; gitHash = …; }` (the rc4 triple is recorded in
-  the comment right above it as a template), check in the 32.0
-  `all.SHA256SUMS`, and un-comment the four `nix build .#signed*` /
-  `.#sha256sums` steps in `.github/workflows/nix-ci.yml`. Nothing else
-  changes: `artifactTable` already carries the 7 `signed = true` rows in
-  upstream order, and because `builtins.filter` only reads each row's
-  `signed` field, their `file` thunks are never forced while the pin is
-  null — that laziness is what lets one table serve both states.
-- **ALL 21 non-codesigned artifacts reproduce at the final tag** (verified
-  2026-10-21 from a COLD store in one `nix build`, 19:40→21:43 (~2h03m) at
-  `--max-jobs 4 --cores 6`: `.#noncodesignedSha256sums` comes out
-  byte-identical to the checked-in guix.sigs attestation, 21 `OK:` artifact
-  gates + the aggregator verdict, 0 `FAIL:`): the source dist archive, all
-  5 linux release + 5 debug tarballs, the 6 unsigned/codesigning darwin
-  artifacts, and the 4 non-codesigned win64 artifacts. x86_64 keeps
-  `distsrcChroot = true`. Log:
-  `/home/infra/v320-evidence/noncodesigned-v320-1940.log`. The 7 signed
-  artifacts are not in this build at all (see the signed-flow bullet); the
-  only "no upstream gate" lines are the six intermediate `packaged`
-  derivations, one per host — package.sh's outdir has no published
-  filename, so that log line is expected there and nowhere else. (At rc4
-  only two of the six printed it, because the other four were store hits;
-  a cold store shows all six.)
+- **The signed flow is back ON** (2026-10-22). bitcoin-detached-sigs
+  tagged `v32.0` the day after the final release went out: the tag
+  (`627019d1`) peels to `f542f52a` and carries both `osx/` (`f8bbfaf0`,
+  "32.0: osx sig for final") and `win/` (`f542f52a`, "32.0: win sig for
+  final"), and guix.sigs 32.0 now also has an `all.SHA256SUMS` — achow101,
+  fanquake and willcl-ark published a byte-identical 28-line file. So all
+  28 artifacts are built and gated again.
+  **Restoring it took exactly the three steps the OFF state predicted**,
+  with no structural change: the `detachedSigsPin` triple in `default.nix`
+  (`rev` = the tag's PEELED commit, `hash` for `fetchFromGitHub`, `gitHash`
+  for the `leaveDotGit` `fetchgit` the codesignatures archive needs), the
+  checked-in `all.SHA256SUMS`, and un-commenting the four `nix build
+  .#signed*` / `.#sha256sums` steps in `.github/workflows/nix-ci.yml`.
+  `artifactTable` needed no edit: the new file's line order is rc4's
+  filename-for-filename, and the invariant held — `all.SHA256SUMS` minus
+  its 7 `signed = true` rows IS the already-verified
+  `noncodesigned.SHA256SUMS` byte-for-byte, which is the check to run
+  before trusting a new attestation (and the reason one table can feed both
+  aggregators). Setting `detachedSigsPin = null` is still how a target
+  without a sigs tag is handled, and `builtins.filter` only reading each
+  row's `signed` field is what keeps the signed rows' `file` thunks
+  unforced in that state.
+- **ALL 28 published artifacts reproduce at the final tag** (verified
+  2026-10-22 from a near-cold store — the midnight GC had wiped it, 97
+  derivations rebuilt — in one `nix build .#sha256sums
+  .#noncodesignedSha256sums`, 20:56→22:06 (~1h10m) at `--max-jobs 4
+  --cores 6`: 28 `OK:` artifact gates plus BOTH aggregator verdicts
+  ("all.SHA256SUMS matches the checked-in guix.sigs file" and the same for
+  noncodesigned), 0 `FAIL:`). The 28 built name/hash pairs were also
+  diffed against the attestation directly and are identical as a set. That
+  is: the source dist archive, all 5 linux release + 5 debug tarballs, the
+  6 unsigned/codesigning darwin artifacts, the 4 non-codesigned win64
+  artifacts, and the 7 signed ones — darwin x86_64/arm64 signed
+  `.tar.gz`/`.zip`, win64 `setup.exe`/`.zip`, and the codesignatures
+  archive. x86_64 keeps `distsrcChroot = true`. Log:
+  `/home/infra/v320-evidence/all28-v320-signed-2056.log` (the earlier
+  21-artifact run is `noncodesigned-v320-1940.log`). The only "no upstream
+  gate" lines are the six intermediate `packaged` derivations, one per host
+  — package.sh's outdir has no published filename, so that line is
+  expected there and nowhere else. (At rc4 only two of the six printed it,
+  because the other four were store hits; a cold store shows all six.)
 - **win64 was the last holdout** and is fixed by filtering nixpkgs'
   `--enable-default-pie` from the mingw cross gcc: it left `flag_pie = 2`,
   which emits no different code on mingw but flipped one var-tracking

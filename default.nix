@@ -43,13 +43,16 @@ let
   # from both files resolves to null and its gate is skipped with a
   # "no upstream gate" log line.
   #
-  # noncodesigned.SHA256SUMS is the guix.sigs 32.0 attestation: the three
-  # signers who have posted so far (hebasto, svanstaa, willcl-ark) all
-  # published a byte-identical 21-line file. There is NO all.SHA256SUMS for
-  # 32.0 yet — bitcoin-detached-sigs has not tagged v32.0, so the signed
-  # set does not exist to be attested — and ./all.SHA256SUMS is absent
-  # here, which parseSha256sums handles by returning { }. The file that IS
-  # here has to stay git-tracked, or flake eval won't see it.
+  # noncodesigned.SHA256SUMS is the guix.sigs 32.0 attestation (hebasto,
+  # svanstaa and willcl-ark published a byte-identical 21-line file);
+  # all.SHA256SUMS is the 28-line one that appeared once
+  # bitcoin-detached-sigs tagged v32.0 (achow101, fanquake and willcl-ark,
+  # again byte-identical). The invariant that lets artifactTable feed both
+  # aggregators holds here: all.SHA256SUMS minus its 7 `signed = true` rows
+  # IS noncodesigned.SHA256SUMS byte-for-byte. A target with no sigs tag
+  # yet simply has no ./all.SHA256SUMS, which parseSha256sums handles by
+  # returning { }. Both files have to stay git-tracked, or flake eval won't
+  # see them.
   parseSha256sums = file:
     if builtins.pathExists file then
       builtins.listToAttrs (builtins.concatMap
@@ -88,27 +91,29 @@ let
   # Detached signatures — used by both the darwin and win64 signed-artifact
   # flows, so they live here rather than inside either target's toolchain.
   #
-  # OFF at v32.0: bitcoin-core/bitcoin-detached-sigs has NOT tagged v32.0
-  # yet (its newest tag is still v32.0rc4), so there is nothing to apply,
-  # and guix.sigs has no all.SHA256SUMS for 32.0 either — the signed set
-  # cannot be built OR gated. `detachedSigsPin = null` keeps the whole
-  # signing pipeline (darwin signedDarwin{X86,Arm64}, win64 signedMingw,
-  # codesignaturesArchive and the `.#sha256sums` aggregator over all 28)
-  # out of the exposed outputs, via the `lib.optionalAttrs` blocks in both
-  # toolchains and at the bottom of this file. The UNSIGNED and
-  # -codesigning artifacts need none of it and stay wired up, so 21 of the
-  # 28 published artifacts are gated. This is the same state rc1 was in
-  # before its own sigs tag appeared.
+  # ON at v32.0: bitcoin-core/bitcoin-detached-sigs tagged v32.0 on
+  # 2026-10-22. The tag (627019d1) peels to f542f52a and carries both
+  # osx/ (f8bbfaf0, "32.0: osx sig for final") and win/ (f542f52a, "32.0:
+  # win sig for final") for the final version string, so all 7 signed
+  # artifacts can be built; guix.sigs 32.0 now also has an all.SHA256SUMS
+  # (achow101, fanquake and willcl-ark published a byte-identical one, and
+  # its 21 non-signed lines ARE the checked-in noncodesigned.SHA256SUMS
+  # byte-for-byte), so all 28 are gated. The attestation must stay
+  # git-tracked or a pure flake eval cannot read it — see parseSha256sums
+  # above.
   #
-  # To turn the signed flow back on once v32.0 is tagged: set
-  # detachedSigsPin to that tag's peeled commit plus the two fixed-output
-  # hashes, and check in all.SHA256SUMS. Nothing else changes — the
-  # artifactTable rows and both aggregators are already written for it.
-  # The rc4 pin, for reference, was
-  #   rev     = "760896cf5e2a86310147f476dbb0fdcf3da1c986";  # v32.0rc4
-  #   hash    = "sha256-QLCub+vkadDjqAQmrFfPlNi7AwH6O/LQtjYbvbF2qys=";
-  #   gitHash = "sha256-+JPGLogHfsiKkCJ+yYmlID3IKYCFOYDp0Yg6iBZQx1Y=";
-  detachedSigsPin = null;
+  # Setting this to null is how a target with no sigs tag yet is handled:
+  # it keeps the whole signing pipeline (darwin signedDarwin{X86,Arm64},
+  # win64 signedMingw, codesignaturesArchive and the `.#sha256sums`
+  # aggregator over all 28) out of the exposed outputs via the
+  # `lib.optionalAttrs` blocks in both toolchains and at the bottom of this
+  # file, leaving the 21 non-codesigned artifacts gated. rc1 and the first
+  # day of v32.0 were both in that state.
+  detachedSigsPin = {
+    rev     = "f542f52a2ad38173ae554f81b0781a05f5a8e120";  # v32.0
+    hash    = "sha256-OkDshyj+MFrzG+IiWrtdjWyPFc9oQOwBqOa2MPgXi8g=";
+    gitHash = "sha256-cZyc2Lauvvqkd9a8vNMgR81XPqfrj6B0U4QDUYzfTN0=";
+  };
   signedFlow = detachedSigsPin != null;
   detachedSigs = if !signedFlow then null else pkgs.fetchFromGitHub {
     owner = "bitcoin-core";
@@ -167,10 +172,10 @@ let
   # rows removed, so both aggregators are derived from this one table
   # rather than kept in sync by hand. At 32.0 the noncodesigned half was
   # re-checked filename-for-filename against the checked-in attestation
-  # (same 21 names in the same order as rc4, minus the `rc4` suffix); the
-  # signed rows keep the positions verified against rc2/rc3/rc4's
-  # all.SHA256SUMS and are inert while `signedFlow` is false — the filter
-  # below never forces their `file`. (The v31.1 ordering is in git history
+  # (same 21 names in the same order as rc4, minus the `rc4` suffix), and
+  # the signed rows were re-checked the same way against the 32.0
+  # all.SHA256SUMS that appeared with the sigs tag — the positions are
+  # rc2/rc3/rc4's unchanged. (The v31.1 ordering is in git history
   # at commit 4599977e9723.)
   artifactTable = [
     # aarch64-linux-gnu
